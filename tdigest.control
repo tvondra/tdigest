@@ -1,0 +1,3 @@
+comment = 'Provides quantile aggregate function.'
+default_version = '1.0.0'
+relocatable = true
