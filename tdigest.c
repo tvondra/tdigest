@@ -46,6 +46,7 @@ typedef struct simple_centroid_t {
  */
 typedef struct tdigest_t {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
+	int32		flags;			/* reserved for future use (versioning, ...) */
 	int64		count;			/* number of items added to the t-digest */
 	int			compression;	/* compression used to build the digest */
 	int			ncentroids;		/* number of cetroids in the array */
@@ -168,6 +169,8 @@ AssertCheckTDigest(tdigest_t *digest)
 {
 	int	i;
 	int cnt;
+
+	Assert(digest->flags == 0);
 
 	Assert((digest->compression >= MIN_COMPRESSION) &&
 		   (digest->compression <= MAX_COMPRESSION));
@@ -675,6 +678,7 @@ tdigest_allocate(int ncentroids)
 
 	digest = (tdigest_t *) ptr;
 
+	digest->flags = 0;
 	digest->ncentroids = 0;
 	digest->count = 0;
 	digest->compression = 0;
@@ -943,6 +947,10 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
 
+	/* make sure the t-digest format is supported */
+	if (digest->flags != 0)
+		elog(ERROR, "unsupported t-digest on-disk format");
+
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
@@ -1014,6 +1022,10 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 	}
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+
+	/* make sure the t-digest format is supported */
+	if (digest->flags != 0)
+		elog(ERROR, "unsupported t-digest on-disk format");
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -1206,6 +1218,10 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
 
+	/* make sure the t-digest format is supported */
+	if (digest->flags != 0)
+		elog(ERROR, "unsupported t-digest on-disk format");
+
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
@@ -1270,6 +1286,10 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 	}
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+
+	/* make sure the t-digest format is supported */
+	if (digest->flags != 0)
+		elog(ERROR, "unsupported t-digest on-disk format");
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -1744,10 +1764,15 @@ tdigest_out(PG_FUNCTION_ARGS)
 
 	AssertCheckTDigest(digest);
 
+	/* make sure the t-digest format is supported */
+	if (digest->flags != 0)
+		elog(ERROR, "unsupported t-digest on-disk format");
+
 	initStringInfo(&str);
 
-	appendStringInfo(&str, "count %ld compression %d centroids %d",
-					 digest->count, digest->compression, digest->ncentroids);
+	appendStringInfo(&str, "flags %d count %ld compression %d centroids %d",
+					 digest->flags, digest->count, digest->compression,
+					 digest->ncentroids);
 
 	for (i = 0; i < digest->ncentroids; i++)
 		appendStringInfo(&str, " (%lf, %ld)",
@@ -1764,8 +1789,15 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	tdigest_t  *digest;
 	int			i;
 	int64		count;
+	int32		flags;
 	int32		compression;
 	int32		ncentroids;
+
+	flags = pq_getmsgint(buf, sizeof(int32));
+
+	/* make sure the t-digest format is supported */
+	if (flags != 0)
+		elog(ERROR, "unsupported t-digest on-disk format");
 
 	count = pq_getmsgint(buf, sizeof(int64));
 	compression = pq_getmsgint(buf, sizeof(int32));
@@ -1773,6 +1805,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 
 	digest = tdigest_allocate(ncentroids);
 
+	digest->flags = flags;
 	digest->count = count;
 	digest->compression = compression;
 	digest->ncentroids = ncentroids;
@@ -1795,6 +1828,7 @@ tdigest_send(PG_FUNCTION_ARGS)
 
 	pq_begintypsend(&buf);
 
+	pq_sendint32(&buf, digest->flags);
 	pq_sendint64(&buf, digest->count);
 	pq_sendint32(&buf, digest->compression);
 	pq_sendint32(&buf, digest->ncentroids);
