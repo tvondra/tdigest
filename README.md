@@ -1,5 +1,4 @@
-t-digest extension
-==================
+# t-digest extension
 
 This PostgreSQL extension implements t-digest, a data structure for on-line
 accumulation of rank-based statistics such as quantiles and trimmed means.
@@ -15,8 +14,7 @@ more accurate than those produced by previous digest algorithms in spite of
 the fact that t-digests are much more compact when stored on disk.
 
 
-Basic usage
------------
+## Basic usage
 
 The extension provides two functions, which you can see as a replacement of
 `percentile_cont` aggregate:
@@ -45,8 +43,31 @@ be parallelized. Also, the memory usage is very limited, depending on the
 compression parameter.
 
 
-Advanced usage
---------------
+## Accuracy
+
+All functions building the t-digest summaries accept `accuracy` parameter
+that determines how detailed the histogram approximating the CDF is. The
+value essentially limits the number of "buckets" in the t-digest, so the
+higher the value the larger the digest.
+
+Each bucket is represented by two `double precision` values (i.e. 16B per
+bucket), so 10000 buckets means the largest possible t-digest is ~160kB.
+That is however before the transparent compression all varlena types go
+through, so the on-disk footprint may be much smaller.
+
+It's hard to say what is a good accuracy value, as it very much depends on
+the data set (how non-uniform the data distribution is, etc.), but given a
+t-digest with N buckets, the error is roughly 1/N. So t-digests build with
+accuracy set to 100 have roughly 1% error (with respect to the total range
+of data), which is more than enough for most use cases.
+
+This however ignores that t-digests don't have uniform bucket size. Buckets
+close to 0.0 and 1.0 are much smaller (thus providing more accurate results)
+while buckets close to the median are much bigger. That's consistent with
+the purpose of the t-digest, i.e. estimating percentiles close to extremes.
+
+
+## Advanced usage
 
 The extension also provides a `tdigest` data type, which makes it possible
 to precompute digests for subsets of data, and then quickly combine those
@@ -128,6 +149,181 @@ in table `p` so with 120kB disk space that's ~1kB per row, each representing
 about 80k values. With 8B per value, that's ~640kB, i.e. a compression ratio
 of 640:1. As the digest size is not tied to the number of items, this will
 only improve for larger data set.
+
+
+## Functions
+
+### `tdigest_percentile(value, accuracy, percentile)`
+
+Computes a requested percentile from the data, using a t-digest with the
+specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile(t.c, 100, 0.95) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `percentile` - value in [0, 1] specifying the percentile
+
+
+### `tdigest_percentile(value, accuracy, percentile[])`
+
+Computes requested percentiles from the data, using a t-digest with the
+specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile(t.c, 100, ARRAY[0.95, 0.99]) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `percentile[]` - array of values in [0, 1] specifying the percentiles
+
+
+### `tdigest_percentile_of(value, accuracy, hypothetical_value)`
+
+Computes relative rank of a hypothetical value, using a t-digest with the
+specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile_of(t.c, 100, 139832.3) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `hypothetical_value` - hypothetical value
+
+
+### `tdigest_percentile_of(value, accuracy, hypothetical_value[])`
+
+Computes relative ranks of a hypothetical values, using a t-digest with
+the specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile_of(t.c, 100, ARRAY[6343.43, 139832.3]) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `hypothetical_value` - hypothetical values
+
+
+### `tdigest(value, accuracy)`
+
+Computes t-digest with the specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest(t.c, 100) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+
+
+### `tdigest_count(tdigest)`
+
+Returns number of items represented by the t-digest.
+
+#### Synopsis
+
+```
+SELECT tdigest(d, 100) FROM (
+    SELECT tdigest(t.c, 100) FROM t
+) foo
+```
+
+
+### `tdigest_percentile(tdigest, percentile)`
+
+Computes requested percentile from the pre-computed t-digests.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile(d, 0.99) FROM (
+    SELECT tdigest(t.c, 100) FROM t
+) foo
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to aggregate and process
+- `percentile` - value in [0, 1] specifying the percentile
+
+
+### `tdigest_percentile(tdigest, percentile[])`
+
+Computes requested percentiles from the pre-computed t-digests.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile(d, ARRAY[0.95, 0.99]) FROM (
+    SELECT tdigest(t.c, 100) FROM t
+) foo
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to aggregate and process
+- `percentile` - values in [0, 1] specifying the percentiles
+
+
+### `tdigest_percentile_of(tdigest, hypothetical_value)`
+
+Computes relative rank of a hypothetical value, using a pre-computed t-digest.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile_of(d, 349834.1) FROM (
+    SELECT tdigest(t.c, 100) FROM t
+) foo
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to aggregate and process
+- `hypothetical_value` - hypothetical value
+
+
+### `tdigest_percentile_of(tdigest, hypothetical_value[])`
+
+Computes relative ranks of hypothetical values, using a pre-computed t-digest.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
+    SELECT tdigest(t.c, 100) FROM t
+) foo
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to aggregate and process
+- `hypothetical_value` - hypothetical values
 
 
 Notes
