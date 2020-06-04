@@ -674,7 +674,7 @@ tdigest_allocate(int ncentroids)
 
 	/* we pre-allocate the array for all centroids and also the buffer for incoming data */
 	ptr = palloc(len);
-	SET_VARSIZE(ptr, len + VARHDRSZ);
+	SET_VARSIZE(ptr, len);
 
 	digest = (tdigest_t *) ptr;
 
