@@ -167,6 +167,7 @@ static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len)
 static void
 AssertCheckTDigest(tdigest_t *digest)
 {
+#ifdef USE_ASSERT_CHECKING
 	int	i;
 	int cnt;
 
@@ -190,11 +191,13 @@ AssertCheckTDigest(tdigest_t *digest)
 		   digest->ncentroids * sizeof(simple_centroid_t));
 
 	Assert(digest->count == cnt);
+#endif
 }
 
 static void
 AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 {
+#ifdef USE_ASSERT_CHECKING
 	int	i;
 	int cnt;
 
@@ -225,6 +228,7 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 	}
 
 	Assert(state->count == cnt);
+#endif
 }
 
 /*
