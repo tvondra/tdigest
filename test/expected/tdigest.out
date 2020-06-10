@@ -1196,3 +1196,65 @@ SELECT * FROM (
 ---+---+---
 (0 rows)
 
+-- some basic tests to verify transforming from and to text work
+-- 10 centroids (tiny)
+WITH data AS (SELECT i / 1000000.0 AS x FROM generate_series(1,1000000) s(i)),
+     intermediate AS (SELECT tdigest(x, 10)::text AS intermediate_x FROM data),
+     tdigest_parsed AS (SELECT tdigest_percentile(intermediate_x::tdigest, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS a FROM intermediate),
+     pg_percentile AS (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) AS b FROM data)
+SELECT
+    p,
+    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM tdigest_parsed,
+         pg_percentile
+) foo;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+
+-- verify we can store tdigest in a summary table
+CREATE TABLE intermediate_tdigest (grouping int, summary tdigest);
+WITH data AS (SELECT row_number() OVER () AS i, pow(z, 4) AS x FROM random_normal(1000000) s(z))
+INSERT INTO intermediate_tdigest
+SELECT
+    i % 10 AS grouping,
+    tdigest(x, 100) AS summary
+FROM data
+GROUP BY i % 10;
+WITH data AS (SELECT pow(z, 4) AS x FROM random_normal(1000000) s(z)),
+     intermediate AS (SELECT tdigest_percentile(summary, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS a FROM intermediate_tdigest),
+     pg_percentile AS (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) AS b FROM data)
+SELECT
+    p,
+    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM intermediate,
+         pg_percentile
+) foo;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+

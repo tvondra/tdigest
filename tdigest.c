@@ -1689,16 +1689,15 @@ tdigest_in(PG_FUNCTION_ARGS)
 	tdigest_t  *digest = NULL;
 
 	/* t-digest header fields */
+	int32       flags;
 	int64		count;
 	int			compression;
 	int			ncentroids;
-	char	   *centroids;
+	int			header_length;
 	char	   *ptr;
 
-	centroids = palloc(strlen(str));
-
-	r = sscanf(str, "count %ld compression %d centroids %d%s",
-			   &count, &compression, &ncentroids, centroids);
+	r = sscanf(str, "flags %d count %ld compression %d centroids %d%n",
+			   &flags, &count, &compression, &ncentroids, &header_length);
 
 	if (r != 4)
 		elog(ERROR, "failed to parse t-digest value");
@@ -1725,11 +1724,12 @@ tdigest_in(PG_FUNCTION_ARGS)
 
 	digest = tdigest_allocate(ncentroids);
 
+	digest->flags = flags;
 	digest->count = count;
 	digest->ncentroids = ncentroids;
 	digest->compression = compression;
 
-	ptr = centroids;
+	ptr = str + header_length;
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
@@ -1750,9 +1750,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 		ptr = strchr(ptr, ')') + 1;
 	}
 
-	Assert(ptr == centroids + strlen(centroids));
-
-	pfree(centroids);
+	Assert(ptr == str + strlen(str));
 
 	AssertCheckTDigest(digest);
 
@@ -1803,7 +1801,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	if (flags != 0)
 		elog(ERROR, "unsupported t-digest on-disk format");
 
-	count = pq_getmsgint(buf, sizeof(int64));
+	count = pq_getmsgint64(buf);
 	compression = pq_getmsgint(buf, sizeof(int32));
 	ncentroids = pq_getmsgint(buf, sizeof(int32));
 
@@ -1817,7 +1815,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		digest->centroids[i].sum = pq_getmsgfloat8(buf);
-		digest->centroids[i].count = pq_getmsgint(buf, sizeof(int64));
+		digest->centroids[i].count = pq_getmsgint64(buf);
 	}
 
 	PG_RETURN_POINTER(digest);
