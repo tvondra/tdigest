@@ -1693,15 +1693,13 @@ tdigest_in(PG_FUNCTION_ARGS)
 	int64		count;
 	int			compression;
 	int			ncentroids;
-	char	   *centroids;
+	int			header_length;
 	char	   *ptr;
 
-	centroids = palloc(strlen(str));
+	r = sscanf(str, "flags %d count %ld compression %d centroids %d%n",
+			   &flags, &count, &compression, &ncentroids, &header_length);
 
-	r = sscanf(str, "flags %d count %ld compression %d centroids %d%s",
-			   &flags, &count, &compression, &ncentroids, centroids);
-
-	if (r != 5)
+	if (r != 4)
 		elog(ERROR, "failed to parse t-digest value");
 
 	if ((compression < 10) || (compression > 10000))
@@ -1731,7 +1729,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 	digest->ncentroids = ncentroids;
 	digest->compression = compression;
 
-	ptr = strchr(str, '(') - 1;
+	ptr = str + header_length;
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
@@ -1753,8 +1751,6 @@ tdigest_in(PG_FUNCTION_ARGS)
 	}
 
 	Assert(ptr == str + strlen(str));
-
-	pfree(centroids);
 
 	AssertCheckTDigest(digest);
 
