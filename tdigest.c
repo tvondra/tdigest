@@ -502,7 +502,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		 * left of the first node, instead of interpolating we return the mean of the node
 		 */
 		if ((on_the_right && (j+1) >= state->ncentroids) ||
-			(!on_the_right && (j-1) <= 0))
+			(!on_the_right && (j-1) < 0))
 		{
 			result[i] = (c->sum / c->count);
 			continue;
