@@ -497,6 +497,17 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 		on_the_right = (delta > 0.0);
 
+		/*
+		 * for extreme percentiles we might end on the right of the last node or on the
+		 * left of the first node, instead of interpolating we return the mean of the node
+		 */
+		if ((on_the_right && (j+1) >= state->ncentroids) ||
+			(!on_the_right && (j-1) <= 0))
+		{
+			result[i] = (c->sum / c->count);
+			continue;
+		}
+
 		if (on_the_right)
 		{
 			prev = &state->centroids[j];
