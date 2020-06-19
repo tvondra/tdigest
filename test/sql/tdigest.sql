@@ -938,3 +938,17 @@ FROM (
     FROM intermediate,
          pg_percentile
 ) foo;
+
+-- verify 'extreme' percentiles for the dataset would not read out of bounds on the centroids
+WITH data AS (SELECT x FROM generate_series(1,10) AS x)
+SELECT
+    p,
+    abs(a - b) < 0.1, -- arbitrary threshold of 10% given the small dataset and extreme percentiles it is not very accurate
+    (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.99]) AS p,
+        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.99])) AS a,
+        unnest(percentile_cont(ARRAY[0.01, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
+    FROM data
+) foo;
