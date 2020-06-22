@@ -100,6 +100,7 @@ static int  centroid_cmp(const void *a, const void *b);
  * and memory usage.
  */
 #define	BUFFER_SIZE(compression)	(10 * (compression))
+#define AssertBounds(index, length) Assert((index) >= 0 && (index) < (length))
 
 #define MIN_COMPRESSION		10
 #define MAX_COMPRESSION		10000
@@ -496,14 +497,27 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 		on_the_right = (delta > 0.0);
 
+		/*
+		 * for extreme percentiles we might end on the right of the last node or on the
+		 * left of the first node, instead of interpolating we return the mean of the node
+		 */
+		if ((on_the_right && (j+1) >= state->ncentroids) ||
+			(!on_the_right && (j-1) < 0))
+		{
+			result[i] = (c->sum / c->count);
+			continue;
+		}
+
 		if (on_the_right)
 		{
 			prev = &state->centroids[j];
+			AssertBounds(j+1, state->ncentroids);
 			next = &state->centroids[j+1];
 			count += (prev->count / 2.0);
 		}
 		else
 		{
+			AssertBounds(j-1, state->ncentroids);
 			prev = &state->centroids[j-1];
 			next = &state->centroids[j];
 			count -= (prev->count / 2.0);
