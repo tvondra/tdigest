@@ -3,6 +3,7 @@
 -- disable the notices for the create script (shell types etc.)
 SET client_min_messages = 'WARNING';
 \i tdigest--1.0.0.sql
+\i tdigest--1.0.0--1.0.1.sql
 SET client_min_messages = 'NOTICE';
 
 \set ECHO all
@@ -952,3 +953,11 @@ FROM (
         unnest(percentile_cont(ARRAY[0.01, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
+
+-- verify <value, count> API
+select sum(tdigest_count(t)), round(tdigest_percentile(t, 0.5)::numeric, 2)
+ from (
+ select tdigest(v*w, w, 100) as t
+ from (
+ select unnest(v) as v, unnest(w) as w from (select ARRAY[0.1,0.2,0.3] as v,  ARRAY[50,50,100] as w) as q
+ ) as s) as s;

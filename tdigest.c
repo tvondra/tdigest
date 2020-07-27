@@ -110,6 +110,7 @@ PG_FUNCTION_INFO_V1(tdigest_add_double_array);
 PG_FUNCTION_INFO_V1(tdigest_add_double_array_values);
 PG_FUNCTION_INFO_V1(tdigest_add_double);
 PG_FUNCTION_INFO_V1(tdigest_add_double_values);
+PG_FUNCTION_INFO_V1(tdigest_add_double_count);
 
 PG_FUNCTION_INFO_V1(tdigest_add_digest_array);
 PG_FUNCTION_INFO_V1(tdigest_add_digest_array_values);
@@ -437,7 +438,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 	/*
 	 * Trigger a compaction, which also sorts the data.
-	 * 
+	 *
 	 * XXX maybe just do a sort here, which should give us a bit more accurate
 	 * results, probably.
 	 */
@@ -543,7 +544,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 
 	/*
 	 * Trigger a compaction, which also sorts the data.
-	 * 
+	 *
 	 * XXX maybe just do a sort here, which should give us a bit more accurate
 	 * results, probably.
 	 */
@@ -864,6 +865,71 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value with count to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with a single percentile.
+ */
+Datum
+tdigest_add_double_count(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int		compression = PG_GETARG_INT32(3);
+		double *percentiles = NULL;
+		int		npercentiles = 0;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+		if (PG_NARGS() >= 4)
+		{
+			percentiles = (double *) palloc(sizeof(double));
+			percentiles[0] = PG_GETARG_FLOAT8(4);
+			npercentiles = 1;
+			check_percentiles(percentiles, npercentiles);
+		}
+
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+
+		if (percentiles)
+		{
+			memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
+			pfree(percentiles);
+		}
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	tdigest_add_centroid(state, PG_GETARG_FLOAT8(1), PG_GETARG_INT64(2));
 
 	PG_RETURN_POINTER(state);
 }
