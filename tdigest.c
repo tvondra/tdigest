@@ -100,6 +100,7 @@ static int  centroid_cmp(const void *a, const void *b);
  * and memory usage.
  */
 #define	BUFFER_SIZE(compression)	(10 * (compression))
+#define AssertBounds(index, length) Assert((index) >= 0 && (index) < (length))
 
 #define MIN_COMPRESSION		10
 #define MAX_COMPRESSION		10000
@@ -167,6 +168,7 @@ static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len)
 static void
 AssertCheckTDigest(tdigest_t *digest)
 {
+#ifdef USE_ASSERT_CHECKING
 	int	i;
 	int cnt;
 
@@ -190,11 +192,13 @@ AssertCheckTDigest(tdigest_t *digest)
 		   digest->ncentroids * sizeof(simple_centroid_t));
 
 	Assert(digest->count == cnt);
+#endif
 }
 
 static void
 AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 {
+#ifdef USE_ASSERT_CHECKING
 	int	i;
 	int cnt;
 
@@ -225,6 +229,7 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 	}
 
 	Assert(state->count == cnt);
+#endif
 }
 
 /*
@@ -492,14 +497,27 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 		on_the_right = (delta > 0.0);
 
+		/*
+		 * for extreme percentiles we might end on the right of the last node or on the
+		 * left of the first node, instead of interpolating we return the mean of the node
+		 */
+		if ((on_the_right && (j+1) >= state->ncentroids) ||
+			(!on_the_right && (j-1) < 0))
+		{
+			result[i] = (c->sum / c->count);
+			continue;
+		}
+
 		if (on_the_right)
 		{
 			prev = &state->centroids[j];
+			AssertBounds(j+1, state->ncentroids);
 			next = &state->centroids[j+1];
 			count += (prev->count / 2.0);
 		}
 		else
 		{
+			AssertBounds(j-1, state->ncentroids);
 			prev = &state->centroids[j-1];
 			next = &state->centroids[j];
 			count -= (prev->count / 2.0);
@@ -674,7 +692,7 @@ tdigest_allocate(int ncentroids)
 
 	/* we pre-allocate the array for all centroids and also the buffer for incoming data */
 	ptr = palloc(len);
-	SET_VARSIZE(ptr, len + VARHDRSZ);
+	SET_VARSIZE(ptr, len);
 
 	digest = (tdigest_t *) ptr;
 
@@ -1685,16 +1703,15 @@ tdigest_in(PG_FUNCTION_ARGS)
 	tdigest_t  *digest = NULL;
 
 	/* t-digest header fields */
+	int32       flags;
 	int64		count;
 	int			compression;
 	int			ncentroids;
-	char	   *centroids;
+	int			header_length;
 	char	   *ptr;
 
-	centroids = palloc(strlen(str));
-
-	r = sscanf(str, "count %ld compression %d centroids %d%s",
-			   &count, &compression, &ncentroids, centroids);
+	r = sscanf(str, "flags %d count %ld compression %d centroids %d%n",
+			   &flags, &count, &compression, &ncentroids, &header_length);
 
 	if (r != 4)
 		elog(ERROR, "failed to parse t-digest value");
@@ -1721,11 +1738,12 @@ tdigest_in(PG_FUNCTION_ARGS)
 
 	digest = tdigest_allocate(ncentroids);
 
+	digest->flags = flags;
 	digest->count = count;
 	digest->ncentroids = ncentroids;
 	digest->compression = compression;
 
-	ptr = centroids;
+	ptr = str + header_length;
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
@@ -1746,9 +1764,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 		ptr = strchr(ptr, ')') + 1;
 	}
 
-	Assert(ptr == centroids + strlen(centroids));
-
-	pfree(centroids);
+	Assert(ptr == str + strlen(str));
 
 	AssertCheckTDigest(digest);
 
@@ -1799,7 +1815,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	if (flags != 0)
 		elog(ERROR, "unsupported t-digest on-disk format");
 
-	count = pq_getmsgint(buf, sizeof(int64));
+	count = pq_getmsgint64(buf);
 	compression = pq_getmsgint(buf, sizeof(int32));
 	ncentroids = pq_getmsgint(buf, sizeof(int32));
 
@@ -1813,7 +1829,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		digest->centroids[i].sum = pq_getmsgfloat8(buf);
-		digest->centroids[i].count = pq_getmsgint(buf, sizeof(int64));
+		digest->centroids[i].count = pq_getmsgint64(buf);
 	}
 
 	PG_RETURN_POINTER(digest);
