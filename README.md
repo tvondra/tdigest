@@ -163,6 +163,31 @@ of 640:1. As the digest size is not tied to the number of items, this will
 only improve for larger data set.
 
 
+## Pre-aggregated data
+
+When dealing with data sets with a lot of redundancy (values repeating
+many times), it may be more efficient to partially pre-aggregate the data
+and use functions that allow specifying the number of occurrences for each
+value. This reduces the number of SQL-function calls.
+
+There are five such aggregate functions:
+
+* `tdigest_percentile(value double precision, count bigint, compression int,
+                      quantile double precision)`
+
+* `tdigest_percentile(value double precision, count bigint, compression int,
+                      quantiles double precision[])`
+
+* `tdigest_percentile_of(value double precision, count bigint, compression int,
+                         value double precision)`
+
+* `tdigest_percentile_of(value double precision, count bigint, compression int,
+                         values double precision[])`
+                         
+* `tdigest(value double precision, count bigint, compression int)`
+
+
+
 ## Functions
 
 ### `tdigest_percentile(value, accuracy, percentile)`
@@ -179,6 +204,25 @@ SELECT tdigest_percentile(t.c, 100, 0.95) FROM t
 #### Parameters
 
 - `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `percentile` - value in [0, 1] specifying the percentile
+
+
+### `tdigest_percentile(value, count, accuracy, percentile)`
+
+Computes a requested percentile from the data, using a t-digest with the
+specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile(t.c, t.a, 100, 0.95) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `count` - number of occurrences of the value
 - `accuracy` - accuracy of the t-digest
 - `percentile` - value in [0, 1] specifying the percentile
 
@@ -201,6 +245,25 @@ SELECT tdigest_percentile(t.c, 100, ARRAY[0.95, 0.99]) FROM t
 - `percentile[]` - array of values in [0, 1] specifying the percentiles
 
 
+### `tdigest_percentile(value, count, accuracy, percentile[])`
+
+Computes requested percentiles from the data, using a t-digest with the
+specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile(t.c, t.a, 100, ARRAY[0.95, 0.99]) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `count` - number of occurrences of the value
+- `accuracy` - accuracy of the t-digest
+- `percentile[]` - array of values in [0, 1] specifying the percentiles
+
+
 ### `tdigest_percentile_of(value, accuracy, hypothetical_value)`
 
 Computes relative rank of a hypothetical value, using a t-digest with the
@@ -215,6 +278,25 @@ SELECT tdigest_percentile_of(t.c, 100, 139832.3) FROM t
 #### Parameters
 
 - `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `hypothetical_value` - hypothetical value
+
+
+### `tdigest_percentile_of(value, count, accuracy, hypothetical_value)`
+
+Computes relative rank of a hypothetical value, using a t-digest with the
+specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile_of(t.c, t.a, 100, 139832.3) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `count` - number of occurrences of the value
 - `accuracy` - accuracy of the t-digest
 - `hypothetical_value` - hypothetical value
 
@@ -237,6 +319,25 @@ SELECT tdigest_percentile_of(t.c, 100, ARRAY[6343.43, 139832.3]) FROM t
 - `hypothetical_value` - hypothetical values
 
 
+### `tdigest_percentile_of(value, count, accuracy, hypothetical_value[])`
+
+Computes relative ranks of a hypothetical values, using a t-digest with
+the specified accuracy.
+
+#### Synopsis
+
+```
+SELECT tdigest_percentile_of(t.c, t.a, 100, ARRAY[6343.43, 139832.3]) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `count` - number of occurrences of the value
+- `accuracy` - accuracy of the t-digest
+- `hypothetical_value` - hypothetical values
+
+
 ### `tdigest(value, accuracy)`
 
 Computes t-digest with the specified accuracy.
@@ -250,6 +351,24 @@ SELECT tdigest(t.c, 100) FROM t
 #### Parameters
 
 - `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+
+
+### `tdigest(value, count, accuracy)`
+
+Computes t-digest with the specified accuracy. The values are added with
+as many occurrences as determined by the count parameter.
+
+#### Synopsis
+
+```
+SELECT tdigest(t.c, t.a, 100) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `count` - number of occurrences for each value
 - `accuracy` - accuracy of the t-digest
 
 

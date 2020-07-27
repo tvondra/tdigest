@@ -107,9 +107,13 @@ static int  centroid_cmp(const void *a, const void *b);
 
 /* prototypes */
 PG_FUNCTION_INFO_V1(tdigest_add_double_array);
+PG_FUNCTION_INFO_V1(tdigest_add_double_array_count);
 PG_FUNCTION_INFO_V1(tdigest_add_double_array_values);
+PG_FUNCTION_INFO_V1(tdigest_add_double_array_values_count);
 PG_FUNCTION_INFO_V1(tdigest_add_double);
+PG_FUNCTION_INFO_V1(tdigest_add_double_count);
 PG_FUNCTION_INFO_V1(tdigest_add_double_values);
+PG_FUNCTION_INFO_V1(tdigest_add_double_values_count);
 
 PG_FUNCTION_INFO_V1(tdigest_add_digest_array);
 PG_FUNCTION_INFO_V1(tdigest_add_digest_array_values);
@@ -134,9 +138,13 @@ PG_FUNCTION_INFO_V1(tdigest_recv);
 PG_FUNCTION_INFO_V1(tdigest_count);
 
 Datum tdigest_add_double_array(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_array_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_values(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_array_values_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_values(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_values_count(PG_FUNCTION_ARGS);
 
 Datum tdigest_add_digest_array(PG_FUNCTION_ARGS);
 Datum tdigest_add_digest_array_values(PG_FUNCTION_ARGS);
@@ -437,7 +445,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 	/*
 	 * Trigger a compaction, which also sorts the data.
-	 * 
+	 *
 	 * XXX maybe just do a sort here, which should give us a bit more accurate
 	 * results, probably.
 	 */
@@ -543,7 +551,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 
 	/*
 	 * Trigger a compaction, which also sorts the data.
-	 * 
+	 *
 	 * XXX maybe just do a sort here, which should give us a bit more accurate
 	 * results, probably.
 	 */
@@ -869,6 +877,91 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Add a value with count to the tdigest (create one if needed). Transition
+ * function for tdigest aggregate with a single percentile.
+ */
+Datum
+tdigest_add_double_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+	MemoryContext		aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_count called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int		compression = PG_GETARG_INT32(3);
+		double *percentiles = NULL;
+		int		npercentiles = 0;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		if (PG_NARGS() >= 5)
+		{
+			percentiles = (double *) palloc(sizeof(double));
+			percentiles[0] = PG_GETARG_FLOAT8(4);
+			npercentiles = 1;
+			check_percentiles(percentiles, npercentiles);
+		}
+
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+
+		if (percentiles)
+		{
+			memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
+			pfree(percentiles);
+		}
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * Add the values one by one, not as one large centroid with the count.
+	 * We do it like this to allow proper compaction and sizing of centroids,
+	 * otherwise we might end up with oversized centroid on the tails etc.
+	 *
+	 * XXX If this turns out a bit too expensive, we may try determining the
+	 * size by looking for the smallest centroid covering this value.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
  * Add a value to the tdigest (create one if needed). Transition function
  * for tdigest aggregate with a single value.
  */
@@ -929,6 +1022,91 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with a single value.
+ */
+Datum
+tdigest_add_double_values_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int		compression = PG_GETARG_INT32(3);
+		double *values = NULL;
+		int		nvalues = 0;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		if (PG_NARGS() >= 5)
+		{
+			values = (double *) palloc(sizeof(double));
+			values[0] = PG_GETARG_FLOAT8(4);
+			nvalues = 1;
+		}
+
+		state = tdigest_aggstate_allocate(0, nvalues, compression);
+
+		if (values)
+		{
+			memcpy(state->values, values, sizeof(double) * nvalues);
+			pfree(values);
+		}
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * Add the values one by one, not as one large centroid with the count.
+	 * We do it like this to allow proper compaction and sizing of centroids,
+	 * otherwise we might end up with oversized centroid on the tails etc.
+	 *
+	 * XXX If this turns out a bit too expensive, we may try determining the
+	 * size by looking for the smallest centroid covering this value.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
 	PG_RETURN_POINTER(state);
 }
@@ -1146,6 +1324,88 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 
 /*
  * Add a value to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with an array of percentiles.
+ */
+Datum
+tdigest_add_double_array_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int compression = PG_GETARG_INT32(3);
+		double *percentiles;
+		int		npercentiles;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		percentiles = array_to_double(fcinfo,
+									  PG_GETARG_ARRAYTYPE_P(4),
+									  &npercentiles);
+
+		check_percentiles(percentiles, npercentiles);
+
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+
+		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
+
+		pfree(percentiles);
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * Add the values one by one, not as one large centroid with the count.
+	 * We do it like this to allow proper compaction and sizing of centroids,
+	 * otherwise we might end up with oversized centroid on the tails etc.
+	 *
+	 * XXX If this turns out a bit too expensive, we may try determining the
+	 * size by looking for the smallest centroid covering this value.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value to the tdigest (create one if needed). Transition function
  * for tdigest aggregate with an array of values.
  */
 Datum
@@ -1200,6 +1460,86 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with an array of values.
+ */
+Datum
+tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int compression = PG_GETARG_INT32(3);
+		double *values;
+		int		nvalues;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		values = array_to_double(fcinfo,
+								 PG_GETARG_ARRAYTYPE_P(4),
+								 &nvalues);
+
+		state = tdigest_aggstate_allocate(0, nvalues, compression);
+
+		memcpy(state->values, values, sizeof(double) * nvalues);
+
+		pfree(values);
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * Add the values one by one, not as one large centroid with the count.
+	 * We do it like this to allow proper compaction and sizing of centroids,
+	 * otherwise we might end up with oversized centroid on the tails etc.
+	 *
+	 * XXX If this turns out a bit too expensive, we may try determining the
+	 * size by looking for the smallest centroid covering this value.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
 	PG_RETURN_POINTER(state);
 }
