@@ -1297,3 +1297,145 @@ SELECT * FROM (
 ---+----+----
 (0 rows)
 
+-- <value,count> API
+select tdigest_percentile(value, count, 100, 0.95)
+from (values
+  (47325940488,1),
+  (15457695432,2),
+  (6889790700,3),
+  (4188763788,4),
+  (2882932224,5),
+  (2114815860,6),
+  (1615194324,7),
+  (2342114568,9),
+  (1626471924,11),
+  (1660755408,14),
+  (1143728292,17),
+  (1082582424,21),
+  (911488284,26),
+  (728863908,32),
+  (654898692,40),
+  (530198076,50),
+  (417883440,62),
+  (341452344,77),
+  (274579584,95),
+  (231921120,118),
+  (184091820,146),
+  (152469828,181),
+  (125634972,224),
+  (107059704,278),
+  (88746120,345),
+  (73135668,428),
+  (61035756,531),
+  (50683320,658),
+  (42331824,816),
+  (35234400,1012),
+  (29341356,1255),
+  (24290928,1556),
+  (20284668,1929),
+  (17215908,2391),
+  (14737488,2964),
+  (12692772,3674),
+  (11220732,4555),
+  (9787584,5647),
+  (8148420,7000),
+  (6918612,8678),
+  (6015000,10758),
+  (5480316,13336),
+  (5443356,16532),
+  (4535616,20494),
+  (3962316,25406),
+  (3914484,31495),
+  (3828108,39043),
+  (3583536,48400),
+  (4104120,60000),
+  (166024740,2147483647)) foo (count, value);
+ tdigest_percentile 
+--------------------
+ 30.358618321611857
+(1 row)
+
+----------------------------------------------
+-- nice data set with random data (uniform) --
+----------------------------------------------
+-- 10 centroids (tiny)
+WITH
+ data AS (SELECT prng(10000) x, prng(10000, 29823218) cnt),
+ data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
+SELECT
+    p,
+    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM
+       (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
+       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+) baz;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+
+-- 100 centroids (okay-ish)
+WITH
+ data AS (SELECT prng(10000) x, prng(10000, 29823218) cnt),
+ data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
+SELECT
+    p,
+    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM
+       (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
+       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+) baz;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+
+-- 1000 centroids (very accurate)
+WITH
+ data AS (SELECT prng(10000) x, prng(10000, 29823218) cnt),
+ data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
+SELECT
+    p,
+    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM
+       (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
+       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+) baz;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+

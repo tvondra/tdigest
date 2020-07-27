@@ -26,7 +26,6 @@ PG_MODULE_MAGIC;
  * XXX why not to also track min/max for each centroid?
  */
 typedef struct centroid_t {
-	double	sum;
 	int64	count;
 	double	mean;
 } centroid_t;
@@ -37,7 +36,7 @@ typedef struct centroid_t {
  * worth the extra CPU time (unlike for aggstate, where we sort often).
  */
 typedef struct simple_centroid_t {
-	double	sum;
+	double	mean;
 	int64	count;
 } simple_centroid_t;
 
@@ -107,9 +106,13 @@ static int  centroid_cmp(const void *a, const void *b);
 
 /* prototypes */
 PG_FUNCTION_INFO_V1(tdigest_add_double_array);
+PG_FUNCTION_INFO_V1(tdigest_add_double_array_count);
 PG_FUNCTION_INFO_V1(tdigest_add_double_array_values);
+PG_FUNCTION_INFO_V1(tdigest_add_double_array_values_count);
 PG_FUNCTION_INFO_V1(tdigest_add_double);
+PG_FUNCTION_INFO_V1(tdigest_add_double_count);
 PG_FUNCTION_INFO_V1(tdigest_add_double_values);
+PG_FUNCTION_INFO_V1(tdigest_add_double_values_count);
 
 PG_FUNCTION_INFO_V1(tdigest_add_digest_array);
 PG_FUNCTION_INFO_V1(tdigest_add_digest_array_values);
@@ -134,9 +137,13 @@ PG_FUNCTION_INFO_V1(tdigest_recv);
 PG_FUNCTION_INFO_V1(tdigest_count);
 
 Datum tdigest_add_double_array(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_array_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_values(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_array_values_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_values(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_values_count(PG_FUNCTION_ARGS);
 
 Datum tdigest_add_digest_array(PG_FUNCTION_ARGS);
 Datum tdigest_add_digest_array_values(PG_FUNCTION_ARGS);
@@ -170,7 +177,7 @@ AssertCheckTDigest(tdigest_t *digest)
 {
 #ifdef USE_ASSERT_CHECKING
 	int	i;
-	int cnt;
+	int64	cnt;
 
 	Assert(digest->flags == 0);
 
@@ -200,7 +207,7 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 {
 #ifdef USE_ASSERT_CHECKING
 	int	i;
-	int cnt;
+	int64	cnt;
 
 	Assert(state->npercentiles >= 0);
 
@@ -444,9 +451,28 @@ tdigest_compact(tdigest_aggstate_t *state)
 
 		if (should_add)
 		{
+			/*
+			 * If both centroids have the same mean, don't calculate it again.
+			 * The recaulculation may cause rounding errors, so that the means
+			 * would drift apart over time. We want to keep them equal for as
+			 * long as possible.
+			 */
+			if (state->centroids[cur].mean != state->centroids[i].mean)
+			{
+				double	sum;
+				int64	count;
+
+				sum = state->centroids[i].count * state->centroids[i].mean;
+				sum += state->centroids[cur].count * state->centroids[cur].mean;
+
+				count = state->centroids[i].count;
+				count += state->centroids[cur].count;
+
+				state->centroids[cur].mean = (sum / count);
+			}
+
+			/* XXX Do this after possibly recalculating the mean. */
 			state->centroids[cur].count += state->centroids[i].count;
-			state->centroids[cur].sum += state->centroids[i].sum;
-			state->centroids[cur].mean = state->centroids[cur].sum / state->centroids[cur].count;
 		}
 		else
 		{
@@ -459,7 +485,6 @@ tdigest_compact(tdigest_aggstate_t *state)
 		if (cur != i)
 		{
 			state->centroids[i].count = 0;
-			state->centroids[i].sum = 0;
 			state->centroids[i].mean = 0;
 		}
 	}
@@ -487,7 +512,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 	/*
 	 * Trigger a compaction, which also sorts the data.
-	 * 
+	 *
 	 * XXX maybe just do a sort here, which should give us a bit more accurate
 	 * results, probably.
 	 */
@@ -507,7 +532,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		if (state->percentiles[i] == 0.0)
 		{
 			c = &state->centroids[0];
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -515,7 +540,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		if (state->percentiles[i] == 1.0)
 		{
 			c = &state->centroids[state->ncentroids - 1];
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -541,7 +566,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		 */
 		if (fabs(delta) < 0.000000001)
 		{
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -554,7 +579,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		if ((on_the_right && (j+1) >= state->ncentroids) ||
 			(!on_the_right && (j-1) < 0))
 		{
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -593,7 +618,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 
 	/*
 	 * Trigger a compaction, which also sorts the data.
-	 * 
+	 *
 	 * XXX maybe just do a sort here, which should give us a bit more accurate
 	 * results, probably.
 	 */
@@ -686,7 +711,6 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 	Assert(state->ncentroids < BUFFER_SIZE(compression));
 
 	/* for a single point, the value is both sum and mean */
-	state->centroids[ncentroids].sum = v;
 	state->centroids[ncentroids].count = 1;
 	state->centroids[ncentroids].mean = v;
 	state->ncentroids++;
@@ -705,7 +729,7 @@ tdigest_add(tdigest_aggstate_t *state, double v)
  * triggers a compaction when buffer full.
  */
 static void
-tdigest_add_centroid(tdigest_aggstate_t *state, double sum, int64 count)
+tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 {
 	int	compression = state->compression;
 	int	ncentroids = state->ncentroids;
@@ -716,9 +740,8 @@ tdigest_add_centroid(tdigest_aggstate_t *state, double sum, int64 count)
 	Assert(state->ncentroids < BUFFER_SIZE(compression));
 
 	/* for a single point, the value is both sum and mean */
-	state->centroids[ncentroids].sum = sum;
 	state->centroids[ncentroids].count = count;
-	state->centroids[ncentroids].mean = (sum / count);
+	state->centroids[ncentroids].mean = mean;
 	state->ncentroids++;
 	state->count += count;
 
@@ -822,9 +845,9 @@ tdigest_aggstate_to_digest(tdigest_aggstate_t *state)
 
 	for (i = 0; i < state->ncentroids; i++)
 	{
-		digest->centroids[i].sum = state->centroids[i].sum;
+		digest->centroids[i].mean = state->centroids[i].mean;
 		digest->centroids[i].count = state->centroids[i].count;
-		/* don't copy the mean, not included in simple_centroid_t */
+		/* don't copy the sum, not included in simple_centroid_t */
 	}
 
 	return digest;
@@ -919,6 +942,220 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Generate a t-digest representing a value with a given count.
+ *
+ * This is an alternative to using a single centroid, representing all points
+ * with the same value. It forms a proper t-diget, following all the rules on
+ * centroid sizes, etc.
+ */
+static tdigest_t *
+tdigest_generate(int compression, double value, int64 count)
+{
+	int64		count_so_far;
+	int64		count_remaining;
+	double		denom;
+	double		normalizer;
+	int			i;
+	tdigest_t  *result = tdigest_allocate(compression);
+
+	denom = 2 * M_PI * count * log(count);
+	normalizer = compression / denom;
+
+	count_so_far = 0;	/* does not include current centroid */
+	count_remaining = count;
+
+	/*
+	 * Create largest possible centroids, until we run out of items. In each
+	 * step we need to find the largest possible well-formed centroid, i.e. one
+	 * that matches the two conditions:
+	 *
+	 *	z <= q0 * (1 - q0)    where q0 = (count_so_far / count)
+	 *
+	 *	z <= q2 * (1 - q2)    where q2 = (count_so_far + X) / count;
+	 *
+	 * with z = (X * normalizer). X being the value we need to determine. Solving
+	 * q0 is trivial, while q2 leads to a quadratic equation with two roots.
+	 */
+	while (count_remaining > 0)
+	{
+		int64	proposed_count;
+		double	q0;
+		double	a, b, c;
+		double	r1, r2;
+
+		/* solving z <= q0 * (1 - q0) is trivial */
+		q0 = count_so_far / (double) count;
+		r1 = (q0 * (1 - q0) / normalizer);
+
+		/*
+		 * Solve z <= q2 * (1 - q2) as a quadratic equation. The inequatily we
+		 * need to solve is
+		 *
+		 *	0 <= a * x^2 + b * x + c
+		 *
+		 * with these coefficients.
+		 *
+		 * XXX The counts may be very high values (int64), so we need to be
+		 * careful to prevent overflows by doing everything with double.
+		 */
+		a = -1;
+		b = ((double) count - 2 * (double) count_so_far - (double) count * (double) count * normalizer);
+		c = ((double) count_so_far * (double) count - (double) count_so_far * (double) count_so_far);
+
+		/*
+		 * As this is an "upside down" parabola, the values between the roots
+		 * are positive - we're looking for the largest of the two values.
+		 *
+		 * XXX Tthe first root should be the higher one, because sqrt is
+		 * always positive, so (-b - sqrt()) is smaller and negative, and
+		 * we're dividing by negative value.
+		 */
+		r2 = Max((-b - sqrt(b * b - 4 * a * c)) / (2 * a),
+				 (-b + sqrt(b * b - 4 * a * c)) / (2 * a));
+
+		/* We need to meet both conditions, so use the smaller solution. */
+		proposed_count = floor(Min(r1, r2));
+
+		/*
+		 * It's possible to get very low values on the tails, but we must add
+		 * at least something, otherwise we'd get infinite loops.
+		 */
+		proposed_count = Max(proposed_count, 1);
+
+		/* add the centroid and update the added/removed counters */
+		result->count += proposed_count;
+		result->centroids[result->ncentroids].count = proposed_count;
+		result->centroids[result->ncentroids].mean = value;
+		result->ncentroids++;
+
+		Assert(result->ncentroids <= compression);
+
+		count_so_far += proposed_count;
+		count_remaining -= proposed_count;
+	}
+
+	result->count = 0;
+	for (i = 0; i < result->ncentroids; i++)
+		result->count += result->centroids[i].count;
+
+	return result;
+}
+
+/*
+ * Add a value with count to the tdigest (create one if needed). Transition
+ * function for tdigest aggregate with a single percentile.
+ */
+Datum
+tdigest_add_double_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+	MemoryContext		aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_count called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int		compression = PG_GETARG_INT32(3);
+		double *percentiles = NULL;
+		int		npercentiles = 0;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		if (PG_NARGS() >= 5)
+		{
+			percentiles = (double *) palloc(sizeof(double));
+			percentiles[0] = PG_GETARG_FLOAT8(4);
+			npercentiles = 1;
+			check_percentiles(percentiles, npercentiles);
+		}
+
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+
+		if (percentiles)
+		{
+			memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
+			pfree(percentiles);
+		}
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * When adding too many values (than would fit into an empty buffer, and
+	 * thus likely causing too many compactions), we instead build a t-digest
+	 * and them merge it into the existing state.
+	 *
+	 * This is much faster, because the t-digest can be generated in one go,
+	 * so there can be only one compaction at most.
+	 */
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		int			i;
+		tdigest_t  *new;
+		double		value = PG_GETARG_FLOAT8(1);
+
+		new = tdigest_generate(state->compression, value, count);
+
+		/* XXX maybe not necessary if there's enough space in the buffer */
+		tdigest_compact(state);
+
+		for (i = 0; i < new->ncentroids; i++)
+		{
+			simple_centroid_t   *s = &new->centroids[i];
+
+			state->centroids[state->ncentroids].count = s->count;
+			state->centroids[state->ncentroids].mean = value;
+			state->ncentroids++;
+			state->count += s->count;
+		}
+
+		count = 0;
+	}
+
+	/*
+	 * If there are only a couple values, just add them one by one, so that
+	 * we do proper compaction and sizing of centroids. Otherwise we might end
+	 * up with oversized centroid on the tails etc.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
  * Add a value to the tdigest (create one if needed). Transition function
  * for tdigest aggregate with a single value.
  */
@@ -979,6 +1216,120 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with a single value.
+ */
+Datum
+tdigest_add_double_values_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int		compression = PG_GETARG_INT32(3);
+		double *values = NULL;
+		int		nvalues = 0;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		if (PG_NARGS() >= 5)
+		{
+			values = (double *) palloc(sizeof(double));
+			values[0] = PG_GETARG_FLOAT8(4);
+			nvalues = 1;
+		}
+
+		state = tdigest_aggstate_allocate(0, nvalues, compression);
+
+		if (values)
+		{
+			memcpy(state->values, values, sizeof(double) * nvalues);
+			pfree(values);
+		}
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * When adding too many values (than would fit into an empty buffer, and
+	 * thus likely causing too many compactions), we instead build a t-digest
+	 * and them merge it into the existing state.
+	 *
+	 * This is much faster, because the t-digest can be generated in one go,
+	 * so there can be only one compaction at most.
+	 */
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		int			i;
+		tdigest_t  *new;
+		double		value = PG_GETARG_FLOAT8(1);
+
+		new = tdigest_generate(state->compression, value, count);
+
+		/* XXX maybe not necessary if there's enough space in the buffer */
+		tdigest_compact(state);
+
+		for (i = 0; i < new->ncentroids; i++)
+		{
+			simple_centroid_t   *s = &new->centroids[i];
+
+			state->centroids[state->ncentroids].count = s->count;
+			state->centroids[state->ncentroids].mean = value;
+			state->ncentroids++;
+			state->count += s->count;
+		}
+
+		count = 0;
+	}
+
+	/*
+	 * If there are only a couple values, just add them one by one, so that
+	 * we do proper compaction and sizing of centroids. Otherwise we might end
+	 * up with oversized centroid on the tails etc.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
 	PG_RETURN_POINTER(state);
 }
@@ -1053,7 +1404,7 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -1126,7 +1477,7 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -1196,6 +1547,88 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 
 /*
  * Add a value to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with an array of percentiles.
+ */
+Datum
+tdigest_add_double_array_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int compression = PG_GETARG_INT32(3);
+		double *percentiles;
+		int		npercentiles;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		percentiles = array_to_double(fcinfo,
+									  PG_GETARG_ARRAYTYPE_P(4),
+									  &npercentiles);
+
+		check_percentiles(percentiles, npercentiles);
+
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+
+		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
+
+		pfree(percentiles);
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * Add the values one by one, not as one large centroid with the count.
+	 * We do it like this to allow proper compaction and sizing of centroids,
+	 * otherwise we might end up with oversized centroid on the tails etc.
+	 *
+	 * XXX If this turns out a bit too expensive, we may try determining the
+	 * size by looking for the smallest centroid covering this value.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value to the tdigest (create one if needed). Transition function
  * for tdigest aggregate with an array of values.
  */
 Datum
@@ -1250,6 +1683,86 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with an array of values.
+ */
+Datum
+tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
+{
+	int64				i;
+	int64				count;
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int compression = PG_GETARG_INT32(3);
+		double *values;
+		int		nvalues;
+		MemoryContext	oldcontext;
+
+		check_compression(compression);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		values = array_to_double(fcinfo,
+								 PG_GETARG_ARRAYTYPE_P(4),
+								 &nvalues);
+
+		state = tdigest_aggstate_allocate(0, nvalues, compression);
+
+		memcpy(state->values, values, sizeof(double) * nvalues);
+
+		pfree(values);
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+
+	Assert(count > 0);
+
+	/*
+	 * Add the values one by one, not as one large centroid with the count.
+	 * We do it like this to allow proper compaction and sizing of centroids,
+	 * otherwise we might end up with oversized centroid on the tails etc.
+	 *
+	 * XXX If this turns out a bit too expensive, we may try determining the
+	 * size by looking for the smallest centroid covering this value.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
 	PG_RETURN_POINTER(state);
 }
@@ -1317,7 +1830,7 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -1384,7 +1897,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -1793,13 +2306,13 @@ tdigest_in(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
-		double	sum;
+		double	mean;
 
-		if (sscanf(ptr, " (%lf, " INT64_FORMAT ")", &sum, &count) != 2)
+		if (sscanf(ptr, " (%lf, " INT64_FORMAT ")", &mean, &count) != 2)
 			elog(ERROR, "failed to parse centroid");
 
 		digest->centroids[i].count = count;
-		digest->centroids[i].sum = sum;
+		digest->centroids[i].mean = mean;
 
 		if (count <= 0)
 			ereport(ERROR,
@@ -1838,7 +2351,7 @@ tdigest_out(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 		appendStringInfo(&str, " (%lf, " INT64_FORMAT ")",
-						 digest->centroids[i].sum,
+						 digest->centroids[i].mean,
 						 digest->centroids[i].count);
 
 	PG_RETURN_CSTRING(str.data);
@@ -1874,7 +2387,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
-		digest->centroids[i].sum = pq_getmsgfloat8(buf);
+		digest->centroids[i].mean = pq_getmsgfloat8(buf);
 		digest->centroids[i].count = pq_getmsgint64(buf);
 	}
 
@@ -1897,7 +2410,7 @@ tdigest_send(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
-		pq_sendfloat8(&buf, digest->centroids[i].sum);
+		pq_sendfloat8(&buf, digest->centroids[i].mean);
 		pq_sendint64(&buf, digest->centroids[i].count);
 	}
 
