@@ -4,6 +4,7 @@
 SET client_min_messages = 'WARNING';
 \i tdigest--1.0.0.sql
 \i tdigest--1.0.0--1.0.1.sql
+\i tdigest--1.0.1--1.0.2.sql
 SET client_min_messages = 'NOTICE';
 
 \set ECHO all
@@ -970,3 +971,76 @@ SELECT * FROM (
         GROUP BY perc.percentiles
     ) foo
 ) bar where v2 > v1;
+
+-- Verify that <value, count> API produces the same results as if inserting
+-- the values one by one. We don't want to compare the exact values because
+-- of possible rounding differences on various platforms, so we compute two
+-- digests - ony using the simple API, one using the <value,count> API, and
+-- compare those.
+
+-- first, compare the digests directly
+with
+  data as (select random() as value, (10 + random() * 1000)::int as count from generate_series(1,100)),
+  data_expanded as (select value from data, lateral generate_series(1,data.count)),
+  digest as (select tdigest(value, count, 50) as d from data),
+  digest_expanded as (select tdigest(value, 50) as d from data_expanded)
+select
+  sum(tdigest_count(d)) between 1000 and 101000 as valid_count,
+  (select d::text from digest) = (select d::text from digest_expanded) as same_result
+from digest;
+
+-- now compare the percentiles and inverse percentiles (kinda redundant)
+with
+  data as (select random() as value, (10 + random() * 1000)::int as count from generate_series(1,100)),
+  data_expanded as (select value from data, lateral generate_series(1,data.count)),
+  digest as (select tdigest(value, count, 100) as d from data),
+  digest_expanded as (select tdigest(value, 100) as d from data_expanded)
+select
+  sum(tdigest_count(d)) between 1000 and 101000 as valid_count,
+  (select tdigest_percentile(d, ARRAY[0.05, 0.25, 0.5, 0.75, 0.95]) from digest) = (select tdigest_percentile(d, ARRAY[0.05, 0.25, 0.5, 0.75, 0.95]) from digest_expanded) as same_result
+from digest;
+
+with
+  data as (select random() as value, (10 + random() * 1000)::int as count from generate_series(1,100)),
+  data_expanded as (select value from data, lateral generate_series(1,data.count)),
+  digest as (select tdigest(value, count, 100) as d from data),
+  digest_expanded as (select tdigest(value, 100) as d from data_expanded)
+select
+  sum(tdigest_count(d)) between 1000 and 101000 as valid_count,
+  (select tdigest_percentile_of(d, ARRAY[0.05, 0.25, 0.5, 0.75, 0.95]) from digest) = (select tdigest_percentile_of(d, ARRAY[0.05, 0.25, 0.5, 0.75, 0.95]) from digest_expanded) as same_result
+from digest;
+
+
+-- now, compare the percentiles and inverse percentiles
+with
+  data as (select random() as value, (10 + random() * 1000)::int as count from generate_series(1,100)),
+  data_expanded as (select value from data, lateral generate_series(1,data.count)),
+  perc50 as (select tdigest_percentile(value, count, 75, 0.5) as p from data),
+  perc50_expanded as (select tdigest_percentile(value, 75, 0.5) as p from data_expanded)
+select
+  (select p from perc50) = (select p from perc50_expanded) as same_result;
+
+with
+  data as (select random() as value, (10 + random() * 1000)::int as count from generate_series(1,100)),
+  data_expanded as (select value from data, lateral generate_series(1,data.count)),
+  perc50 as (select tdigest_percentile_of(value, count, 66, 0.5) as p from data),
+  perc50_expanded as (select tdigest_percentile_of(value, 66, 0.5) as p from data_expanded)
+select
+  (select p from perc50) = (select p from perc50_expanded) as same_result;
+
+-- and finally test the 'array' variants too
+with
+  data as (select random() as value, (10 + random() * 1000)::int as count from generate_series(1,100)),
+  data_expanded as (select value from data, lateral generate_series(1,data.count)),
+  perc50 as (select tdigest_percentile(value, count, 125, ARRAY[0.5, 0.25, 0.5, 0.75, 0.95]) as p from data),
+  perc50_expanded as (select tdigest_percentile(value, 125, ARRAY[0.5, 0.25, 0.5, 0.75, 0.95]) as p from data_expanded)
+select
+  (select p from perc50) = (select p from perc50_expanded) as same_result;
+
+with
+  data as (select random() as value, (10 + random() * 1000)::int as count from generate_series(1,100)),
+  data_expanded as (select value from data, lateral generate_series(1,data.count)),
+  perc50 as (select tdigest_percentile_of(value, count, 150, ARRAY[0.5, 0.25, 0.5, 0.75, 0.95]) as p from data),
+  perc50_expanded as (select tdigest_percentile_of(value, 150, ARRAY[0.5, 0.25, 0.5, 0.75, 0.95]) as p from data_expanded)
+select
+  (select p from perc50) = (select p from perc50_expanded) as same_result;
