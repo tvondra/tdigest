@@ -882,7 +882,7 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double called in non-aggregate context");
+		elog(ERROR, "tdigest_add_double_count called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
