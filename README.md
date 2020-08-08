@@ -151,6 +151,65 @@ of 640:1. As the digest size is not tied to the number of items, this will
 only improve for larger data set.
 
 
+## Incremental updates
+
+An existing t-digest may be updated incrementally, either by adding a single
+value, or by merging-in a whole t-digest. For example, it's possible to add
+1000 random values to the t-digest like this:
+
+```
+DO LANGUAGE plpgsql $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN (SELECT random() AS v FROM generate_series(1,1000)) LOOP
+    UPDATE t SET d = tdigest_add(d, r.v);
+  END LOOP;
+END $$;
+```
+
+The overhead of doing this is fairly high, though - the t-digest has to be
+deserialized and serialized over and over, for each value we're adding.
+That overhead may be reduced by pre-aggregating data, either into an array
+or a t-digest.
+
+```
+DO LANGUAGE plpgsql $$
+DECLARE
+  a double precision[];
+BEGIN
+  SELECT array_agg(random()) INTO a FROM generate_series(1,1000);
+  UPDATE t SET d = tdigest_add(d, a);
+END $$;
+```
+
+Alternatively, it's possible to use pre-aggregated t-digest values instead
+of the arrays:
+
+```
+DO LANGUAGE plpgsql $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN (SELECT mod(i,3) AS a, tdigest(random(),100) AS d FROM generate_series(1,1000) s(i) GROUP BY mod(i,3)) LOOP
+    UPDATE t SET d = tdigest_union(d, r.d);
+  END LOOP;
+END $$;
+```
+
+It may be undesirable to perform compaction after every incremental update
+(esp. when adding the values one by one).  All functions in the incremental
+API allow disabling compaction by setting the `compact` parameter to `false`.
+The disadvantage is that without the compaction, the resulting digests may
+be somewhat larger (by a factor of 10). It's advisable to use either the
+multi-value functions (with compaction after each batch) if possible, or
+force compaction, e.g. by doing something like this:
+
+```
+UPDATE t SET d = tdigest_union(NULL, d);
+```
+
+
 ## Functions
 
 ### `tdigest_percentile(value, accuracy, percentile)`
@@ -324,6 +383,61 @@ SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
 
 - `tdigest` - t-digest to aggregate and process
 - `hypothetical_value` - hypothetical values
+
+
+### `tdigest_add(tdigest, double precision)`
+
+Performs incremental update of the t-digest by adding a single value.
+
+#### Synopsis
+
+```
+UPDATE t SET d = tdigest_add(d, random());
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to update
+- `element` - value to add to the digest
+- `compression` - compression t (used when t-digest is `NULL`)
+- `compact` - force compaction (default: true)
+
+
+### `tdigest_add(tdigest, double precision[])`
+
+Performs incremental update of the t-digest by adding values from an array.
+
+#### Synopsis
+
+```
+UPDATE t SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to update
+- `elements` - array of values to add to the digest
+- `compression` - compression t (used when t-digest is `NULL`)
+- `compact` - force compaction (default: true)
+
+
+### `tdigest_union(tdigest, tdigest)`
+
+Performs incremental update of the t-digest by merging-in another digest.
+
+#### Synopsis
+
+```
+WITH x AS (SELECT tdigest(random(), 100) AS d FROM generate_series(1,1000))
+UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to update
+- `tdigest_add` - t-digest to merge into `tdigest`
+- `compression` - compression t (used when t-digest is `NULL`)
+- `compact` - force compaction (default: true)
 
 
 Notes

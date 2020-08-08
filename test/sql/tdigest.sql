@@ -4,6 +4,7 @@
 SET client_min_messages = 'WARNING';
 \i tdigest--1.0.0.sql
 \i tdigest--1.0.0--1.0.1.sql
+\i tdigest--1.0.1--1.1.0.sql
 SET client_min_messages = 'NOTICE';
 
 \set ECHO all
@@ -970,3 +971,58 @@ SELECT * FROM (
         GROUP BY perc.percentiles
     ) foo
 ) bar where v2 > v1;
+
+-- test incremental API (adding values one by one)
+CREATE TABLE t (d tdigest);
+INSERT INTO t VALUES (NULL);
+
+-- check this produces the same result building the tdigest at once, but we
+-- need to be careful about feeding the data in the same order, and we must
+-- not compactify the t-digest after each increment
+DO LANGUAGE plpgsql $$
+DECLARE
+  r RECORD;
+BEGIN
+    FOR r IN (SELECT i FROM generate_series(1,1000) s(i) ORDER BY md5(i::text)) LOOP
+        UPDATE t SET d = tdigest_add(d, r.i, 100, false);
+    END LOOP;
+END$$;
+
+-- compare the results, but do force a compaction of the incremental result
+WITH x AS (SELECT i FROM generate_series(1,1000) s(i) ORDER BY md5(i::text))
+SELECT (SELECT tdigest(d)::text FROM t) = (SELECT tdigest(x.i, 100)::text FROM x) AS match;
+
+-- now try the same thing with bulk incremental update (using arrays)
+TRUNCATE t;
+INSERT INTO t VALUES (NULL);
+
+DO LANGUAGE plpgsql $$
+DECLARE
+  r RECORD;
+BEGIN
+    FOR r IN (SELECT a, array_agg(i::double precision) AS v FROM (SELECT mod(i,5) AS a, i FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), md5(i::text)) foo GROUP BY a ORDER BY a) LOOP
+        UPDATE t SET d = tdigest_add(d, r.v, 100, false);
+    END LOOP;
+END$$;
+
+-- compare the results, but do force a compaction of the incremental result
+WITH x AS (SELECT mod(i,5) AS a, i::double precision AS d FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), i)
+SELECT (SELECT tdigest(d)::text FROM t) = (SELECT tdigest(x.d, 100)::text FROM x);
+
+-- now try the same thing with bulk incremental update (using t-digests)
+TRUNCATE t;
+INSERT INTO t VALUES (NULL);
+
+DO LANGUAGE plpgsql $$
+DECLARE
+  r RECORD;
+BEGIN
+    FOR r IN (SELECT a, tdigest(i,100) AS d FROM (SELECT mod(i,5) AS a, i FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), md5(i::text)) foo GROUP BY a ORDER BY a) LOOP
+        UPDATE t SET d = tdigest_union(d, r.d, false);
+    END LOOP;
+END$$;
+
+-- compare the results, but do force a compaction of the incremental result
+WITH x AS (SELECT a, tdigest(i,100) AS d FROM (SELECT mod(i,5) AS a, i FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), md5(i::text)) foo GROUP BY a ORDER BY a)
+SELECT (SELECT tdigest(d)::text FROM t) = (SELECT tdigest(x.d)::text FROM x);
+
