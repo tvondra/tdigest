@@ -445,7 +445,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 	for (i = 0; i < state->npercentiles; i++)
 	{
-		int64	count;
+		double	count;
 		double	delta;
 		double	goal = (state->percentiles[i] * state->count);
 		bool	on_the_right;
@@ -552,7 +552,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 	for (i = 0; i < state->nvalues; i++)
 	{
 		int			j;
-		int64		count;
+		double		count;
 		centroid_t *c = NULL;
 		centroid_t *prev;
 		double		value = state->values[i];
