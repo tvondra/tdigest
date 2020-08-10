@@ -877,7 +877,7 @@ Datum
 tdigest_add_double_count(PG_FUNCTION_ARGS)
 {
 	tdigest_aggstate_t *state;
-
+	int64 count;
 	MemoryContext aggcontext;
 
 	/* cannot be called directly because of internal-type argument */
@@ -929,8 +929,13 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	tdigest_add_centroid(state, PG_GETARG_FLOAT8(1), PG_GETARG_INT64(2));
-
+	if (PG_ARGISNULL(2))
+	{
+		count = 1;
+	}
+	else
+		count = PG_GETARG_INT64(2);
+	tdigest_add_centroid(state, PG_GETARG_FLOAT8(1), count);
 	PG_RETURN_POINTER(state);
 }
 

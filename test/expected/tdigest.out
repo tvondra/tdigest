@@ -1,4 +1,44 @@
-\set ECHO none
+SET
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql:tdigest--1.0.0.sql:70: ERROR:  function "tdigest_percentile" already exists with same argument types
+psql:tdigest--1.0.0.sql:80: ERROR:  function "tdigest_percentile" already exists with same argument types
+psql:tdigest--1.0.0.sql:90: ERROR:  function "tdigest_percentile_of" already exists with same argument types
+psql:tdigest--1.0.0.sql:100: ERROR:  function "tdigest_percentile_of" already exists with same argument types
+psql:tdigest--1.0.0.sql:102: ERROR:  type "tdigest" already exists
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql:tdigest--1.0.0.sql:131: ERROR:  type "tdigest" already exists
+CREATE FUNCTION
+psql:tdigest--1.0.0.sql:146: ERROR:  function "tdigest" already exists with same argument types
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql:tdigest--1.0.0.sql:181: ERROR:  function "tdigest_percentile" already exists with same argument types
+psql:tdigest--1.0.0.sql:191: ERROR:  function "tdigest_percentile" already exists with same argument types
+psql:tdigest--1.0.0.sql:201: ERROR:  function "tdigest_percentile_of" already exists with same argument types
+psql:tdigest--1.0.0.sql:211: ERROR:  function "tdigest_percentile_of" already exists with same argument types
+psql:tdigest--1.0.0.sql:221: ERROR:  function "tdigest" already exists with same argument types
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+psql:tdigest--1.0.0--1.0.1.sql:19: ERROR:  function "tdigest" already exists with same argument types
+psql:tdigest--1.0.0--1.0.1.sql:29: ERROR:  function "tdigest_percentile" already exists with same argument types
+SET
 -- SRF function implementing a simple deterministict PRNG
 CREATE OR REPLACE FUNCTION prng(nrows int, seed int = 23982, p1 bigint = 16807, p2 bigint = 0, n bigint = 2147483647) RETURNS SETOF double precision AS $$
 DECLARE
@@ -13,6 +53,7 @@ BEGIN
     RETURN;
 END;
 $$ LANGUAGE plpgsql;
+CREATE FUNCTION
 CREATE OR REPLACE FUNCTION random_normal(nrows int, mean double precision = 0.5, stddev double precision = 0.1, minval double precision = 0.0, maxval double precision = 1.0, seed int = 23982, p1 bigint = 16807, p2 bigint = 0, n bigint = 2147483647) RETURNS SETOF double precision AS $$
 DECLARE
     v BIGINT := seed;
@@ -62,6 +103,7 @@ BEGIN
 
 END;
 $$ LANGUAGE plpgsql;
+CREATE FUNCTION
 -----------------------------------------------------------
 -- nice data set with ordered (asc) / evenly-spaced data --
 -----------------------------------------------------------
@@ -1226,6 +1268,7 @@ FROM (
 
 -- verify we can store tdigest in a summary table
 CREATE TABLE intermediate_tdigest (grouping int, summary tdigest);
+psql:test/sql/tdigest.sql:917: ERROR:  relation "intermediate_tdigest" already exists
 WITH data AS (SELECT row_number() OVER () AS i, pow(z, 4) AS x FROM random_normal(1000000) s(z))
 INSERT INTO intermediate_tdigest
 SELECT
@@ -1233,6 +1276,7 @@ SELECT
     tdigest(x, 100) AS summary
 FROM data
 GROUP BY i % 10;
+INSERT 0 10
 WITH data AS (SELECT pow(z, 4) AS x FROM random_normal(1000000) s(z)),
      intermediate AS (SELECT tdigest_percentile(summary, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS a FROM intermediate_tdigest),
      pg_percentile AS (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) AS b FROM data)
@@ -1277,6 +1321,11 @@ FROM (
  0.99 | t        |    
 (2 rows)
 
+drop extension tdigest CASCADE;
+psql:test/sql/tdigest.sql:957: NOTICE:  drop cascades to column summary of table intermediate_tdigest
+DROP EXTENSION
+create extension tdigest;
+CREATE EXTENSION
 -- verify <value, count> API
 select sum(tdigest_count(t)), round(tdigest_percentile(t, 0.5)::numeric, 2)
  from (
@@ -1284,7 +1333,7 @@ select sum(tdigest_count(t)), round(tdigest_percentile(t, 0.5)::numeric, 2)
  from (
  select unnest(v) as v, unnest(w) as w from (select ARRAY[0.1,0.2,0.3] as v,  ARRAY[50,50,100] as w) as q
  ) as s) as s;
- sum | round
+ sum | round 
 -----+-------
  200 |  0.23
 (1 row)
@@ -1298,3 +1347,26 @@ select round(tdigest_percentile(v*w, w, 100, 0.5)::numeric, 2) as p50
 ------
  0.23
 (1 row)
+
+-- verify <value, count> API when count is null
+select sum(tdigest_count(t)), round(tdigest_percentile(t, 0.5)::numeric, 2)
+ from (
+ select tdigest(v*w, null, 100) as t
+ from (
+ select unnest(v) as v, unnest(w) as w from (select ARRAY[0.1,0.2,0.3] as v,  ARRAY[50,50,100] as w) as q
+ ) as s) as s;
+ sum | round 
+-----+-------
+   3 | 10.00
+(1 row)
+
+-- verify tdigest_percentile(double precision, bigint, int, double precision) API when count is null
+select round(tdigest_percentile(v*w, null, 100, 0.5)::numeric, 2) as p50
+ from (
+ select unnest(v) as v, unnest(w) as w from (select ARRAY[0.1,0.2,0.3] as v,  ARRAY[50,50,100] as w) as q
+) as s;
+  p50  
+-------
+ 10.00
+(1 row)
+

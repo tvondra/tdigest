@@ -954,6 +954,9 @@ FROM (
     FROM data
 ) foo;
 
+drop extension tdigest CASCADE;
+create extension tdigest;
+
 -- verify <value, count> API
 select sum(tdigest_count(t)), round(tdigest_percentile(t, 0.5)::numeric, 2)
  from (
@@ -964,6 +967,20 @@ select sum(tdigest_count(t)), round(tdigest_percentile(t, 0.5)::numeric, 2)
 
 -- verify tdigest_percentile(double precision, bigint, int, double precision) API
 select round(tdigest_percentile(v*w, w, 100, 0.5)::numeric, 2) as p50
+ from (
+ select unnest(v) as v, unnest(w) as w from (select ARRAY[0.1,0.2,0.3] as v,  ARRAY[50,50,100] as w) as q
+) as s;
+
+-- verify <value, count> API when count is null
+select sum(tdigest_count(t)), round(tdigest_percentile(t, 0.5)::numeric, 2)
+ from (
+ select tdigest(v*w, null, 100) as t
+ from (
+ select unnest(v) as v, unnest(w) as w from (select ARRAY[0.1,0.2,0.3] as v,  ARRAY[50,50,100] as w) as q
+ ) as s) as s;
+
+-- verify tdigest_percentile(double precision, bigint, int, double precision) API when count is null
+select round(tdigest_percentile(v*w, null, 100, 0.5)::numeric, 2) as p50
  from (
  select unnest(v) as v, unnest(w) as w from (select ARRAY[0.1,0.2,0.3] as v,  ARRAY[50,50,100] as w) as q
 ) as s;
