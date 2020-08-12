@@ -952,3 +952,20 @@ FROM (
         unnest(percentile_cont(ARRAY[0.01, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
+
+-- check that the computed percentiles are perfectly correlated (don't decrease for higher p values)
+-- first test on a tiny t-digest with all centroids having count = 1
+WITH
+-- percentiles to compute
+perc AS (SELECT array_agg((i / 100.0)::double precision) AS percentiles FROM generate_series(1,99) s(i)),
+-- input data (just 15 points)
+input_data AS (select i::double precision AS val FROM generate_series(1,15) s(i))
+SELECT * FROM (
+    SELECT p, v AS v1, lag(v, 1) OVER (ORDER BY p) v2 FROM (
+        SELECT
+            unnest(perc.percentiles) p,
+            unnest(tdigest_percentile(input_data.val, 100, perc.percentiles)) v
+        FROM perc, input_data
+        GROUP BY perc.percentiles
+    ) foo
+) bar where v2 > v1;
