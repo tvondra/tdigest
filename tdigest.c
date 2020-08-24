@@ -1844,10 +1844,10 @@ tdigest_send(PG_FUNCTION_ARGS)
 
 	pq_begintypsend(&buf);
 
-	pq_sendint32(&buf, digest->flags);
+	pq_sendint(&buf, digest->flags, 4);
 	pq_sendint64(&buf, digest->count);
-	pq_sendint32(&buf, digest->compression);
-	pq_sendint32(&buf, digest->ncentroids);
+	pq_sendint(&buf, digest->compression, 4);
+	pq_sendint(&buf, digest->ncentroids, 4);
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
