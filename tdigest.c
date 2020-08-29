@@ -1710,7 +1710,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 	int			header_length;
 	char	   *ptr;
 
-	r = sscanf(str, "flags %d count %ld compression %d centroids %d%n",
+	r = sscanf(str, "flags %d count " INT64_FORMAT " compression %d centroids %d%n",
 			   &flags, &count, &compression, &ncentroids, &header_length);
 
 	if (r != 4)
@@ -1749,7 +1749,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 	{
 		double	sum;
 
-		if (sscanf(ptr, " (%lf, %ld)", &sum, &count) != 2)
+		if (sscanf(ptr, " (%lf, " INT64_FORMAT ")", &sum, &count) != 2)
 			elog(ERROR, "failed to parse centroid");
 
 		digest->centroids[i].count = count;
@@ -1786,12 +1786,12 @@ tdigest_out(PG_FUNCTION_ARGS)
 
 	initStringInfo(&str);
 
-	appendStringInfo(&str, "flags %d count %ld compression %d centroids %d",
+	appendStringInfo(&str, "flags %d count " INT64_FORMAT " compression %d centroids %d",
 					 digest->flags, digest->count, digest->compression,
 					 digest->ncentroids);
 
 	for (i = 0; i < digest->ncentroids; i++)
-		appendStringInfo(&str, " (%lf, %ld)",
+		appendStringInfo(&str, " (%lf, " INT64_FORMAT ")",
 						 digest->centroids[i].sum,
 						 digest->centroids[i].count);
 
