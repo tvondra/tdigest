@@ -3,6 +3,7 @@
 -- disable the notices for the create script (shell types etc.)
 SET client_min_messages = 'WARNING';
 \i tdigest--1.0.0.sql
+\i tdigest--1.0.0--1.0.1.sql
 SET client_min_messages = 'NOTICE';
 
 \set ECHO all
