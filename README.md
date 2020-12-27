@@ -348,6 +348,49 @@ SELECT CAST(d AS json) FROM (
 - `tdigest` - t-digest to cast to a `json` value
 
 
+### `tdigest_mean(value, accuracy, low, high)`
+
+Computes trimmed mean of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_mean(t.c, 100, 0.1, 0.9) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+### `tdigest_mean(tdigest, low, high)`
+
+Computes trimmed mean of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_mean(d, 0.05, 0.95) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `tdigest` - tdigest to calculate mean from
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
 Notes
 -----
 

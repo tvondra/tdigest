@@ -976,3 +976,23 @@ SELECT * FROM (
 SELECT cast(tdigest(i / 10000.0, 10) as json) from generate_series(1,10000) s(i);
 SELECT cast(tdigest(i / 10000.0, 25) as json) from generate_series(1,10000) s(i);
 SELECT cast(tdigest(i / 10000.0, 100) as json) from generate_series(1,10000) s(i);
+
+-- check trimmed mean (from raw data)
+-- we compare the result to a range, to deal with the randomness
+WITH data AS (SELECT random() AS r FROM generate_series(1,10000) AS x)
+SELECT
+    tdigest_mean(data.r, 50, 0.1, 0.9) between 0.45 and 0.55 AS mean_10_90,
+    tdigest_mean(data.r, 50, 0.25, 0.75) between 0.45 and 0.55 AS mean_25_75,
+    tdigest_mean(data.r, 50, 0.0, 0.5) between 0.2 and 0.3 AS mean_0_50,
+    tdigest_mean(data.r, 50, 0.5, 1.0) between 0.7 and 0.8 AS mean_50_100
+FROM data;
+
+-- check trimmed mean (from pracalculated tdigest)
+-- we compare the result to a range, to deal with the randomness
+WITH data AS (SELECT tdigest(random(), 50) AS d FROM generate_series(1,10000) AS x)
+SELECT
+    tdigest_mean(data.d, 0.1, 0.9) between 0.45 and 0.55 AS mean_10_90,
+    tdigest_mean(data.d, 0.25, 0.75) between 0.45 and 0.55 AS mean_25_75,
+    tdigest_mean(data.d, 0.0, 0.5) between 0.2 and 0.3 AS mean_0_50,
+    tdigest_mean(data.d, 0.5, 1.0) between 0.7 and 0.8 AS mean_50_100
+FROM data;
