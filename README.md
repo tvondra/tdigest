@@ -326,6 +326,28 @@ SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
 - `hypothetical_value` - hypothetical values
 
 
+### `tdigest_json(tdigest)`
+
+Returns the t-digest as a JSON value. The function is also exposed as a
+cast from `tdigest` to `json`.
+
+#### Synopsis
+
+```
+SELECT tdigest_json(d) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+
+SELECT CAST(d AS json) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to cast to a `json` value
+
+
 Notes
 -----
 
