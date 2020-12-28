@@ -7,7 +7,7 @@ The algorithm is also very friendly to parallel programs.
 The t-digest data structure was introduced by Ted Dunning in 2013, and more
 detailed description and example implementation is available in his github
 repository [1]. In particular, see the paper [2] explaining the idea. Some
-of the code was inspired by tdigestc [3] available on github.
+of the code was inspired by tdigestc [3] and tdigest [4] by ajwerner.
 
 The accuracy of estimates produced by t-digests can be orders of magnitude
 more accurate than those produced by previous digest algorithms in spite of
@@ -352,3 +352,5 @@ more details.
 [2] https://github.com/tdunning/t-digest/blob/master/docs/t-digest-paper/histo.pdf
 
 [3] https://github.com/ajwerner/tdigestc
+
+[4] https://github.com/ajwerner/tdigest
