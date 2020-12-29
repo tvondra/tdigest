@@ -25,6 +25,12 @@ The extension provides two functions, which you can see as a replacement of
 * `tdigest_percentile(value double precision, compression int,
                       quantiles double precision[])`
 
+* `tdigest_percentile_of(value double precision, compression int,
+                         value double precision)`
+
+* `tdigest_percentile_of(value double precision, compression int,
+                         values double precision[])`
+
 That is, instead of running
 
 ```
@@ -86,6 +92,12 @@ functions (with `tdigest` as the first argument).
 
 * `tdigest_percentile(digest tdigest, compression int,
                       quantiles double precision[])`
+
+* `tdigest_percentile_of(digest tdigest, compression int,
+                         value double precision)`
+
+* `tdigest_percentile_of(digest tdigest, compression int,
+                         values double precision[])`
 
 So for example you may do this:
 
