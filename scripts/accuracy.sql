@@ -1,4 +1,4 @@
-drop tabele if exists t;
+drop table if exists t;
 create table t (v double precision);
 
 drop table if exists datasets;

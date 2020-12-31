@@ -1,4 +1,4 @@
-drop tabele if exists t;
+drop table if exists t;
 create table t (v double precision);
 
 drop table if exists datasets;
@@ -82,6 +82,8 @@ returns setof record language plpgsql as $$
 declare
     d record;
 begin
+
+    raise notice 'values % min % max %', nvalues, minvalues, maxvalues;
 
     for d in (select * from datasets order by ds_name) loop
 
