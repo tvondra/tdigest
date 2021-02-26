@@ -955,8 +955,11 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	 * XXX If this turns out a bit too expensive, we may try determining the
 	 * size by looking for the smallest centroid covering this value.
 	 */
-	for (i = 0; i < count; i++)
-		tdigest_add(state, PG_GETARG_FLOAT8(1));
+	if (count < 10000) {
+	        for (i = 0; i < count; i++)
+		        tdigest_add(state, PG_GETARG_FLOAT8(1));
+	} else
+	        tdigest_add_centroid(state, PG_GETARG_FLOAT8(1)*count, count);
 
 	PG_RETURN_POINTER(state);
 }
