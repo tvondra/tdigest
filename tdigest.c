@@ -877,6 +877,98 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Generate a t-digest representing a value with a given count.
+ *
+ * This is an alternative to using a single centroid, representing all points
+ * with the same value. It forms a proper t-diget, following all the rules on
+ * centroid sizes, etc.
+ */
+static tdigest_t *
+tdigest_generate(int compression, double value, int64 count)
+{
+	int64		count_so_far;
+	int64		count_remaining;
+	double		denom;
+	double		normalizer;
+	int			i;
+	tdigest_t  *result = tdigest_allocate(compression);
+
+	denom = 2 * M_PI * count * log(count);
+	normalizer = compression / denom;
+
+	count_so_far = 0;	/* does not include current centroid */
+	count_remaining = count;
+
+	/*
+	 * Create largest possible centroids, until we run out of items. In each
+	 * step we need to find the largest possible well-formed centroid, i.e. one
+	 * that matches the two conditions:
+	 *
+	 *	z <= q0 * (1 - q0)    where q0 = (count_so_far / count)
+	 *
+	 *	z <= q2 * (1 - q2)    where q2 = (count_so_far + X) / count;
+	 *
+	 * with z = (X * normalizer). X being the value we need to determine. Solving
+	 * q0 is trivial, while q2 leads to a quadratic equation with two roots.
+	 * 
+	 */
+	while (count_remaining > 0)
+	{
+		int64	proposed_count;
+		double	q0;
+		double	a, b, c;
+		double	r1, r2;
+
+		/* solving z <= q0 * (1 - q0) is trivial */
+		q0 = count_so_far / (double) count;
+		r1 = (q0 * (1 - q0) / normalizer);
+
+		/*
+		 * Solve z <= q2 * (1 - q2) as a quadratic equation. The inequatily we
+		 * need to solve is
+		 *
+		 *	0 <= a * x^2 + b * x + c
+		 *
+		 * with these coefficients.
+		 */
+		a = -1;
+		b = (count - 2 * count_so_far - count * count * normalizer);
+		c = (count_so_far * count - count_so_far * count_so_far);
+
+		/*
+		 * As this is an "upside down" parabola, the values between the roots
+		 * are positive - we're looking for the largest of the two values.
+		 */
+		r2 = Max((-b - sqrt(b * b - 4 * a * c)) / (2 * a),
+				 (-b + sqrt(b * b - 4 * a * c)) / (2 * a));
+
+		/* We need to meet both conditions, so use the smaller solution. */
+		proposed_count = floor(Min(r1, r2));
+
+		/*
+		 * It's possible to get very low values on the tails, but we must add
+		 * at least something, otherwise we'd get infinite loops.
+		 */
+		proposed_count = Max(proposed_count, 1);
+
+		/* add the centroid and update the added/removed counters */
+		result->count += proposed_count;
+		result->centroids[result->ncentroids].count = proposed_count;
+		result->centroids[result->ncentroids].sum = proposed_count * value;
+		result->ncentroids++;
+
+		count_so_far += proposed_count;
+		count_remaining -= proposed_count;
+	}
+
+	result->count = 0;
+	for (i = 0; i < result->ncentroids; i++)
+		result->count += result->centroids[i].count;
+
+	return result;
+}
+
+/*
  * Add a value with count to the tdigest (create one if needed). Transition
  * function for tdigest aggregate with a single percentile.
  */
@@ -948,12 +1040,42 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	Assert(count > 0);
 
 	/*
-	 * Add the values one by one, not as one large centroid with the count.
-	 * We do it like this to allow proper compaction and sizing of centroids,
-	 * otherwise we might end up with oversized centroid on the tails etc.
+	 * When adding too many values (than would fit into an empty buffer, and
+	 * thus likely causing too many compactions), we instead build a t-digest
+	 * and them merge it into the existing state.
 	 *
-	 * XXX If this turns out a bit too expensive, we may try determining the
-	 * size by looking for the smallest centroid covering this value.
+	 * This is much faster, because the t-digest can be generated in one go,
+	 * so there can be only one compaction at most.
+	 */
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		int			i;
+		tdigest_t  *new;
+		double		value = PG_GETARG_FLOAT8(1);
+
+		new = tdigest_generate(state->compression, value, count);
+
+		/* XXX maybe not necessary if there's enough space in the buffer */
+		tdigest_compact(state);
+
+		for (i = 0; i < new->ncentroids; i++)
+		{
+			simple_centroid_t   *s = &new->centroids[i];
+
+			state->centroids[state->ncentroids].sum = s->sum;
+			state->centroids[state->ncentroids].count = s->count;
+			state->centroids[state->ncentroids].mean = value;
+			state->ncentroids++;
+			state->count += s->count;
+		}
+
+		count = 0;
+	}
+
+	/*
+	 * If there are only a couple values, just add them one by one, so that
+	 * we do proper compaction and sizing of centroids. Otherwise we might end
+	 * up with oversized centroid on the tails etc.
 	 */
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
@@ -1098,12 +1220,42 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	Assert(count > 0);
 
 	/*
-	 * Add the values one by one, not as one large centroid with the count.
-	 * We do it like this to allow proper compaction and sizing of centroids,
-	 * otherwise we might end up with oversized centroid on the tails etc.
+	 * When adding too many values (than would fit into an empty buffer, and
+	 * thus likely causing too many compactions), we instead build a t-digest
+	 * and them merge it into the existing state.
 	 *
-	 * XXX If this turns out a bit too expensive, we may try determining the
-	 * size by looking for the smallest centroid covering this value.
+	 * This is much faster, because the t-digest can be generated in one go,
+	 * so there can be only one compaction at most.
+	 */
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		int			i;
+		tdigest_t  *new;
+		double		value = PG_GETARG_FLOAT8(1);
+
+		new = tdigest_generate(state->compression, value, count);
+
+		/* XXX maybe not necessary if there's enough space in the buffer */
+		tdigest_compact(state);
+
+		for (i = 0; i < new->ncentroids; i++)
+		{
+			simple_centroid_t   *s = &new->centroids[i];
+
+			state->centroids[state->ncentroids].sum = s->sum;
+			state->centroids[state->ncentroids].count = s->count;
+			state->centroids[state->ncentroids].mean = value;
+			state->ncentroids++;
+			state->count += s->count;
+		}
+
+		count = 0;
+	}
+
+	/*
+	 * If there are only a couple values, just add them one by one, so that
+	 * we do proper compaction and sizing of centroids. Otherwise we might end
+	 * up with oversized centroid on the tails etc.
 	 */
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
