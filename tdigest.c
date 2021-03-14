@@ -901,36 +901,28 @@ tdigest_generate(int compression, double value, int64 count)
 	{
 		int64	proposed_count;
 		double	q0;
-		double	q2;
-		double	z;
-		int64	i;
 		int64	max;
+		double	a, b, c;
+		double	r1, r2;
 
 		max = count - result->centroids[cur].count - count_so_far;
 
 		if (max == 0)
 			break;
 
-		i = 1;
-		while (i < max)
-		{
-			bool	should_add;
+		/* solve z <= q2 * (1 - q2) as a quadratic equation */
+		a = -1;
+		b = (count - 2 * count_so_far - count * count * normalizer);
+		c = (count_so_far * count - count_so_far * count_so_far);
 
-			proposed_count = result->centroids[cur].count + i;
-			z =  proposed_count * normalizer;
-			q0 = count_so_far / (double) count;
-			q2 = (count_so_far + proposed_count) / (double) count;
+		/* r1 = (-b + sqrt(b * b - 4 * a * c)) / (2 * a); */
+		r2 = (-b - sqrt(b * b - 4 * a * c)) / (2 * a);
 
-			should_add = (z <= (q0 * (1 - q0))) && (z <= (q2 * (1 - q2)));
+		q0 = count_so_far / (double) count;
 
-			if (!should_add)
-			{
-				proposed_count = (proposed_count - 1);
-				break;
-			}
+		r1 = (q0 * (1 - q0) / normalizer);
 
-			i++;
-		}
+		proposed_count = floor(Min(r1, r2));
 
 		if (proposed_count > result->centroids[cur].count)
 		{
@@ -947,7 +939,6 @@ tdigest_generate(int compression, double value, int64 count)
 			result->ncentroids++;
 		}
 	}
-
 }
 
 /*
