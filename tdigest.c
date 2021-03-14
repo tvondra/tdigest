@@ -240,6 +240,67 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 #endif
 }
 
+static void
+reverse_centroids(centroid_t *centroids, int ncentroids)
+{
+	int	start = 0,
+		end = (ncentroids - 1);
+
+	while (start < end)
+	{
+		centroid_t	tmp = centroids[start];
+		centroids[start] = centroids[end];
+		centroids[end] = tmp;
+
+		start++;
+		end--;
+	}
+}
+
+static void
+rebalance_centroids(centroid_t *centroids, int ncentroids,
+					int64 weight_before, int64 weight_after)
+{
+	double	ratio = weight_before / (double) weight_after;
+	int64	count_before = 0;
+	int64	count_after = 0;
+	int		start = 0;
+	int		end = (ncentroids - 1);
+	int		i;
+
+	centroid_t *scratch = palloc(sizeof(centroid_t) * ncentroids);
+
+	i = 0;
+	while (i < ncentroids)
+	{
+		while (i < ncentroids)
+		{
+			scratch[start] = centroids[i];
+			count_before += centroids[i].count;
+			i++;
+			start++;
+
+			if (count_before > count_after * ratio)
+				break;
+		}
+
+		while (i < ncentroids)
+		{
+			scratch[end] = centroids[i];
+			count_after += centroids[i].count;
+			i++;
+			end--;
+
+			if (count_before < count_after * ratio)
+				break;
+		}
+	}
+
+	memcpy(centroids, scratch, sizeof(centroid_t) * ncentroids);
+	pfree(scratch);
+}
+
+
 /*
  * Sort centroids in the digest.
  *
@@ -260,7 +321,9 @@ tdigest_sort(tdigest_aggstate_t *state)
 		e1,
 		e2,
 		i;
-	centroid_t *centroids;
+	int64	count_so_far;
+	int64	next_group;
+	int64	median_count;
 
 	/* when everything is already sorted, we're done */
 	if (state->ncentroids == state->nsorted)
@@ -271,56 +334,110 @@ tdigest_sort(tdigest_aggstate_t *state)
 			 state->ncentroids - state->nsorted,
 			 sizeof(centroid_t), centroid_cmp);
 
-	/* if there was no presorted part, we're done */
-	if (state->nsorted == 0)
-		return;
-
-	/* we need to do a merge sort, of the two sorted parts */
-	centroids = palloc(sizeof(centroid_t) * state->ncentroids);
-
-	/* first/last indexes of the sorted part */
-	s1 = 0;
-	e1 = state->nsorted - 1;
-
-	/* first/last indexes of the unsorted part */
-	s2 = state->nsorted;
-	e2 = state->ncentroids - 1;
-
-	i = 0;
-	while ((s1 <= e1) && (s2 <= e2))
+	/* if there is a presorted part, do a merge sort */
+	if (state->nsorted > 0)
 	{
-		if (centroid_cmp(&state->centroids[s1], &state->centroids[s2]) < 0)
+		/* we need to do a merge sort, of the two sorted parts */
+		centroid_t *centroids = palloc(sizeof(centroid_t) * state->ncentroids);
+
+		/* first/last indexes of the sorted part */
+		s1 = 0;
+		e1 = state->nsorted - 1;
+
+		/* first/last indexes of the unsorted part */
+		s2 = state->nsorted;
+		e2 = state->ncentroids - 1;
+
+		i = 0;
+		while ((s1 <= e1) && (s2 <= e2))
+		{
+			if (centroid_cmp(&state->centroids[s1], &state->centroids[s2]) < 0)
+			{
+				centroids[i++] = state->centroids[s1];
+				s1++;
+			}
+			else
+			{
+				centroids[i++] = state->centroids[s2];
+				s2++;
+			}
+		}
+
+		/* copy remaining bits from either part */
+
+		while (s1 <= e1)
 		{
 			centroids[i++] = state->centroids[s1];
 			s1++;
 		}
-		else
+
+		while (s2 <= e2)
 		{
 			centroids[i++] = state->centroids[s2];
 			s2++;
 		}
+
+		/* we should have exactly the expected number of centroids */
+		Assert(i == state->ncentroids);
+
+		/* copy the sorted data back */
+		memcpy(state->centroids, centroids, sizeof(centroid_t) * state->ncentroids);
+		pfree(centroids);
 	}
 
-	/* copy remaining bits from either part */
+	/*
+	 * The centroids are sorted by (mean,count). That's fine for centroids up
+	 * to median, but above median this ordering is incorrect for centroids
+	 * with the same mean (or for groups crossing the median boundary). To fix
+	 * this we 'rebalance' those groups. Those entirely above median can be
+	 * simply sorted in the opposite order, while those crossing the median
+	 * need to be rebalanced depending on what part is below/above median.
+	 */
+	count_so_far = 0;
+	next_group = 0;	/* includes count_so_far */
+	median_count = (state->count / 2);
 
-	while (s1 <= e1)
+	/*
+	 * Split the centroids into groups with the same mean, process each group
+	 * depending on whether it falls before/after median.
+	 */
+	i = 0;
+	while (i < state->ncentroids)
 	{
-		centroids[i++] = state->centroids[s1];
-		s1++;
+		int	j = i;
+		int	group_size = 0;
+
+		/* determine the end of the group */
+		while ((j < state->ncentroids) &&
+			   (state->centroids[i].mean == state->centroids[j].mean))
+		{
+			next_group += state->centroids[j].count;
+			group_size++;
+			j++;
+		}
+
+		/*
+		 * We can ignore groups of size 1 (number of centroids, not counts), as
+		 * those are trivially sorted.
+		 */
+		if (group_size > 1)
+		{
+			if (count_so_far >= median_count)
+			{
+				/* group fully above median - reverse the order */
+				reverse_centroids(&state->centroids[i], group_size);
+			}
+			else if (next_group >= median_count)	/* group split by median */
+			{
+				rebalance_centroids(&state->centroids[i], group_size,
+									median_count - count_so_far,
+									next_group - median_count);
+			}
+		}
+
+		i = j;
+		count_so_far = next_group;
 	}
-
-	while (s2 <= e2)
-	{
-		centroids[i++] = state->centroids[s2];
-		s2++;
-	}
-
-	/* we should have exactly the expected number of centroids */
-	Assert(i == state->ncentroids);
-
-	/* copy the sorted data back */
-	memcpy(state->centroids, centroids, sizeof(centroid_t) * state->ncentroids);
-	pfree(centroids);
 }
 
 /*
@@ -2153,10 +2270,11 @@ tdigest_combine(PG_FUNCTION_ARGS)
 /*
  * Comparator, ordering the centroids by mean value.
  *
- * When the mean is the same, we try ordering the centroids by count and
- * sum values, to define clear ordering. If all three values are the same,
- * the centroids are effectively indistinguishable and we consider them
- * to be equal.
+ * When the mean is the same, we try ordering the centroids by count.
+ *
+ * In principle, centroids with the same mean represent the same value,
+ * but we still need to care about the count to allow rebalancing the
+ * centroids later.
  */
 static int
 centroid_cmp(const void *a, const void *b)
@@ -2177,11 +2295,6 @@ centroid_cmp(const void *a, const void *b)
 	if (ca->count < cb->count)
 		return -1;
 	else if (ca->count > cb->count)
-		return 1;
-
-	if (ca->sum < cb->sum)
-		return -1;
-	else if (ca->sum > cb->sum)
 		return 1;
 
 	return 0;
