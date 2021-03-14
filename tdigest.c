@@ -289,7 +289,12 @@ tdigest_sort(tdigest_aggstate_t *state)
 	i = 0;
 	while ((s1 <= e1) && (s2 <= e2))
 	{
-		if (centroid_cmp(&state->centroids[s1], &state->centroids[s2]) < 0)
+		int cmp = centroid_cmp(&state->centroids[s1], &state->centroids[s2]);
+
+		if (cmp == 0)
+			cmp = (random() % 2 - 1);
+
+		if (cmp < 0)
 		{
 			centroids[i++] = state->centroids[s1];
 			s1++;
@@ -2100,7 +2105,7 @@ centroid_cmp(const void *a, const void *b)
 		return -1;
 	else if (ma > mb)
 		return 1;
-
+/*
 	if (ca->count < cb->count)
 		return -1;
 	else if (ca->count > cb->count)
@@ -2110,7 +2115,7 @@ centroid_cmp(const void *a, const void *b)
 		return -1;
 	else if (ca->sum > cb->sum)
 		return 1;
-
+*/
 	return 0;
 }
 
