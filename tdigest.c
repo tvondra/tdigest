@@ -1181,6 +1181,30 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 
 	Assert(count > 0);
 
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		int			i;
+		tdigest_t  *new;
+		double		value = PG_GETARG_FLOAT8(1);
+
+		new = tdigest_generate(state->compression, value, count);
+
+		tdigest_compact(state);
+
+		for (i = 0; i < new->ncentroids; i++)
+		{
+			simple_centroid_t   *s = &new->centroids[i];
+
+			state->centroids[state->ncentroids].sum = s->sum;
+			state->centroids[state->ncentroids].count = s->count;
+			state->centroids[state->ncentroids].mean = value;
+			state->ncentroids++;
+			state->count += s->count;
+		}
+
+		count = 0;
+	}
+
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
 	 * We do it like this to allow proper compaction and sizing of centroids,
