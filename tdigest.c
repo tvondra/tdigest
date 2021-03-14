@@ -876,6 +876,80 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(state);
 }
 
+static void
+tdigest_generate(int compression, double value, int64 count)
+{
+	int64		count_so_far;
+	int64		count_remaining;
+	double		denom;
+	double		normalizer;
+	int			cur;
+	tdigest_t  *result = tdigest_allocate(compression);
+
+	denom = 2 * M_PI * count * log(count);
+	normalizer = compression / denom;
+
+	/* start with one centroid */
+	result->centroids[0].count = 1;
+	result->centroids[0].sum = value;
+
+	cur = 0;
+	count_so_far = 0;	/* does not include current centroid */
+	count_remaining = (count - 1);
+
+	while (count_remaining > 0)
+	{
+		int64	proposed_count;
+		double	q0;
+		double	q2;
+		double	z;
+		int64	i;
+		int64	max;
+
+		max = count - result->centroids[cur].count - count_so_far;
+
+		if (max == 0)
+			break;
+
+		i = 1;
+		while (i < max)
+		{
+			bool	should_add;
+
+			proposed_count = result->centroids[cur].count + i;
+			z =  proposed_count * normalizer;
+			q0 = count_so_far / (double) count;
+			q2 = (count_so_far + proposed_count) / (double) count;
+
+			should_add = (z <= (q0 * (1 - q0))) && (z <= (q2 * (1 - q2)));
+
+			if (!should_add)
+			{
+				proposed_count = (proposed_count - 1);
+				break;
+			}
+
+			i++;
+		}
+
+		if (proposed_count > result->centroids[cur].count)
+		{
+			result->centroids[cur].count = proposed_count;
+			result->centroids[cur].sum = proposed_count * value;
+		}
+		else
+		{
+			count_so_far += result->centroids[cur].count;
+			cur++;
+
+			result->centroids[cur].count = 1;
+			result->centroids[cur].sum = value;
+			result->ncentroids++;
+		}
+	}
+
+}
+
 /*
  * Add a value with count to the tdigest (create one if needed). Transition
  * function for tdigest aggregate with a single percentile.
@@ -946,6 +1020,8 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 		count = PG_GETARG_INT64(2);
 
 	Assert(count > 0);
+
+	tdigest_generate(state->compression, PG_GETARG_FLOAT8(1), count);
 
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
