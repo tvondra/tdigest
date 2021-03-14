@@ -57,7 +57,7 @@ CREATE OR REPLACE FUNCTION tdigest_serial(a internal)
 CREATE OR REPLACE FUNCTION tdigest_deserial(a bytea, b internal)
     RETURNS internal
     AS 'tdigest', 'tdigest_deserial'
-    LANGUAGE C IMMUTABLE;
+    LANGUAGE C IMMUTABLE STRICT;
 
 CREATE AGGREGATE tdigest_percentile(double precision, int, double precision) (
     SFUNC = tdigest_add_double,
