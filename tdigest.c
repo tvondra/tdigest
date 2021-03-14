@@ -876,39 +876,28 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(state);
 }
 
-static void
+static tdigest_t *
 tdigest_generate(int compression, double value, int64 count)
 {
 	int64		count_so_far;
 	int64		count_remaining;
 	double		denom;
 	double		normalizer;
-	int			cur;
+	int			i;
 	tdigest_t  *result = tdigest_allocate(compression);
 
 	denom = 2 * M_PI * count * log(count);
 	normalizer = compression / denom;
 
-	/* start with one centroid */
-	result->centroids[0].count = 1;
-	result->centroids[0].sum = value;
-
-	cur = 0;
 	count_so_far = 0;	/* does not include current centroid */
-	count_remaining = (count - 1);
+	count_remaining = count;
 
 	while (count_remaining > 0)
 	{
 		int64	proposed_count;
 		double	q0;
-		int64	max;
 		double	a, b, c;
 		double	r1, r2;
-
-		max = count - result->centroids[cur].count - count_so_far;
-
-		if (max == 0)
-			break;
 
 		/* solve z <= q2 * (1 - q2) as a quadratic equation */
 		a = -1;
@@ -924,21 +913,22 @@ tdigest_generate(int compression, double value, int64 count)
 
 		proposed_count = floor(Min(r1, r2));
 
-		if (proposed_count > result->centroids[cur].count)
-		{
-			result->centroids[cur].count = proposed_count;
-			result->centroids[cur].sum = proposed_count * value;
-		}
-		else
-		{
-			count_so_far += result->centroids[cur].count;
-			cur++;
+		proposed_count = Max(proposed_count, 1);
 
-			result->centroids[cur].count = 1;
-			result->centroids[cur].sum = value;
-			result->ncentroids++;
-		}
+		result->count += proposed_count;
+		result->centroids[result->ncentroids].count = proposed_count;
+		result->centroids[result->ncentroids].sum = proposed_count * value;
+		result->ncentroids++;
+
+		count_so_far += proposed_count;
+		count_remaining -= proposed_count;
 	}
+
+	result->count = 0;
+	for (i = 0; i < result->ncentroids; i++)
+		result->count += result->centroids[i].count;
+
+	return result;
 }
 
 /*
@@ -1012,7 +1002,29 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 
 	Assert(count > 0);
 
-	tdigest_generate(state->compression, PG_GETARG_FLOAT8(1), count);
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		int			i;
+		tdigest_t  *new;
+		double		value = PG_GETARG_FLOAT8(1);
+
+		new = tdigest_generate(state->compression, value, count);
+
+		tdigest_compact(state);
+
+		for (i = 0; i < new->ncentroids; i++)
+		{
+			simple_centroid_t   *s = &new->centroids[i];
+
+			state->centroids[state->ncentroids].sum = s->sum;
+			state->centroids[state->ncentroids].count = s->count;
+			state->centroids[state->ncentroids].mean = value;
+			state->ncentroids++;
+			state->count += s->count;
+		}
+
+		count = 0;
+	}
 
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
