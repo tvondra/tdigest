@@ -178,7 +178,7 @@ AssertCheckTDigest(tdigest_t *digest)
 {
 #ifdef USE_ASSERT_CHECKING
 	int	i;
-	int cnt;
+	int64	cnt;
 
 	Assert(digest->flags == 0);
 
@@ -208,7 +208,7 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 {
 #ifdef USE_ASSERT_CHECKING
 	int	i;
-	int cnt;
+	int64	cnt;
 
 	Assert(state->npercentiles >= 0);
 
@@ -1047,14 +1047,21 @@ tdigest_generate(int compression, double value, int64 count)
 		 *	0 <= a * x^2 + b * x + c
 		 *
 		 * with these coefficients.
+		 *
+		 * XXX The counts may be very high values (int64), so we need to be
+		 * careful to prevent overflows by doing everything with double.
 		 */
 		a = -1;
-		b = (count - 2 * count_so_far - count * count * normalizer);
-		c = (count_so_far * count - count_so_far * count_so_far);
+		b = ((double) count - 2 * (double) count_so_far - (double) count * (double) count * normalizer);
+		c = ((double) count_so_far * (double) count - (double) count_so_far * (double) count_so_far);
 
 		/*
 		 * As this is an "upside down" parabola, the values between the roots
 		 * are positive - we're looking for the largest of the two values.
+		 *
+		 * XXX Tthe first root should be the higher one, because sqrt is
+		 * always positive, so (-b - sqrt()) is smaller and negative, and
+		 * we're dividing by negative value.
 		 */
 		r2 = Max((-b - sqrt(b * b - 4 * a * c)) / (2 * a),
 				 (-b + sqrt(b * b - 4 * a * c)) / (2 * a));
@@ -1073,6 +1080,8 @@ tdigest_generate(int compression, double value, int64 count)
 		result->centroids[result->ncentroids].count = proposed_count;
 		result->centroids[result->ncentroids].sum = proposed_count * value;
 		result->ncentroids++;
+
+		Assert(result->ncentroids <= compression);
 
 		count_so_far += proposed_count;
 		count_remaining -= proposed_count;
