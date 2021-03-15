@@ -26,7 +26,6 @@ PG_MODULE_MAGIC;
  * XXX why not to also track min/max for each centroid?
  */
 typedef struct centroid_t {
-	double	sum;
 	int64	count;
 	double	mean;
 } centroid_t;
@@ -37,7 +36,7 @@ typedef struct centroid_t {
  * worth the extra CPU time (unlike for aggstate, where we sort often).
  */
 typedef struct simple_centroid_t {
-	double	sum;
+	double	mean;
 	int64	count;
 } simple_centroid_t;
 
@@ -519,9 +518,28 @@ tdigest_compact(tdigest_aggstate_t *state)
 
 		if (should_add)
 		{
+			/*
+			 * If both centroids have the same mean, don't calculate it again.
+			 * The recaulculation may cause rounding errors, so that the means
+			 * would drift apart over time. We want to keep them equal for as
+			 * long as possible.
+			 */
+			if (state->centroids[cur].mean != state->centroids[i].mean)
+			{
+				double	sum;
+				int64	count;
+
+				sum = state->centroids[i].count * state->centroids[i].mean;
+				sum += state->centroids[cur].count * state->centroids[cur].mean;
+
+				count = state->centroids[i].count;
+				count += state->centroids[cur].count;
+
+				state->centroids[cur].mean = (sum / count);
+			}
+
+			/* XXX Do this after possibly recalculating the mean. */
 			state->centroids[cur].count += state->centroids[i].count;
-			state->centroids[cur].sum += state->centroids[i].sum;
-			state->centroids[cur].mean = state->centroids[cur].sum / state->centroids[cur].count;
 		}
 		else
 		{
@@ -534,7 +552,6 @@ tdigest_compact(tdigest_aggstate_t *state)
 		if (cur != i)
 		{
 			state->centroids[i].count = 0;
-			state->centroids[i].sum = 0;
 			state->centroids[i].mean = 0;
 		}
 	}
@@ -582,7 +599,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		if (state->percentiles[i] == 0.0)
 		{
 			c = &state->centroids[0];
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -590,7 +607,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		if (state->percentiles[i] == 1.0)
 		{
 			c = &state->centroids[state->ncentroids - 1];
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -616,7 +633,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		 */
 		if (fabs(delta) < 0.000000001)
 		{
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -629,7 +646,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		if ((on_the_right && (j+1) >= state->ncentroids) ||
 			(!on_the_right && (j-1) < 0))
 		{
-			result[i] = (c->sum / c->count);
+			result[i] = c->mean;
 			continue;
 		}
 
@@ -761,7 +778,6 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 	Assert(state->ncentroids < BUFFER_SIZE(compression));
 
 	/* for a single point, the value is both sum and mean */
-	state->centroids[ncentroids].sum = v;
 	state->centroids[ncentroids].count = 1;
 	state->centroids[ncentroids].mean = v;
 	state->ncentroids++;
@@ -780,7 +796,7 @@ tdigest_add(tdigest_aggstate_t *state, double v)
  * triggers a compaction when buffer full.
  */
 static void
-tdigest_add_centroid(tdigest_aggstate_t *state, double sum, int64 count)
+tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 {
 	int	compression = state->compression;
 	int	ncentroids = state->ncentroids;
@@ -791,9 +807,8 @@ tdigest_add_centroid(tdigest_aggstate_t *state, double sum, int64 count)
 	Assert(state->ncentroids < BUFFER_SIZE(compression));
 
 	/* for a single point, the value is both sum and mean */
-	state->centroids[ncentroids].sum = sum;
 	state->centroids[ncentroids].count = count;
-	state->centroids[ncentroids].mean = (sum / count);
+	state->centroids[ncentroids].mean = mean;
 	state->ncentroids++;
 	state->count += count;
 
@@ -897,9 +912,9 @@ tdigest_aggstate_to_digest(tdigest_aggstate_t *state)
 
 	for (i = 0; i < state->ncentroids; i++)
 	{
-		digest->centroids[i].sum = state->centroids[i].sum;
+		digest->centroids[i].mean = state->centroids[i].mean;
 		digest->centroids[i].count = state->centroids[i].count;
-		/* don't copy the mean, not included in simple_centroid_t */
+		/* don't copy the sum, not included in simple_centroid_t */
 	}
 
 	return digest;
@@ -1078,7 +1093,7 @@ tdigest_generate(int compression, double value, int64 count)
 		/* add the centroid and update the added/removed counters */
 		result->count += proposed_count;
 		result->centroids[result->ncentroids].count = proposed_count;
-		result->centroids[result->ncentroids].sum = proposed_count * value;
+		result->centroids[result->ncentroids].mean = value;
 		result->ncentroids++;
 
 		Assert(result->ncentroids <= compression);
@@ -1188,7 +1203,6 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 		{
 			simple_centroid_t   *s = &new->centroids[i];
 
-			state->centroids[state->ncentroids].sum = s->sum;
 			state->centroids[state->ncentroids].count = s->count;
 			state->centroids[state->ncentroids].mean = value;
 			state->ncentroids++;
@@ -1368,7 +1382,6 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 		{
 			simple_centroid_t   *s = &new->centroids[i];
 
-			state->centroids[state->ncentroids].sum = s->sum;
 			state->centroids[state->ncentroids].count = s->count;
 			state->centroids[state->ncentroids].mean = value;
 			state->ncentroids++;
@@ -1459,7 +1472,7 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -1532,7 +1545,7 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -1885,7 +1898,7 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -1952,7 +1965,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].sum,
+		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
 	PG_RETURN_POINTER(state);
@@ -2361,13 +2374,13 @@ tdigest_in(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
-		double	sum;
+		double	mean;
 
-		if (sscanf(ptr, " (%lf, " INT64_FORMAT ")", &sum, &count) != 2)
+		if (sscanf(ptr, " (%lf, " INT64_FORMAT ")", &mean, &count) != 2)
 			elog(ERROR, "failed to parse centroid");
 
 		digest->centroids[i].count = count;
-		digest->centroids[i].sum = sum;
+		digest->centroids[i].mean = mean;
 
 		if (count <= 0)
 			ereport(ERROR,
@@ -2406,7 +2419,7 @@ tdigest_out(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 		appendStringInfo(&str, " (%lf, " INT64_FORMAT ")",
-						 digest->centroids[i].sum,
+						 digest->centroids[i].mean,
 						 digest->centroids[i].count);
 
 	PG_RETURN_CSTRING(str.data);
@@ -2442,7 +2455,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
-		digest->centroids[i].sum = pq_getmsgfloat8(buf);
+		digest->centroids[i].mean = pq_getmsgfloat8(buf);
 		digest->centroids[i].count = pq_getmsgint64(buf);
 	}
 
@@ -2465,7 +2478,7 @@ tdigest_send(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
-		pq_sendfloat8(&buf, digest->centroids[i].sum);
+		pq_sendfloat8(&buf, digest->centroids[i].mean);
 		pq_sendint64(&buf, digest->centroids[i].count);
 	}
 
