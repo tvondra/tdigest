@@ -82,6 +82,8 @@ typedef struct tdigest_aggstate_t {
 
 static int  centroid_cmp(const void *a, const void *b);
 
+#define PG_GETARG_TDIGEST(x)	(tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(x))
+
 /*
  * Size of buffer for incoming data, as a multiple of the compression value.
  * Quoting from the t-digest paper:
@@ -134,6 +136,10 @@ PG_FUNCTION_INFO_V1(tdigest_recv);
 
 PG_FUNCTION_INFO_V1(tdigest_count);
 
+PG_FUNCTION_INFO_V1(tdigest_add_double_increment);
+PG_FUNCTION_INFO_V1(tdigest_add_double_array_increment);
+PG_FUNCTION_INFO_V1(tdigest_union_double_increment);
+
 Datum tdigest_add_double_array(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_values(PG_FUNCTION_ARGS);
@@ -165,6 +171,10 @@ Datum tdigest_send(PG_FUNCTION_ARGS);
 Datum tdigest_recv(PG_FUNCTION_ARGS);
 
 Datum tdigest_count(PG_FUNCTION_ARGS);
+
+Datum tdigest_add_double_increment(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_array_increment(PG_FUNCTION_ARGS);
+Datum tdigest_union_double_increment(PG_FUNCTION_ARGS);
 
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
@@ -849,12 +859,13 @@ tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression)
 }
 
 static tdigest_t *
-tdigest_aggstate_to_digest(tdigest_aggstate_t *state)
+tdigest_aggstate_to_digest(tdigest_aggstate_t *state, bool compact)
 {
 	int			i;
 	tdigest_t  *digest;
 
-	tdigest_compact(state);
+	if (compact)
+		tdigest_compact(state);
 
 	digest = tdigest_allocate(state->ncentroids);
 
@@ -2005,7 +2016,7 @@ tdigest_digest(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	digest = tdigest_aggstate_to_digest(state);
+	digest = tdigest_aggstate_to_digest(state, true);
 
 	PG_RETURN_POINTER(digest);
 }
@@ -2250,6 +2261,197 @@ tdigest_combine(PG_FUNCTION_ARGS)
 
 	PG_RETURN_POINTER(dst);
 }
+
+/* API for incremental updates */
+
+/*
+ * expand the t-digest into an in-memory aggregate state
+ */
+static tdigest_aggstate_t *
+tdigest_digest_to_aggstate(tdigest_t *digest)
+{
+	int					i;
+	tdigest_aggstate_t *state;
+
+	/* make sure the t-digest format is supported */
+	if (digest->flags != TDIGEST_STORES_MEAN)
+		elog(ERROR, "unsupported t-digest on-disk format");
+
+	state = tdigest_aggstate_allocate(0, 0, digest->compression);
+
+	/* copy data from the tdigest into the aggstate */
+	for (i = 0; i < digest->ncentroids; i++)
+		tdigest_add_centroid(state,
+							 digest->centroids[i].mean,
+							 digest->centroids[i].count);
+
+	return state;
+}
+
+/*
+ * Add a single value to the t-digest. This is not very efficient, as it has
+ * to deserialize the t-digest into the in-memory aggstate representation
+ * and serialize it back for each call, but it's convenient and acceptable
+ * for some use cases.
+ *
+ * When efficiency is important, it may be possible to use the batch variant
+ * with first aggregating the updates into a t-digest, and then merge that
+ * into an existing t-digest in one step using tdigest_union_double_increment
+ *
+ * This is similar to hll_add, while the "union" is more like hll_union.
+ */
+Datum
+tdigest_add_double_increment(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+	bool				compact = PG_GETARG_BOOL(3);
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int		compression;
+
+		/*
+		 * We don't require compression, but only when there is an existing
+		 * t-digest value. Make sure the value was supplied.
+		 */
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "compression value not supplied, but t-digest is NULL");
+
+		compression = PG_GETARG_INT32(2);
+
+		check_compression(compression);
+
+		state = tdigest_aggstate_allocate(0, 0, compression);
+	}
+	else
+		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
+
+	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
+}
+
+/*
+ * Add an array of values to the t-digest. This amortizes the overhead of
+ * deserializing and serializing the t-digest, compared to the per-value
+ * version.
+ *
+ * When efficiency is important, it may be possible to use the batch variant
+ * with first aggregating the updates into a t-digest, and then merge that
+ * into an existing t-digest in one step using tdigest_union_double_increment
+ *
+ * This is similar to hll_add, while the "union" is more like hll_union.
+ */
+Datum
+tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+	bool				compact = PG_GETARG_BOOL(3);
+	double			   *values;
+	int					nvalues;
+	int					i;
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		int		compression;
+
+		/*
+		 * We don't require compression, but only when there is an existing
+		 * t-digest value. Make sure the value was supplied.
+		 */
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "compression value not supplied, but t-digest is NULL");
+
+		compression = PG_GETARG_INT32(2);
+
+		check_compression(compression);
+
+		state = tdigest_aggstate_allocate(0, 0, compression);
+	}
+	else
+		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
+
+	values = array_to_double(fcinfo,
+							 PG_GETARG_ARRAYTYPE_P(1),
+							 &nvalues);
+
+	for (i = 0; i < nvalues; i++)
+		tdigest_add(state, values[i]);
+
+	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
+}
+
+/*
+ * Merge a t-digest into another t-digest. This is somewaht inefficient, as
+ * it has to deserialize the t-digests into the in-memory aggstate values,
+ * and serialize it back for each call, but it's better than doing it for
+ * each individual value (like tdigest_union_double_increment).
+ *
+ * This is similar to hll_union.
+ */
+Datum
+tdigest_union_double_increment(PG_FUNCTION_ARGS)
+{
+	int					i;
+	tdigest_aggstate_t *state;
+	tdigest_t		   *digest;
+	bool				compact = PG_GETARG_BOOL(2);
+
+	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
+		PG_RETURN_NULL();
+	else if (PG_ARGISNULL(0))
+		PG_RETURN_POINTER(PG_GETARG_POINTER(1));
+	else if (PG_ARGISNULL(1))
+		PG_RETURN_POINTER(PG_GETARG_POINTER(0));
+
+	/* now we know both arguments are non-null */
+
+	/* parse the first digest (we'll merge the other one into this) */
+	state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
+	AssertCheckTDigestAggState(state);
+
+	/* parse the second digest */
+	digest = PG_GETARG_TDIGEST(1);
+	AssertCheckTDigest(digest);
+
+	/* copy data from the tdigest into the aggstate */
+	for (i = 0; i < digest->ncentroids; i++)
+		tdigest_add_centroid(state, digest->centroids[i].mean,
+									digest->centroids[i].count);
+
+	AssertCheckTDigestAggState(state);
+
+	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
+}
+
 
 /*
  * Comparator, ordering the centroids by mean value.
