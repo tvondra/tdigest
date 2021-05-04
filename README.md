@@ -379,7 +379,7 @@ Returns number of items represented by the t-digest.
 #### Synopsis
 
 ```
-SELECT tdigest(d, 100) FROM (
+SELECT tdigest_count(d) FROM (
     SELECT tdigest(t.c, 100) FROM t
 ) foo
 ```
