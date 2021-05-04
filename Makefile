@@ -2,7 +2,7 @@ MODULE_big = tdigest
 OBJS = tdigest.o
 
 EXTENSION = tdigest
-DATA = tdigest--1.0.0.sql tdigest--1.0.0--1.0.1.sql tdigest--1.0.1--1.0.2.sql
+DATA = tdigest--1.0.0.sql tdigest--1.0.0--1.0.1.sql tdigest--1.0.1--1.1.0.sql
 MODULES = tdigest
 
 CFLAGS=`pg_config --includedir-server`
