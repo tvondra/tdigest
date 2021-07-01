@@ -187,7 +187,7 @@ AssertCheckTDigest(tdigest_t *digest)
 	int	i;
 	int64	cnt;
 
-	Assert(digest->flags == TDIGEST_STORES_MEAN);
+	Assert(digest->flags == 0 || digest->flags == TDIGEST_STORES_MEAN);
 
 	Assert((digest->compression >= MIN_COMPRESSION) &&
 		   (digest->compression <= MAX_COMPRESSION));
@@ -788,15 +788,43 @@ tdigest_allocate(int ncentroids)
 	return digest;
 }
 
-static void
-tdigest_fix_mean(tdigest_t *digest)
+/*
+ * tdigest_update_format
+ *		Update t-digest format to represent centroids as (mean,count).
+ *
+ * Switches the centroids from (sum,count) to (mean,count), so that all
+ * the places processing centroids can use just the new format.
+ *
+ * If the digest already uses the new format, this is a no-op. Otherwise
+ * a modified copy of the digest is returned.
+ *
+ * XXX This does not affect on-disk representation of existing digests,
+ * we create just an in-memory version of the digest. Only when the
+ * digest gets modified a new format will be written back.
+ */
+static tdigest_t *
+tdigest_update_format(tdigest_t *digest)
 {
 	int		i;
+	int		s;
+	char   *ptr;
 
 	/* if already new format, we're done */
 	if (digest->flags & TDIGEST_STORES_MEAN)
-		return;
+		return digest;
 
+	/*
+	 * We'll convert the digest so that centroids use means, but we must
+	 * not modify the input digest - it might be just a pointer to data
+	 * buffer, or something like that. So we have to create a copy first.
+	 */
+	s = VARSIZE_ANY(digest);
+	ptr = palloc(s);
+	memcpy(ptr, digest, s);
+
+	digest = (tdigest_t *) ptr;
+
+	/* And now tweak the contents of the copy. */
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		digest->centroids[i].mean
@@ -804,6 +832,8 @@ tdigest_fix_mean(tdigest_t *digest)
 	}
 
 	digest->flags |= TDIGEST_STORES_MEAN;
+
+	return digest;
 }
 
 /*
@@ -1395,8 +1425,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
 
-	/* fix old tdigest format */
-	tdigest_fix_mean(digest);
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
 
 	/* make sure the t-digest format is supported */
 	if (digest->flags != TDIGEST_STORES_MEAN)
@@ -1474,8 +1504,8 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
 
-	/* fix old tdigest format */
-	tdigest_fix_mean(digest);
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
 
 	/* make sure the t-digest format is supported */
 	if (digest->flags != TDIGEST_STORES_MEAN)
@@ -1834,8 +1864,8 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
 
-	/* fix old tdigest format */
-	tdigest_fix_mean(digest);
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
 
 	/* make sure the t-digest format is supported */
 	if (digest->flags != TDIGEST_STORES_MEAN)
@@ -1906,8 +1936,8 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 
 	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
 
-	/* fix old tdigest format */
-	tdigest_fix_mean(digest);
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
 
 	/* make sure the t-digest format is supported */
 	if (digest->flags != TDIGEST_STORES_MEAN)
@@ -2273,6 +2303,9 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 	int					i;
 	tdigest_aggstate_t *state;
 
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
+
 	/* make sure the t-digest format is supported */
 	if (digest->flags != TDIGEST_STORES_MEAN)
 		elog(ERROR, "unsupported t-digest on-disk format");
@@ -2557,8 +2590,11 @@ tdigest_in(PG_FUNCTION_ARGS)
 
 	Assert(ptr == str + strlen(str));
 
-	/* if we received "old" t-digest storing sum, fix it now */
-	tdigest_fix_mean(digest);
+	/*
+	 * Make sure we return digest with the new format (it might be the
+	 * old format, in which case "mean" fields actually store "sum").
+	 */
+	digest = tdigest_update_format(digest);
 
 	AssertCheckTDigest(digest);
 
@@ -2573,10 +2609,6 @@ tdigest_out(PG_FUNCTION_ARGS)
 	StringInfoData	str;
 
 	AssertCheckTDigest(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
 
 	initStringInfo(&str);
 
@@ -2631,8 +2663,11 @@ tdigest_recv(PG_FUNCTION_ARGS)
 		digest->centroids[i].count = pq_getmsgint64(buf);
 	}
 
-	/* if we received "old" t-digest storing sum, fix it now */
-	tdigest_fix_mean(digest);
+	/*
+	 * Make sure we return digest with the new format (it might be the
+	 * old format, in which case "mean" fields actually store "sum").
+	 */
+	digest = tdigest_update_format(digest);
 
 	PG_RETURN_POINTER(digest);
 }
