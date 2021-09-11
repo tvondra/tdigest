@@ -1169,7 +1169,9 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	else
 		count = PG_GETARG_INT64(2);
 
-	Assert(count > 0);
+	/* can't add values with non-positive counts */
+	if (count <= 0)
+		elog(ERROR, "invalid count value %ld, must be a positive value", count);
 
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
@@ -1348,7 +1350,9 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	else
 		count = PG_GETARG_INT64(2);
 
-	Assert(count > 0);
+	/* can't add values with non-positive counts */
+	if (count <= 0)
+		elog(ERROR, "invalid count value %ld, must be a positive value", count);
 
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
@@ -1676,7 +1680,9 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 	else
 		count = PG_GETARG_INT64(2);
 
-	Assert(count > 0);
+	/* can't add values with non-positive counts */
+	if (count <= 0)
+		elog(ERROR, "invalid count value %ld, must be a positive value", count);
 
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
@@ -1816,7 +1822,9 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 	else
 		count = PG_GETARG_INT64(2);
 
-	Assert(count > 0);
+	/* can't add values with non-positive counts */
+	if (count <= 0)
+		elog(ERROR, "invalid count value %ld, must be a positive value", count);
 
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
