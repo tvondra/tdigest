@@ -2853,34 +2853,34 @@ tdigest_sum(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		int64	count_add = 0;
-		int64	delta;
 
-		/* break once we cross the high threshold */
-		if (count_done > count_high)
-		 	break;
-
-		/* How many items can we add to the sum? */
+		/* Assume the whole centroid falls into the range. */
 		count_add = digest->centroids[i].count;
 
 		/*
-		 * If we've not crossed the threshold yet, there are (low - done)
-		 * items to skip. If we crossed it, skip 0.
+		 * If we haven't reached the low threshold yet, skip appropriate
+		 * part of the centroid.
 		 */
-		delta = Max(0, count_low - count_done);
-		count_add = Max(0, count_add - delta);
+		count_add -= Min(Max(0, count_low - count_done),
+						 count_add);
 
 		/*
-		 * Likewise, we may be close to the high threshold, in which case we
-		 * can't add more than (high - done) elements.
+		 * If we have reached the upper threshold, ignore the overflowing
+		 * part of the centroid.
 		 */
-		delta = Max(0, count_high - count_done);
-		count_add = Min(count_add, delta);
+		count_add = Min(Max(0, count_high - count_done),
+						 count_add);
+
+		/* consider the whole centroid processed */
+		count_done += digest->centroids[i].count;
 
 		/* increment the sum / count */
 		sum += digest->centroids[i].mean * count_add;
 		count += count_add;
 
-		count_done += digest->centroids[i].count;
+		/* break once we cross the high threshold */
+		if (count_done >= count_high)
+			break;
 	}
 
 	if (count > 0)
@@ -2929,34 +2929,34 @@ tdigest_avg(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		int64	count_add = 0;
-		int64	delta;
 
-		/* break once we cross the high threshold */
-		if (count_done > count_high)
-		 	break;
-
-		/* How many items can we add to the sum? */
+		/* Assume the whole centroid falls into the range. */
 		count_add = digest->centroids[i].count;
 
 		/*
-		 * If we've not crossed the threshold yet, there are (low - done)
-		 * items to skip. If we crossed it, skip 0.
+		 * If we haven't reached the low threshold yet, skip appropriate
+		 * part of the centroid.
 		 */
-		delta = Max(0, count_low - count_done);
-		count_add = Max(0, count_add - delta);
+		count_add -= Min(Max(0, count_low - count_done),
+						 count_add);
 
 		/*
-		 * Likewise, we may be close to the high threshold, in which case we
-		 * can't add more than (high - done) elements.
+		 * If we have reached the upper threshold, ignore the overflowing
+		 * part of the centroid.
 		 */
-		delta = Max(0, count_high - count_done);
-		count_add = Min(count_add, delta);
+		count_add = Min(Max(0, count_high - count_done),
+						 count_add);
+
+		/* consider the whole centroid processed */
+		count_done += digest->centroids[i].count;
 
 		/* increment the sum / count */
 		sum += digest->centroids[i].mean * count_add;
 		count += count_add;
 
-		count_done += digest->centroids[i].count;
+		/* break once we cross the high threshold */
+		if (count_done >= count_high)
+			break;
 	}
 
 	if (count > 0)
