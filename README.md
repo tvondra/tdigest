@@ -246,6 +246,18 @@ UPDATE t SET d = tdigest_union(NULL, d);
 ```
 
 
+## Trimmed aggregates
+
+The extension provides two aggregate functions allowing to calculate trimmed
+(truncted) sum and average.
+
+* `tdigest_sum(digest tdigest, low double precision, high double precision)`
+
+* `tdigest_avg(digest tdigest, low double precision, high double precision)`
+
+The `low` and `high` parameters specify where to truncte the data.
+
+
 ## Functions
 
 ### `tdigest_percentile(value, accuracy, percentile)`
@@ -568,6 +580,40 @@ UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
 - `tdigest_add` - t-digest to merge into `tdigest`
 - `compression` - compression t (used when t-digest is `NULL`)
 - `compact` - force compaction (default: true)
+
+
+### `tdigest_avg(tdigest, double precision, double precision)`
+
+Calculates average of values between the low and high threshold.
+
+#### Synopsis
+
+```
+SELECT tdigest_avg(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to calculate average for
+- `low` - low threshold (truncate values below)
+- `high` - high threshold (truncate values above)
+
+
+### `tdigest_sum(tdigest, double precision, double precision)`
+
+Calculates sum of values between the low and high threshold.
+
+#### Synopsis
+
+```
+SELECT tdigest_sum(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to calculate sum for
+- `low` - low threshold (truncate values below)
+- `high` - high threshold (truncate values above)
 
 
 Notes

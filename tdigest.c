@@ -140,6 +140,9 @@ PG_FUNCTION_INFO_V1(tdigest_add_double_increment);
 PG_FUNCTION_INFO_V1(tdigest_add_double_array_increment);
 PG_FUNCTION_INFO_V1(tdigest_union_double_increment);
 
+PG_FUNCTION_INFO_V1(tdigest_sum);
+PG_FUNCTION_INFO_V1(tdigest_avg);
+
 Datum tdigest_add_double_array(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_values(PG_FUNCTION_ARGS);
@@ -175,6 +178,9 @@ Datum tdigest_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_increment(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_increment(PG_FUNCTION_ARGS);
 Datum tdigest_union_double_increment(PG_FUNCTION_ARGS);
+
+Datum tdigest_sum(PG_FUNCTION_ARGS);
+Datum tdigest_avg(PG_FUNCTION_ARGS);
 
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
@@ -2805,4 +2811,156 @@ double_to_array(FunctionCallInfo fcinfo, double *d, int len)
 
 	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate,
 										  CurrentMemoryContext));
+}
+
+/*
+ * Trimmed sum.
+ */
+Datum
+tdigest_sum(PG_FUNCTION_ARGS)
+{
+	int			i;
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
+	double		low = PG_GETARG_FLOAT8(1);
+	double		high = PG_GETARG_FLOAT8(2);
+
+	double		sum;
+	int64		count,
+				count_done,
+				count_low,
+				count_high;
+
+	AssertCheckTDigest(digest);
+
+	/* basic sanity checks */
+
+	if ((low < 0.0) || (low > 1.0))
+		elog(ERROR, "low threshold needs to be between 0.0 and 1.0");
+
+	if ((high < 0.0) || (high > 1.0))
+		elog(ERROR, "low threshold needs to be between 0.0 and 1.0");
+
+	if (high < low)
+		elog(ERROR, "low threshold needs to be less than high threshold");
+
+	count_low = floor(digest->count * low);
+	count_high = ceil(digest->count * high);
+
+	sum = 0;
+	count = 0;
+	count_done = 0;
+
+	for (i = 0; i < digest->ncentroids; i++)
+	{
+		int64	count_add = 0;
+		int64	delta;
+
+		/* break once we cross the high threshold */
+		if (count_done > count_high)
+		 	break;
+
+		/* How many items can we add to the sum? */
+		count_add = digest->centroids[i].count;
+
+		/*
+		 * If we've not crossed the threshold yet, there are (low - done)
+		 * items to skip. If we crossed it, skip 0.
+		 */
+		delta = Max(0, count_low - count_done);
+		count_add = Max(0, count_add - delta);
+
+		/*
+		 * Likewise, we may be close to the high threshold, in which case we
+		 * can't add more than (high - done) elements.
+		 */
+		delta = Max(0, count_high - count_done);
+		count_add = Min(count_add, delta);
+
+		/* increment the sum / count */
+		sum += digest->centroids[i].mean * count_add;
+		count += count_add;
+
+		count_done += digest->centroids[i].count;
+	}
+
+	if (count > 0)
+		PG_RETURN_FLOAT8(sum);
+
+	PG_RETURN_NULL();
+}
+
+/*
+ * Trimmed average.
+ */
+Datum
+tdigest_avg(PG_FUNCTION_ARGS)
+{
+	int			i;
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
+	double		low = PG_GETARG_FLOAT8(1);
+	double		high = PG_GETARG_FLOAT8(2);
+
+	double		sum;
+	int64		count,
+				count_done,
+				count_low,
+				count_high;
+
+	AssertCheckTDigest(digest);
+
+	/* basic sanity checks */
+
+	if ((low < 0.0) || (low > 1.0))
+		elog(ERROR, "low threshold needs to be between 0.0 and 1.0");
+
+	if ((high < 0.0) || (high > 1.0))
+		elog(ERROR, "low threshold needs to be between 0.0 and 1.0");
+
+	if (high < low)
+		elog(ERROR, "low threshold needs to be less than high threshold");
+
+	count_low = floor(digest->count * low);
+	count_high = ceil(digest->count * high);
+
+	sum = 0;
+	count = 0;
+	count_done = 0;
+
+	for (i = 0; i < digest->ncentroids; i++)
+	{
+		int64	count_add = 0;
+		int64	delta;
+
+		/* break once we cross the high threshold */
+		if (count_done > count_high)
+		 	break;
+
+		/* How many items can we add to the sum? */
+		count_add = digest->centroids[i].count;
+
+		/*
+		 * If we've not crossed the threshold yet, there are (low - done)
+		 * items to skip. If we crossed it, skip 0.
+		 */
+		delta = Max(0, count_low - count_done);
+		count_add = Max(0, count_add - delta);
+
+		/*
+		 * Likewise, we may be close to the high threshold, in which case we
+		 * can't add more than (high - done) elements.
+		 */
+		delta = Max(0, count_high - count_done);
+		count_add = Min(count_add, delta);
+
+		/* increment the sum / count */
+		sum += digest->centroids[i].mean * count_add;
+		count += count_add;
+
+		count_done += digest->centroids[i].count;
+	}
+
+	if (count > 0)
+		PG_RETURN_FLOAT8(sum / count);
+
+	PG_RETURN_NULL();
 }
