@@ -2069,3 +2069,26 @@ FROM (
  990 | t
 (2 rows)
 
+-- test input function, and conversion from old to new format
+SELECT 'flags 0 count 20 compression 10 centroids 8 (1000.000000, 1) (2000.000000, 1) (7000.000000, 2) (26000.000000, 4) (84000.000000, 7) (51000.000000, 3) (19000.000000, 1) (20000.000000, 1)'::tdigest;
+                                                                                         tdigest                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ flags 1 count 20 compression 10 centroids 8 (1000.000000, 1) (2000.000000, 1) (3500.000000, 2) (6500.000000, 4) (12000.000000, 7) (17000.000000, 3) (19000.000000, 1) (20000.000000, 1)
+(1 row)
+
+-- test input of invalid data
+-- negative count
+SELECT 'flags 0 count -20 compression 10 centroids 8 (1000.000000, 1) (2000.000000, 1) (7000.000000, 2) (26000.000000, 4) (84000.000000, 7) (51000.000000, 3) (19000.000000, 1) (20000.000000, 1)'::tdigest;
+ERROR:  count value for the t-digest must be positive
+LINE 1: SELECT 'flags 0 count -20 compression 10 centroids 8 (1000.0...
+               ^
+-- mismatching count
+SELECT 'flags 0 count 21 compression 10 centroids 8 (1000.000000, 1) (2000.000000, 1) (7000.000000, 2) (26000.000000, 4) (84000.000000, 7) (51000.000000, 3) (19000.000000, 1) (20000.000000, 1)'::tdigest;
+ERROR:  total count does not match the data (20 != 21)
+LINE 1: SELECT 'flags 0 count 21 compression 10 centroids 8 (1000.00...
+               ^
+-- incorrectly sorted centroids
+SELECT 'flags 0 count 20 compression 10 centroids 8 (1000.000000, 1) (2000.000000, 1) (1000.000000, 2) (26000.000000, 4) (84000.000000, 7) (51000.000000, 3) (19000.000000, 1) (20000.000000, 1)'::tdigest;
+ERROR:  centroids not sorted by mean
+LINE 1: SELECT 'flags 0 count 20 compression 10 centroids 8 (1000.00...
+               ^
