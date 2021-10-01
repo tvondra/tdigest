@@ -570,6 +570,28 @@ UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
 - `compact` - force compaction (default: true)
 
 
+### `tdigest_json(tdigest)`
+
+Returns the t-digest as a JSON value. The function is also exposed as a
+cast from `tdigest` to `json`.
+
+#### Synopsis
+
+```
+SELECT tdigest_json(d) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+
+SELECT CAST(d AS json) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to cast to a `json` value
+
+
 Notes
 -----
 

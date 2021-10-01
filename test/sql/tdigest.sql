@@ -5,6 +5,7 @@ SET client_min_messages = 'WARNING';
 \i tdigest--1.0.0.sql
 \i tdigest--1.0.0--1.0.1.sql
 \i tdigest--1.0.1--1.2.0.sql
+\i tdigest--1.2.0--1.3.0-dev.sql
 SET client_min_messages = 'NOTICE';
 
 \set ECHO all
@@ -971,6 +972,11 @@ SELECT * FROM (
         GROUP BY perc.percentiles
     ) foo
 ) bar where v2 > v1;
+
+-- test casting to json
+SELECT cast(tdigest(i / 10000.0, 10) as json) from generate_series(1,10000) s(i);
+SELECT cast(tdigest(i / 10000.0, 25) as json) from generate_series(1,10000) s(i);
+SELECT cast(tdigest(i / 10000.0, 100) as json) from generate_series(1,10000) s(i);
 
 -- <value,count> API
 

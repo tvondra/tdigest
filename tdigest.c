@@ -15,6 +15,7 @@
 #include "postgres.h"
 #include "libpq/pqformat.h"
 #include "utils/array.h"
+#include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "catalog/pg_type.h"
 
@@ -135,6 +136,7 @@ PG_FUNCTION_INFO_V1(tdigest_send);
 PG_FUNCTION_INFO_V1(tdigest_recv);
 
 PG_FUNCTION_INFO_V1(tdigest_count);
+PG_FUNCTION_INFO_V1(tdigest_to_json);
 
 PG_FUNCTION_INFO_V1(tdigest_add_double_increment);
 PG_FUNCTION_INFO_V1(tdigest_add_double_array_increment);
@@ -175,6 +177,8 @@ Datum tdigest_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_increment(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_increment(PG_FUNCTION_ARGS);
 Datum tdigest_union_double_increment(PG_FUNCTION_ARGS);
+
+Datum tdigest_to_json(PG_FUNCTION_ARGS);
 
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
@@ -2709,6 +2713,80 @@ tdigest_count(PG_FUNCTION_ARGS)
 	tdigest_t  *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
 
 	PG_RETURN_INT64(digest->count);
+}
+
+/*
+ * tdigest_to_json
+ *		Transform the tdigest into a JSON value.
+ *
+ * We make sure to always print mean, even for tdigests in the older format
+ * storing sum for centroids. Otherwise the "mean" key would be confusing.
+ * But we don't call tdigest_update_format, and instead we simply update the
+ * flags and convert the sum/mean values.
+ *
+ * The centroids are stored in two separate arrays - one for means, one for
+ * counts. That makes it easier to process, because it's clear the i-th
+ * in each array is for i-th centroid. We might store it in a single array,
+ * but then we'd have to walk it in pairs. And it'd mix float and int
+ * values in the same array.
+ */
+Datum
+tdigest_to_json(PG_FUNCTION_ARGS)
+{
+	int				i;
+	StringInfoData	str;
+	tdigest_t	   *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	int32			flags = digest->flags;
+
+	initStringInfo(&str);
+
+	appendStringInfoChar(&str, '{');
+
+	flags |= TDIGEST_STORES_MEAN;
+
+	appendStringInfo(&str, "\"flags\": %d, ", flags);
+	appendStringInfo(&str, "\"count\": " INT64_FORMAT ", ", digest->count);
+	appendStringInfo(&str, "\"compression\": %d, ", digest->compression);
+	appendStringInfo(&str, "\"centroids\": %d, ", digest->ncentroids);
+
+	appendStringInfoString(&str, "\"mean\": [");
+
+	for (i = 0; i < digest->ncentroids; i++)
+	{
+		double	mean = digest->centroids[i].mean;
+
+		if (i > 0)
+			appendStringInfoString(&str, ", ");
+
+		/*
+		 * When the TDIGEST_STORES_MEAN flags is not set, the value is
+		 * actually a sum, so convert it to mean now. We have to check the
+		 * diget->flags, not the local variable.
+		 */
+		if (! (digest->flags && TDIGEST_STORES_MEAN))
+			mean = mean / digest->centroids[i].count;
+
+		/* don't print insignificant zeroes to the right of decimal point */
+		appendStringInfo(&str, "%g", mean);
+	}
+
+	appendStringInfoString(&str, "], ");
+
+	appendStringInfoString(&str, "\"count\": [");
+
+	for (i = 0; i < digest->ncentroids; i++)
+	{
+		if (i > 0)
+			appendStringInfoString(&str, ", ");
+
+		appendStringInfo(&str, INT64_FORMAT, digest->centroids[i].count);
+	}
+
+	appendStringInfoString(&str, "]");
+
+	appendStringInfoChar(&str, '}');
+
+	PG_RETURN_TEXT_P(cstring_to_text(str.data));
 }
 
 /*
