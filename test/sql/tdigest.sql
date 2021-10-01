@@ -1149,3 +1149,310 @@ END$$;
 -- compare the results, but do force a compaction of the incremental result
 WITH x AS (SELECT a, tdigest(i,100) AS d FROM (SELECT mod(i,5) AS a, i FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), md5(i::text)) foo GROUP BY a ORDER BY a)
 SELECT (SELECT tdigest(d)::text FROM t) = (SELECT tdigest(x.d)::text FROM x);
+
+-- test parallel query
+DROP TABLE t;
+CREATE TABLE t (v double precision, c int, d int);
+INSERT INTO t SELECT 1000 * random(), 1 + mod(i,7), mod(i,113) FROM generate_series(1,1000000) s(i);
+ANALYZE t;
+
+CREATE TABLE t2 (d tdigest);
+INSERT INTO t2 SELECT tdigest(v, 100) FROM t GROUP BY d;
+ANALYZE t2;
+
+SET parallel_setup_cost = 0;
+SET parallel_tuple_cost = 0;
+SET min_parallel_table_scan_size = '1kB';
+
+-- individual values
+EXPLAIN (COSTS OFF)
+WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(v, 100, 0.95) AS b
+  FROM t) foo;
+
+WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(v, 100, 0.95) AS b
+  FROM t) foo;
+
+
+EXPLAIN (COSTS OFF)
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    0.95 AS a,
+    tdigest_percentile_of(v, 100, 950) AS b
+  FROM t) foo;
+
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    0.95 AS a,
+    tdigest_percentile_of(v, 100, 950) AS b
+  FROM t) foo;
+
+
+EXPLAIN (COSTS OFF)
+WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(d, 0.95) AS b
+  FROM t2) foo;
+
+WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(d, 0.95) AS b
+  FROM t2) foo;
+
+
+EXPLAIN (COSTS OFF)
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    0.95 AS a,
+    tdigest_percentile_of(d, 950) AS b
+  FROM t2) foo;
+
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    0.95 AS a,
+    tdigest_percentile_of(d, 950) AS b
+  FROM t2) foo;
+
+
+-- array of percentiles / values
+EXPLAIN (COSTS OFF)
+WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(v, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t) foo;
+
+WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(v, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t) foo;
+
+
+EXPLAIN (COSTS OFF)
+WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile_of(v, 100, ARRAY[950, 990])) AS b
+  FROM t) foo;
+
+WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile_of(v, 100, ARRAY[950, 990])) AS b
+  FROM t) foo;
+
+
+EXPLAIN (COSTS OFF)
+WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(d, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t2) foo;
+
+WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(d, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t2) foo;
+
+
+EXPLAIN (COSTS OFF)
+WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile_of(d, ARRAY[950, 990])) AS b
+  FROM t2) foo;
+
+WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile_of(d, ARRAY[950, 990])) AS b
+  FROM t2) foo;
+
+
+-- <value,count> API
+
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(v, c, 100, 0.95) AS b
+  FROM t) foo;
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(v, c, 100, 0.95) AS b
+  FROM t) foo;
+
+
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percent_rank(950) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile_of(v, c, 100, 950) AS b
+  FROM t) foo;
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percent_rank(950) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile_of(v, c, 100, 950) AS b
+  FROM t) foo;
+
+
+
+-- array of percentiles / values
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t) foo;
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t) foo;
+
+
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) AS p FROM d)) p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((select x.p from x)) AS a,
+    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+  FROM t) foo;
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) AS p FROM d)) p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((select x.p from x)) AS a,
+    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+  FROM t) foo;
