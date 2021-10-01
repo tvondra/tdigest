@@ -978,6 +978,11 @@ SELECT cast(tdigest(i / 10000.0, 10) as json) from generate_series(1,10000) s(i)
 SELECT cast(tdigest(i / 10000.0, 25) as json) from generate_series(1,10000) s(i);
 SELECT cast(tdigest(i / 10000.0, 100) as json) from generate_series(1,10000) s(i);
 
+-- test casting to double precision array
+SELECT cast(tdigest(i / 10000.0, 10) as double precision[]) from generate_series(1,10000) s(i);
+SELECT cast(tdigest(i / 10000.0, 25) as double precision[]) from generate_series(1,10000) s(i);
+SELECT cast(tdigest(i / 10000.0, 100) as double precision[]) from generate_series(1,10000) s(i);
+
 -- <value,count> API
 
 select tdigest_percentile(value, count, 100, 0.95)

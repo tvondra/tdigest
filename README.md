@@ -592,6 +592,28 @@ SELECT CAST(d AS json) FROM (
 - `tdigest` - t-digest to cast to a `json` value
 
 
+### `tdigest_double_array(tdigest)`
+
+Returns the t-digest as a `double precision[]` array. The function is also
+exposed as a cast from `tdigest` to `double precision[]`.
+
+#### Synopsis
+
+```
+SELECT tdigest_double_array(d) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+
+SELECT CAST(d AS double precision[]) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to cast to a `double precision[]` value
+
+
 Notes
 -----
 

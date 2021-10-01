@@ -137,6 +137,7 @@ PG_FUNCTION_INFO_V1(tdigest_recv);
 
 PG_FUNCTION_INFO_V1(tdigest_count);
 PG_FUNCTION_INFO_V1(tdigest_to_json);
+PG_FUNCTION_INFO_V1(tdigest_to_array);
 
 PG_FUNCTION_INFO_V1(tdigest_add_double_increment);
 PG_FUNCTION_INFO_V1(tdigest_add_double_array_increment);
@@ -179,6 +180,7 @@ Datum tdigest_add_double_array_increment(PG_FUNCTION_ARGS);
 Datum tdigest_union_double_increment(PG_FUNCTION_ARGS);
 
 Datum tdigest_to_json(PG_FUNCTION_ARGS);
+Datum tdigest_to_array(PG_FUNCTION_ARGS);
 
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
@@ -2787,6 +2789,66 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 	appendStringInfoChar(&str, '}');
 
 	PG_RETURN_TEXT_P(cstring_to_text(str.data));
+}
+
+/*
+ * tdigest_to_array
+ *		Transform the tdigest into an array of double values.
+ *
+ * The whole digest is stored in a single "double precision" array, which
+ * may be a bit confusing and perhaps fragile if more fields need to be
+ * added in the future. The initial elements are flags, count (number of
+ * items added to the digest), compression (determines the limit on number
+ * of centroids) and current number of centroids. Follows stream of values
+ * encoding the centroids in pairs of (mean, count).
+ *
+ * We make sure to always print mean, even for tdigests in the older format
+ * storing sum for centroids. Otherwise the "mean" key would be confusing.
+ * But we don't call tdigest_update_format, and instead we simply update the
+ * flags and convert the sum/mean values.
+ */
+Datum
+tdigest_to_array(PG_FUNCTION_ARGS)
+{
+	int				i,
+					idx;
+	tdigest_t	   *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	int32			flags = digest->flags;
+	double		   *values;
+	int				nvalues;
+
+	flags |= TDIGEST_STORES_MEAN;
+
+	/* number of values to store in the array */
+	nvalues = 4 + (digest->ncentroids * 2);
+	values = (double *) palloc(sizeof(double) * nvalues);
+
+	idx = 0;
+	values[idx++] = flags;
+	values[idx++] = digest->count;
+	values[idx++] = digest->compression;
+	values[idx++] = digest->ncentroids;
+
+	for (i = 0; i < digest->ncentroids; i++)
+	{
+		double	mean = digest->centroids[i].mean;
+
+		/*
+		 * When the TDIGEST_STORES_MEAN flags is not set, the value is
+		 * actually a sum, so convert it to mean now. We have to check the
+		 * diget->flags, not the local variable.
+		 */
+		if (! (digest->flags && TDIGEST_STORES_MEAN))
+			mean = mean / digest->centroids[i].count;
+
+		/* don't print insignificant zeroes to the right of decimal point */
+		values[idx++] = mean;
+		values[idx++] = digest->centroids[i].count;
+	}
+
+	Assert(idx == nvalues);
+
+	return double_to_array(fcinfo, values, nvalues);
 }
 
 /*
