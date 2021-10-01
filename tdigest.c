@@ -76,6 +76,8 @@ typedef struct tdigest_aggstate_t {
 	/* array of requested percentiles and values */
 	int			npercentiles;	/* number of percentiles */
 	int			nvalues;		/* number of values */
+	double		trim_low;		/* low threshold (for trimmed aggs) */
+	double		trim_high;		/* high threshold (for trimmed aggs) */
 	double	   *percentiles;	/* array of percentiles (if any) */
 	double	   *values;			/* array of values (if any) */
 	centroid_t *centroids;		/* centroids for the digest */
@@ -143,6 +145,16 @@ PG_FUNCTION_INFO_V1(tdigest_add_double_increment);
 PG_FUNCTION_INFO_V1(tdigest_add_double_array_increment);
 PG_FUNCTION_INFO_V1(tdigest_union_double_increment);
 
+PG_FUNCTION_INFO_V1(tdigest_add_double_trimmed);
+PG_FUNCTION_INFO_V1(tdigest_add_double_count_trimmed);
+PG_FUNCTION_INFO_V1(tdigest_add_digest_trimmed);
+PG_FUNCTION_INFO_V1(tdigest_add_digest_count_trimmed);
+PG_FUNCTION_INFO_V1(tdigest_trimmed_avg);
+PG_FUNCTION_INFO_V1(tdigest_trimmed_sum);
+
+PG_FUNCTION_INFO_V1(tdigest_digest_sum);
+PG_FUNCTION_INFO_V1(tdigest_digest_avg);
+
 Datum tdigest_add_double_array(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_count(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_array_values(PG_FUNCTION_ARGS);
@@ -181,6 +193,16 @@ Datum tdigest_union_double_increment(PG_FUNCTION_ARGS);
 
 Datum tdigest_to_json(PG_FUNCTION_ARGS);
 Datum tdigest_to_array(PG_FUNCTION_ARGS);
+
+Datum tdigest_add_double_trimmed(PG_FUNCTION_ARGS);
+Datum tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS);
+Datum tdigest_add_digest_trimmed(PG_FUNCTION_ARGS);
+Datum tdigest_add_digest_count_trimmed(PG_FUNCTION_ARGS);
+Datum tdigest_trimmed_avg(PG_FUNCTION_ARGS);
+Datum tdigest_trimmed_sum(PG_FUNCTION_ARGS);
+
+Datum tdigest_digest_sum(PG_FUNCTION_ARGS);
+Datum tdigest_digest_avg(PG_FUNCTION_ARGS);
 
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
@@ -937,6 +959,22 @@ check_compression(int compression)
 {
 	if (compression < MIN_COMPRESSION || compression > MAX_COMPRESSION)
 		elog(ERROR, "invalid compression value %d", compression);
+}
+
+static void
+check_trim_values(double low, double high)
+{
+	if (low < 0.0)
+		elog(ERROR, "invalid low percentile value %f, should be in [0.0, 1.0]",
+			 low);
+
+	if (high > 1.0)
+		elog(ERROR, "invalid high percentile value %f, should be in [0.0, 1.0]",
+			 high);
+
+	if (low >= high)
+		elog(ERROR, "invalid low/high percentile values %f/%f, should be low < high",
+			 low, high);
 }
 
 /*
@@ -2883,6 +2921,393 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 	Assert(idx == nvalues);
 
 	return double_to_array(fcinfo, values, nvalues);
+}
+
+Datum
+tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_mean called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		MemoryContext oldcontext;
+		int		compression = PG_GETARG_INT32(2);
+		double	low = PG_GETARG_FLOAT8(3);
+		double	high = PG_GETARG_FLOAT8(4);
+
+		check_compression(compression);
+
+		check_trim_values(low, high);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		state = tdigest_aggstate_allocate(0, 0, compression);
+		state->trim_low = low;
+		state->trim_high = high;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+Datum
+tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
+{
+	int		i;
+	int64	count;
+	tdigest_aggstate_t *state;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_double_mean called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	/* if there's no digest allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		MemoryContext oldcontext;
+		int		compression = PG_GETARG_INT32(3);
+		double	low = PG_GETARG_FLOAT8(4);
+		double	high = PG_GETARG_FLOAT8(5);
+
+		check_compression(compression);
+
+		check_trim_values(low, high);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+
+		state = tdigest_aggstate_allocate(0, 0, compression);
+		state->trim_low = low;
+		state->trim_high = high;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	if (PG_ARGISNULL(2))
+		count = 1;
+	else
+		count = PG_GETARG_INT64(2);
+
+	/* can't add values with non-positive counts */
+	if (count <= 0)
+		elog(ERROR, "invalid count value %ld, must be a positive value", count);
+
+	/*
+	 * When adding too many values (than would fit into an empty buffer, and
+	 * thus likely causing too many compactions), we instead build a t-digest
+	 * and them merge it into the existing state.
+	 *
+	 * This is much faster, because the t-digest can be generated in one go,
+	 * so there can be only one compaction at most.
+	 */
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		int			i;
+		tdigest_t  *new;
+		double		value = PG_GETARG_FLOAT8(1);
+
+		new = tdigest_generate(state->compression, value, count);
+
+		/* XXX maybe not necessary if there's enough space in the buffer */
+		tdigest_compact(state);
+
+		for (i = 0; i < new->ncentroids; i++)
+		{
+			centroid_t   *s = &new->centroids[i];
+
+			state->centroids[state->ncentroids].count = s->count;
+			state->centroids[state->ncentroids].mean = value;
+			state->ncentroids++;
+			state->count += s->count;
+		}
+
+		count = 0;
+	}
+
+	/*
+	 * If there are only a couple values, just add them one by one, so that
+	 * we do proper compaction and sizing of centroids. Otherwise we might end
+	 * up with oversized centroid on the tails etc.
+	 */
+	for (i = 0; i < count; i++)
+		tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Add a value to the tdigest (create one if needed). Transition function
+ * for tdigest aggregate with a single value.
+ */
+Datum
+tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
+{
+	int					i;
+	tdigest_aggstate_t *state;
+	tdigest_t		   *digest;
+
+	MemoryContext aggcontext;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_add_digest called in non-aggregate context");
+
+	/*
+	 * We want to skip NULL values altogether - we return either the existing
+	 * t-digest (if it already exists) or NULL.
+	 */
+	if (PG_ARGISNULL(1))
+	{
+		if (PG_ARGISNULL(0))
+			PG_RETURN_NULL();
+
+		/* if there already is a state accumulated, don't forget it */
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+	}
+
+	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
+
+	/* make sure the t-digest format is supported */
+	if (digest->flags != TDIGEST_STORES_MEAN)
+		elog(ERROR, "unsupported t-digest on-disk format");
+
+	/* if there's no aggregate state allocated, create it now */
+	if (PG_ARGISNULL(0))
+	{
+		MemoryContext oldcontext;
+		double	low = PG_GETARG_FLOAT8(2);
+		double	high = PG_GETARG_FLOAT8(3);
+
+		check_trim_values(low, high);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
+		state = tdigest_aggstate_allocate(0, 0, digest->compression);
+		state->trim_low = low;
+		state->trim_high = high;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	for (i = 0; i < digest->ncentroids; i++)
+		tdigest_add_centroid(state, digest->centroids[i].mean,
+									digest->centroids[i].count);
+
+	PG_RETURN_POINTER(state);
+}
+
+/*
+ * Calculate trimmed aggregates from centroids.
+ */
+static void
+tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
+					int64 count, double low, double high,
+					double *sump, int64 *countp)
+{
+	int		i;
+	double	sum = 0;
+	int64	count_done = 0,
+			count_low,
+			count_high;
+
+	/* translate the percentiles to counts */
+	count_low = floor(count * low);
+	count_high = ceil(count * high);
+
+	count = 0;
+	for (i = 0; i < ncentroids; i++)
+	{
+		int64	count_add = 0;
+
+		/* Assume the whole centroid falls into the range. */
+		count_add = centroids[i].count;
+
+		/*
+		 * If we haven't reached the low threshold yet, skip appropriate
+		 * part of the centroid.
+		 */
+		count_add -= Min(Max(0, count_low - count_done),
+						 count_add);
+
+		/*
+		 * If we have reached the upper threshold, ignore the overflowing
+		 * part of the centroid.
+		 */
+		count_add = Min(Max(0, count_high - count_done),
+						 count_add);
+
+		/* consider the whole centroid processed */
+		count_done += centroids[i].count;
+
+		/* increment the sum / count */
+		sum += centroids[i].mean * count_add;
+		count += count_add;
+
+		/* break once we cross the high threshold */
+		if (count_done >= count_high)
+			break;
+	}
+
+	*sump = sum;
+	*countp = count;
+}
+
+
+/*
+ * Compute percentile from a tdigest. Final function for tdigest aggregate
+ * with a single percentile.
+ */
+Datum
+tdigest_trimmed_avg(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t	   *state;
+	MemoryContext	aggcontext;
+	double			sum;
+	int64			count;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_percentiles called in non-aggregate context");
+
+	/* if there's no digest, return NULL */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	tdigest_trimmed_agg(state->centroids, state->ncentroids,
+						state->count, state->trim_low, state->trim_high,
+						&sum, &count);
+
+	if (count > 0)
+		PG_RETURN_FLOAT8(sum / count);
+
+	PG_RETURN_NULL();
+}
+
+/*
+ * Compute percentile from a tdigest. Final function for tdigest aggregate
+ * with a single percentile.
+ */
+Datum
+tdigest_trimmed_sum(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t	   *state;
+	MemoryContext	aggcontext;
+	double			sum;
+	int64			count;
+
+	/* cannot be called directly because of internal-type argument */
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		elog(ERROR, "tdigest_percentiles called in non-aggregate context");
+
+	/* if there's no digest, return NULL */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	tdigest_trimmed_agg(state->centroids, state->ncentroids,
+						state->count, state->trim_low, state->trim_high,
+						&sum, &count);
+
+	if (count > 0)
+		PG_RETURN_FLOAT8(sum);
+
+	PG_RETURN_NULL();
+}
+
+/*
+ * Trimmed sum of a single digest (non-aggregate function).
+ */
+Datum
+tdigest_digest_sum(PG_FUNCTION_ARGS)
+{
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
+	double		low = PG_GETARG_FLOAT8(1);
+	double		high = PG_GETARG_FLOAT8(2);
+
+	double		sum;
+	int64		count;
+
+	AssertCheckTDigest(digest);
+
+	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
+						digest->count, low, high, &sum, &count);
+
+	if (count > 0)
+		PG_RETURN_FLOAT8(sum);
+
+	PG_RETURN_NULL();
+}
+
+/*
+ * Trimmed average of a single digest (non-aggregate function)
+ */
+Datum
+tdigest_digest_avg(PG_FUNCTION_ARGS)
+{
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
+	double		low = PG_GETARG_FLOAT8(1);
+	double		high = PG_GETARG_FLOAT8(2);
+
+	double		sum;
+	int64		count;
+
+	AssertCheckTDigest(digest);
+
+	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
+						digest->count, low, high, &sum, &count);
+
+	if (count > 0)
+		PG_RETURN_FLOAT8(sum / count);
+
+	PG_RETURN_NULL();
 }
 
 /*

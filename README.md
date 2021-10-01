@@ -246,6 +246,18 @@ UPDATE t SET d = tdigest_union(NULL, d);
 ```
 
 
+## Trimmed aggregates
+
+The extension provides two aggregate functions allowing to calculate trimmed
+(truncted) sum and average.
+
+* `tdigest_sum(digest tdigest, low double precision, high double precision)`
+
+* `tdigest_avg(digest tdigest, low double precision, high double precision)`
+
+The `low` and `high` parameters specify where to truncte the data.
+
+
 ## Functions
 
 ### `tdigest_percentile(value, accuracy, percentile)`
@@ -612,6 +624,149 @@ SELECT CAST(d AS double precision[]) FROM (
 #### Parameters
 
 - `tdigest` - t-digest to cast to a `double precision[]` value
+
+
+### `tdigest_avg(value, count, accuracy, low, high)`
+
+Computes trimmed mean of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_avg(t.v, t.c, 100, 0.1, 0.9) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `count` - number of occurrences of the value
+- `accuracy` - accuracy of the t-digest
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)v
+
+
+### `tdigest_avg(tdigest, low, high)`
+
+Computes trimmed mean of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_avg(d, 0.05, 0.95) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `tdigest` - tdigest to calculate mean from
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+### `tdigest_sum(value, accuracy, low, high)`
+
+Computes trimmed sum of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_sum(t.v, 100, 0.1, 0.9) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+### `tdigest_sum(value, count, accuracy, low, high)`
+
+Computes trimmed sum of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_sum(t.v, t.c, 100, 0.1, 0.9) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `count` - number of occurrences of the value
+- `accuracy` - accuracy of the t-digest
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+### `tdigest_sum(tdigest, low, high)`
+
+Computes trimmed sum of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_sum(d, 0.05, 0.95) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `tdigest` - tdigest to calculate sum from
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+### `tdigest_avg(tdigest, double precision, double precision)`
+
+Calculates average of values between the low and high threshold.
+
+#### Synopsis
+
+```
+SELECT tdigest_avg(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to calculate average for
+- `low` - low threshold (truncate values below)
+- `high` - high threshold (truncate values above)
+
+
+### `tdigest_sum(tdigest, double precision, double precision)`
+
+Calculates sum of values between the low and high threshold.
+
+#### Synopsis
+
+```
+SELECT tdigest_sum(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to calculate sum for
+- `low` - low threshold (truncate values below)
+- `high` - high threshold (truncate values above)
 
 
 Notes
