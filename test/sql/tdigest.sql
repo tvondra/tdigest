@@ -985,6 +985,7 @@ SELECT cast(tdigest(i / 1000.0, 100) as double precision[]) from generate_series
 
 -- <value,count> API
 
+set extra_float_digits = 0;
 select tdigest_percentile(value, count, 100, 0.95)
 from (values
   (47325940488,1),
@@ -1037,6 +1038,7 @@ from (values
   (3583536,48400),
   (4104120,60000),
   (166024740,2147483647)) foo (count, value);
+reset extra_float_digits;
 
 ----------------------------------------------
 -- nice data set with random data (uniform) --
