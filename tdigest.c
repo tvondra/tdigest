@@ -1215,7 +1215,8 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 
 	/* can't add values with non-positive counts */
 	if (count <= 0)
-		elog(ERROR, "invalid count value %ld, must be a positive value", count);
+		elog(ERROR, "invalid count value %lld, must be a positive value",
+			 (long long) count);
 
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
@@ -1396,7 +1397,8 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 
 	/* can't add values with non-positive counts */
 	if (count <= 0)
-		elog(ERROR, "invalid count value %ld, must be a positive value", count);
+		elog(ERROR, "invalid count value %lld, must be a positive value",
+			 (long long) count);
 
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
@@ -1726,7 +1728,8 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 
 	/* can't add values with non-positive counts */
 	if (count <= 0)
-		elog(ERROR, "invalid count value %ld, must be a positive value", count);
+		elog(ERROR, "invalid count value %lld, must be a positive value",
+			 (long long) count);
 
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
@@ -1868,7 +1871,8 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 
 	/* can't add values with non-positive counts */
 	if (count <= 0)
-		elog(ERROR, "invalid count value %ld, must be a positive value", count);
+		elog(ERROR, "invalid count value %lld, must be a positive value",
+			 (long long) count);
 
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
@@ -2673,8 +2677,8 @@ tdigest_in(PG_FUNCTION_ARGS)
 	if (total_count != digest->count)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("total count does not match the data (%ld != %ld)",
-						total_count, digest->count)));
+				 errmsg("total count does not match the data (%lld != %lld)",
+						(long long) total_count, (long long) digest->count)));
 
 	/*
 	 * Make sure we return digest with the new format (it might be the
@@ -3031,7 +3035,8 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 
 	/* can't add values with non-positive counts */
 	if (count <= 0)
-		elog(ERROR, "invalid count value %ld, must be a positive value", count);
+		elog(ERROR, "invalid count value %lld, must be a positive value",
+			 (long long) count);
 
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
