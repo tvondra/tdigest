@@ -6,6 +6,7 @@ SET client_min_messages = 'WARNING';
 \i tdigest--1.0.0--1.0.1.sql
 \i tdigest--1.0.1--1.2.0.sql
 \i tdigest--1.2.0--1.3.0.sql
+\i tdigest--1.3.0--1.4.0-dev.sql
 SET client_min_messages = 'NOTICE';
 
 \set ECHO all
