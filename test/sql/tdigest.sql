@@ -985,9 +985,13 @@ SELECT array_agg(round(v::numeric,3)) FROM (
   SELECT unnest(cast(tdigest(i / 1000.0, 10) as double precision[])) AS v from generate_series(1,1000) s(i)
 ) foo;
 
-SELECT cast(tdigest(i / 1000.0, 10) as double precision[]) from generate_series(1,1000) s(i);
-SELECT cast(tdigest(i / 1000.0, 25) as double precision[]) from generate_series(1,1000) s(i);
-SELECT cast(tdigest(i / 1000.0, 100) as double precision[]) from generate_series(1,1000) s(i);
+SELECT array_agg(round(v::numeric,3)) FROM (
+  SELECT unnest(cast(tdigest(i / 1000.0, 25) as double precision[])) AS v from generate_series(1,1000) s(i)
+) foo;
+
+SELECT array_agg(round(v::numeric,3)) FROM (
+  SELECT unnest(cast(tdigest(i / 1000.0, 100) as double precision[])) AS v from generate_series(1,1000) s(i)
+) foo;
 
 -- <value,count> API
 select tdigest_percentile(value, count, 100, 0.95)
