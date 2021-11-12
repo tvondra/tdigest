@@ -8,6 +8,7 @@ SET client_min_messages = 'WARNING';
 \i tdigest--1.2.0--1.3.0.sql
 \i tdigest--1.3.0--1.4.0-dev.sql
 SET client_min_messages = 'NOTICE';
+SET extra_float_digits = 0;
 
 \set ECHO all
 
@@ -980,13 +981,15 @@ SELECT cast(tdigest(i / 1000.0, 25) as json) from generate_series(1,1000) s(i);
 SELECT cast(tdigest(i / 1000.0, 100) as json) from generate_series(1,1000) s(i);
 
 -- test casting to double precision array
+SELECT array_agg(round(v::numeric,3)) FROM (
+  SELECT unnest(cast(tdigest(i / 1000.0, 10) as double precision[])) AS v from generate_series(1,1000) s(i)
+) foo;
+
 SELECT cast(tdigest(i / 1000.0, 10) as double precision[]) from generate_series(1,1000) s(i);
 SELECT cast(tdigest(i / 1000.0, 25) as double precision[]) from generate_series(1,1000) s(i);
 SELECT cast(tdigest(i / 1000.0, 100) as double precision[]) from generate_series(1,1000) s(i);
 
 -- <value,count> API
-
-set extra_float_digits = 0;
 select tdigest_percentile(value, count, 100, 0.95)
 from (values
   (47325940488,1),
@@ -1039,7 +1042,6 @@ from (values
   (3583536,48400),
   (4104120,60000),
   (166024740,2147483647)) foo (count, value);
-reset extra_float_digits;
 
 ----------------------------------------------
 -- nice data set with random data (uniform) --
@@ -1532,3 +1534,5 @@ SELECT
     tdigest_digest_sum(data.d, 0.05, 0.95) between 9000 * 0.45 and 9000 * 0.55 AS sum_05_95,
     tdigest_digest_avg(data.d, 0.05, 0.95) between 0.45 and 0.55 AS mean_05_95
 FROM data;
+
+RESET extra_float_digits;
