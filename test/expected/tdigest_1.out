@@ -1905,12 +1905,13 @@ FROM (
                              ->  Parallel Seq Scan on t t_1
                              ->  Memoize
                                    Cache Key: t_1.c
+                                   Cache Mode: binary
                                    ->  Function Scan on generate_series
          ->  Gather
                Workers Planned: 2
                ->  Partial Aggregate
                      ->  Parallel Seq Scan on t
-(15 rows)
+(16 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
@@ -1952,12 +1953,13 @@ FROM (
                              ->  Parallel Seq Scan on t t_1
                              ->  Memoize
                                    Cache Key: t_1.c
+                                   Cache Mode: binary
                                    ->  Function Scan on generate_series
          ->  Gather
                Workers Planned: 2
                ->  Partial Aggregate
                      ->  Parallel Seq Scan on t
-(15 rows)
+(16 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
@@ -2001,13 +2003,14 @@ FROM (
                              ->  Parallel Seq Scan on t t_1
                              ->  Memoize
                                    Cache Key: t_1.c
+                                   Cache Mode: binary
                                    ->  Function Scan on generate_series
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t
-(16 rows)
+(17 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
@@ -2057,13 +2060,14 @@ FROM (
                                      ->  Parallel Seq Scan on t t_1
                                      ->  Memoize
                                            Cache Key: t_1.c
+                                           Cache Mode: binary
                                            ->  Function Scan on generate_series
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t
-(19 rows)
+(20 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
