@@ -2300,15 +2300,16 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
 		elog(ERROR, "tdigest_combine called in non-aggregate context");
 
-	/* the second parameter must not be NULL */
-	Assert(!PG_ARGISNULL(1));
-
-	/* so just grab it */
-	src = (tdigest_aggstate_t *) PG_GETARG_POINTER(1);
-
-	/* when NULL in the first parameter, just return a copy of the second one */
+	/* if no "merged" state yet, try creating it */
 	if (PG_ARGISNULL(0))
 	{
+		/* nope, the second argument is NULL to, so return NULL */
+		if (PG_ARGISNULL(1))
+			PG_RETURN_NULL();
+
+		/* the second argument is not NULL, so copy it */
+		src = (tdigest_aggstate_t *) PG_GETARG_POINTER(1);
+
 		/* copy the digest into the right long-lived memory context */
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 		src = tdigest_copy(src);
@@ -2317,6 +2318,15 @@ tdigest_combine(PG_FUNCTION_ARGS)
 		PG_RETURN_POINTER(src);
 	}
 
+	/*
+	 * If the second argument is NULL, just return the first one (we know
+	 * it's not NULL at this point).
+	 */
+	if (PG_ARGISNULL(1))
+		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
+
+	/* Now we know neither argument is NULL, so merge them. */
+	src = (tdigest_aggstate_t *) PG_GETARG_POINTER(1);
 	dst = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
