@@ -62,6 +62,32 @@ BEGIN
 
 END;
 $$ LANGUAGE plpgsql;
+DO $$
+DECLARE
+    v_version numeric;
+BEGIN
+
+    SELECT substring(setting from '\d+')::numeric INTO v_version FROM pg_settings WHERE name = 'server_version';
+
+    -- GUCs common for all versions
+    PERFORM set_config('parallel_setup_cost', '0', false);
+    PERFORM set_config('parallel_tuple_cost', '0', false);
+    PERFORM set_config('max_parallel_workers_per_gather', '2', false);
+
+    -- 9.6 used somewhat different GUC name for relation size
+    IF v_version < 10 THEN
+        PERFORM set_config('min_parallel_relation_size', '1kB', false);
+    ELSE
+        PERFORM set_config('min_parallel_table_scan_size', '1kB', false);
+    END IF;
+
+    -- in 14 disable Memoize nodes, to make explain more consistent
+    IF v_version >= 14 THEN
+        PERFORM set_config('enable_memoize', 'off', false);
+    END IF;
+
+END;
+$$ LANGUAGE plpgsql;
 -----------------------------------------------------------
 -- nice data set with ordered (asc) / evenly-spaced data --
 -----------------------------------------------------------
@@ -1551,9 +1577,6 @@ ANALYZE t;
 CREATE TABLE t2 (d tdigest);
 INSERT INTO t2 SELECT tdigest(v, 100) FROM t GROUP BY d;
 ANALYZE t2;
-SET parallel_setup_cost = 0;
-SET parallel_tuple_cost = 0;
-SET min_parallel_table_scan_size = '1kB';
 -- individual values
 EXPLAIN (COSTS OFF)
 WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
