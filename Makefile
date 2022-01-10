@@ -7,8 +7,7 @@ MODULES = tdigest
 
 CFLAGS=`pg_config --includedir-server`
 
-TESTS        = $(wildcard test/sql/*.sql)
-REGRESS      = $(patsubst test/sql/%.sql,%,$(TESTS))
+REGRESS      = basic cast conversions incremental parallel_query value_count_api trimmed_aggregates
 REGRESS_OPTS = --inputdir=test
 
 PG_CONFIG = pg_config

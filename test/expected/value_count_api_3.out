@@ -1,0 +1,374 @@
+DO $$
+DECLARE
+    v_version numeric;
+BEGIN
+
+    SELECT substring(setting from '\d+')::numeric INTO v_version FROM pg_settings WHERE name = 'server_version';
+
+    -- GUCs common for all versions
+    PERFORM set_config('extra_float_digits', '0', false);
+    PERFORM set_config('parallel_setup_cost', '0', false);
+    PERFORM set_config('parallel_tuple_cost', '0', false);
+    PERFORM set_config('max_parallel_workers_per_gather', '2', false);
+
+    -- 9.6 used somewhat different GUC name for relation size
+    IF v_version < 10 THEN
+        PERFORM set_config('min_parallel_relation_size', '1kB', false);
+    ELSE
+        PERFORM set_config('min_parallel_table_scan_size', '1kB', false);
+    END IF;
+
+    -- in 14 disable Memoize nodes, to make explain more consistent
+    IF v_version >= 14 THEN
+        PERFORM set_config('enable_memoize', 'off', false);
+    END IF;
+
+END;
+$$ LANGUAGE plpgsql;
+-- <value,count> API
+select tdigest_percentile(value, count, 100, 0.95)
+from (values
+  (47325940488,1),
+  (15457695432,2),
+  (6889790700,3),
+  (4188763788,4),
+  (2882932224,5),
+  (2114815860,6),
+  (1615194324,7),
+  (2342114568,9),
+  (1626471924,11),
+  (1660755408,14),
+  (1143728292,17),
+  (1082582424,21),
+  (911488284,26),
+  (728863908,32),
+  (654898692,40),
+  (530198076,50),
+  (417883440,62),
+  (341452344,77),
+  (274579584,95),
+  (231921120,118),
+  (184091820,146),
+  (152469828,181),
+  (125634972,224),
+  (107059704,278),
+  (88746120,345),
+  (73135668,428),
+  (61035756,531),
+  (50683320,658),
+  (42331824,816),
+  (35234400,1012),
+  (29341356,1255),
+  (24290928,1556),
+  (20284668,1929),
+  (17215908,2391),
+  (14737488,2964),
+  (12692772,3674),
+  (11220732,4555),
+  (9787584,5647),
+  (8148420,7000),
+  (6918612,8678),
+  (6015000,10758),
+  (5480316,13336),
+  (5443356,16532),
+  (4535616,20494),
+  (3962316,25406),
+  (3914484,31495),
+  (3828108,39043),
+  (3583536,48400),
+  (4104120,60000),
+  (166024740,2147483647)) foo (count, value);
+ tdigest_percentile 
+--------------------
+   30.3586183216119
+(1 row)
+
+----------------------------------------------
+-- nice data set with random data (uniform) --
+----------------------------------------------
+-- 10 centroids (tiny)
+WITH
+ data AS (SELECT prng(1000) x, prng(1000, 29823218) cnt),
+ data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
+SELECT
+    p,
+    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM
+       (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
+       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+) baz;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+
+-- 100 centroids (okay-ish)
+WITH
+ data AS (SELECT prng(1000) x, prng(1000, 29823218) cnt),
+ data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
+SELECT
+    p,
+    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM
+       (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
+       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+) baz;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+
+-- 1000 centroids (very accurate)
+WITH
+ data AS (SELECT prng(1000) x, prng(1000, 29823218) cnt),
+ data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
+SELECT
+    p,
+    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
+FROM (
+    SELECT
+        unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
+        unnest(a) AS a,
+        unnest(b) AS b
+    FROM
+       (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
+       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+) baz;
+  p   | ?column? | err 
+------+----------+-----
+ 0.01 | t        |    
+ 0.05 | t        |    
+  0.1 | t        |    
+  0.9 | t        |    
+ 0.95 | t        |    
+ 0.99 | t        |    
+(6 rows)
+
+-- <value,count> API
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(v, c, 100, 0.95) AS b
+  FROM t) foo;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Subquery Scan on foo
+   CTE d
+     ->  Gather
+           Workers Planned: 2
+           ->  Nested Loop
+                 ->  Parallel Seq Scan on t t_1
+                 ->  Function Scan on generate_series
+   CTE x
+     ->  Aggregate
+           ->  CTE Scan on d
+   ->  Aggregate
+         InitPlan 3 (returns $3)
+           ->  CTE Scan on x
+         ->  Gather
+               Workers Planned: 2
+               ->  Parallel Seq Scan on t
+(16 rows)
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  0.95,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile(v, c, 100, 0.95) AS b
+  FROM t) foo;
+ ?column? | ?column? 
+----------+----------
+     0.95 | t
+(1 row)
+
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percent_rank(950) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile_of(v, c, 100, 950) AS b
+  FROM t) foo;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Subquery Scan on foo
+   CTE d
+     ->  Gather
+           Workers Planned: 2
+           ->  Nested Loop
+                 ->  Parallel Seq Scan on t t_1
+                 ->  Function Scan on generate_series
+   CTE x
+     ->  Aggregate
+           ->  CTE Scan on d
+   ->  Aggregate
+         InitPlan 3 (returns $3)
+           ->  CTE Scan on x
+         ->  Gather
+               Workers Planned: 2
+               ->  Parallel Seq Scan on t
+(16 rows)
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percent_rank(950) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  950,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    (SELECT p FROM x) AS a,
+    tdigest_percentile_of(v, c, 100, 950) AS b
+  FROM t) foo;
+ ?column? | ?column? 
+----------+----------
+      950 | t
+(1 row)
+
+-- array of percentiles / values
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t) foo;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Subquery Scan on foo
+   CTE d
+     ->  Gather
+           Workers Planned: 2
+           ->  Nested Loop
+                 ->  Parallel Seq Scan on t t_1
+                 ->  Function Scan on generate_series
+   CTE x
+     ->  Aggregate
+           ->  CTE Scan on d
+   ->  Aggregate
+         InitPlan 3 (returns $3)
+           ->  CTE Scan on x
+         ->  Gather
+               Workers Planned: 2
+               ->  Parallel Seq Scan on t
+(16 rows)
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM d)
+SELECT
+  p,
+  abs(a - b) / 1000 < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
+    unnest((SELECT p FROM x)) AS a,
+    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+  FROM t) foo;
+  p   | ?column? 
+------+----------
+  0.0 | t
+ 0.95 | t
+ 0.99 | t
+  1.0 | t
+(4 rows)
+
+EXPLAIN (COSTS OFF)
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) AS p FROM d)) p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((select x.p from x)) AS a,
+    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+  FROM t) foo;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Subquery Scan on foo
+   CTE d
+     ->  Gather
+           Workers Planned: 2
+           ->  Nested Loop
+                 ->  Parallel Seq Scan on t t_1
+                 ->  Function Scan on generate_series
+   CTE x
+     ->  Aggregate
+           ->  Function Scan on unnest f
+           SubPlan 2
+             ->  Aggregate
+                   ->  CTE Scan on d
+   ->  Aggregate
+         InitPlan 4 (returns $4)
+           ->  CTE Scan on x
+         ->  Gather
+               Workers Planned: 2
+               ->  Parallel Seq Scan on t
+(19 rows)
+
+WITH
+  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) AS p FROM d)) p FROM unnest(ARRAY[950, 990]) f)
+SELECT
+  p,
+  abs(a - b) < 0.01
+FROM (
+  SELECT
+    unnest(ARRAY[950, 990]) AS p,
+    unnest((select x.p from x)) AS a,
+    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+  FROM t) foo;
+  p  | ?column? 
+-----+----------
+ 950 | t
+ 990 | t
+(2 rows)
+

@@ -1,0 +1,81 @@
+DO $$
+DECLARE
+    v_version numeric;
+BEGIN
+
+    SELECT substring(setting from '\d+')::numeric INTO v_version FROM pg_settings WHERE name = 'server_version';
+
+    -- GUCs common for all versions
+    PERFORM set_config('extra_float_digits', '0', false);
+    PERFORM set_config('parallel_setup_cost', '0', false);
+    PERFORM set_config('parallel_tuple_cost', '0', false);
+    PERFORM set_config('max_parallel_workers_per_gather', '2', false);
+
+    -- 9.6 used somewhat different GUC name for relation size
+    IF v_version < 10 THEN
+        PERFORM set_config('min_parallel_relation_size', '1kB', false);
+    ELSE
+        PERFORM set_config('min_parallel_table_scan_size', '1kB', false);
+    END IF;
+
+    -- in 14 disable Memoize nodes, to make explain more consistent
+    IF v_version >= 14 THEN
+        PERFORM set_config('enable_memoize', 'off', false);
+    END IF;
+
+END;
+$$ LANGUAGE plpgsql;
+
+-- test incremental API (adding values one by one)
+CREATE TABLE t (d tdigest);
+INSERT INTO t VALUES (NULL);
+
+-- check this produces the same result building the tdigest at once, but we
+-- need to be careful about feeding the data in the same order, and we must
+-- not compactify the t-digest after each increment
+DO LANGUAGE plpgsql $$
+DECLARE
+  r RECORD;
+BEGIN
+    FOR r IN (SELECT i FROM generate_series(1,1000) s(i) ORDER BY md5(i::text)) LOOP
+        UPDATE t SET d = tdigest_add(d, r.i, 100, false);
+    END LOOP;
+END$$;
+
+-- compare the results, but do force a compaction of the incremental result
+WITH x AS (SELECT i FROM generate_series(1,1000) s(i) ORDER BY md5(i::text))
+SELECT (SELECT tdigest(d)::text FROM t) = (SELECT tdigest(x.i, 100)::text FROM x) AS match;
+
+-- now try the same thing with bulk incremental update (using arrays)
+TRUNCATE t;
+INSERT INTO t VALUES (NULL);
+
+DO LANGUAGE plpgsql $$
+DECLARE
+  r RECORD;
+BEGIN
+    FOR r IN (SELECT a, array_agg(i::double precision) AS v FROM (SELECT mod(i,5) AS a, i FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), md5(i::text)) foo GROUP BY a ORDER BY a) LOOP
+        UPDATE t SET d = tdigest_add(d, r.v, 100, false);
+    END LOOP;
+END$$;
+
+-- compare the results, but do force a compaction of the incremental result
+WITH x AS (SELECT mod(i,5) AS a, i::double precision AS d FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), i)
+SELECT (SELECT tdigest(d)::text FROM t) = (SELECT tdigest(x.d, 100)::text FROM x);
+
+-- now try the same thing with bulk incremental update (using t-digests)
+TRUNCATE t;
+INSERT INTO t VALUES (NULL);
+
+DO LANGUAGE plpgsql $$
+DECLARE
+  r RECORD;
+BEGIN
+    FOR r IN (SELECT a, tdigest(i,100) AS d FROM (SELECT mod(i,5) AS a, i FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), md5(i::text)) foo GROUP BY a ORDER BY a) LOOP
+        UPDATE t SET d = tdigest_union(d, r.d, false);
+    END LOOP;
+END$$;
+
+-- compare the results, but do force a compaction of the incremental result
+WITH x AS (SELECT a, tdigest(i,100) AS d FROM (SELECT mod(i,5) AS a, i FROM generate_series(1,1000) s(i) ORDER BY mod(i,5), md5(i::text)) foo GROUP BY a ORDER BY a)
+SELECT (SELECT tdigest(d)::text FROM t) = (SELECT tdigest(x.d)::text FROM x);

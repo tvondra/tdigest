@@ -1588,21 +1588,20 @@ FROM (
     (SELECT p FROM x) AS a,
     tdigest_percentile(v, 100, 0.95) AS b
   FROM t) foo;
-                   QUERY PLAN                   
-------------------------------------------------
+                      QUERY PLAN                      
+------------------------------------------------------
  Subquery Scan on foo
-   CTE x
-     ->  Aggregate
-           ->  Gather
-                 Workers Planned: 2
-                 ->  Parallel Seq Scan on t t_1
-   ->  Aggregate
-         InitPlan 2 (returns $2)
-           ->  CTE Scan on x
+   ->  Finalize Aggregate
+         InitPlan 1 (returns $1)
+           ->  Aggregate
+                 ->  Gather
+                       Workers Planned: 2
+                       ->  Parallel Seq Scan on t t_1
          ->  Gather
                Workers Planned: 2
-               ->  Parallel Seq Scan on t
-(12 rows)
+               ->  Partial Aggregate
+                     ->  Parallel Seq Scan on t
+(11 rows)
 
 WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
 SELECT
@@ -1660,21 +1659,20 @@ FROM (
     (SELECT p FROM x) AS a,
     tdigest_percentile(d, 0.95) AS b
   FROM t2) foo;
-                 QUERY PLAN                 
---------------------------------------------
+                    QUERY PLAN                    
+--------------------------------------------------
  Subquery Scan on foo
-   CTE x
-     ->  Aggregate
-           ->  Gather
-                 Workers Planned: 2
-                 ->  Parallel Seq Scan on t
-   ->  Aggregate
-         InitPlan 2 (returns $2)
-           ->  CTE Scan on x
+   ->  Finalize Aggregate
+         InitPlan 1 (returns $1)
+           ->  Aggregate
+                 ->  Gather
+                       Workers Planned: 2
+                       ->  Parallel Seq Scan on t
          ->  Gather
                Workers Planned: 2
-               ->  Parallel Seq Scan on t2
-(12 rows)
+               ->  Partial Aggregate
+                     ->  Parallel Seq Scan on t2
+(11 rows)
 
 WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
 SELECT
@@ -1737,20 +1735,18 @@ FROM (
                       QUERY PLAN                      
 ------------------------------------------------------
  Subquery Scan on foo
-   CTE x
-     ->  Aggregate
-           ->  Gather
-                 Workers Planned: 2
-                 ->  Parallel Seq Scan on t t_1
    ->  ProjectSet
-         InitPlan 2 (returns $2)
-           ->  CTE Scan on x
+         InitPlan 1 (returns $1)
+           ->  Aggregate
+                 ->  Gather
+                       Workers Planned: 2
+                       ->  Parallel Seq Scan on t t_1
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t
-(14 rows)
+(12 rows)
 
 WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
 SELECT
@@ -1781,26 +1777,24 @@ FROM (
     unnest((SELECT p FROM x)) AS a,
     unnest(tdigest_percentile_of(v, 100, ARRAY[950, 990])) AS b
   FROM t) foo;
-                       QUERY PLAN                       
---------------------------------------------------------
+                          QUERY PLAN                          
+--------------------------------------------------------------
  Subquery Scan on foo
-   CTE x
-     ->  Aggregate
-           ->  Function Scan on unnest f
-           SubPlan 1
-             ->  Aggregate
-                   ->  Gather
-                         Workers Planned: 2
-                         ->  Parallel Seq Scan on t t_1
    ->  ProjectSet
-         InitPlan 3 (returns $3)
-           ->  CTE Scan on x
+         InitPlan 2 (returns $2)
+           ->  Aggregate
+                 ->  Function Scan on unnest f
+                 SubPlan 1
+                   ->  Aggregate
+                         ->  Gather
+                               Workers Planned: 2
+                               ->  Parallel Seq Scan on t t_1
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t
-(17 rows)
+(15 rows)
 
 WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
 SELECT
@@ -1832,20 +1826,18 @@ FROM (
                       QUERY PLAN                       
 -------------------------------------------------------
  Subquery Scan on foo
-   CTE x
-     ->  Aggregate
-           ->  Gather
-                 Workers Planned: 2
-                 ->  Parallel Seq Scan on t
    ->  ProjectSet
-         InitPlan 2 (returns $2)
-           ->  CTE Scan on x
+         InitPlan 1 (returns $1)
+           ->  Aggregate
+                 ->  Gather
+                       Workers Planned: 2
+                       ->  Parallel Seq Scan on t
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t2
-(14 rows)
+(12 rows)
 
 WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
 SELECT
@@ -1876,26 +1868,24 @@ FROM (
     unnest((SELECT p FROM x)) AS a,
     unnest(tdigest_percentile_of(d, ARRAY[950, 990])) AS b
   FROM t2) foo;
-                      QUERY PLAN                       
--------------------------------------------------------
+                        QUERY PLAN                        
+----------------------------------------------------------
  Subquery Scan on foo
-   CTE x
-     ->  Aggregate
-           ->  Function Scan on unnest f
-           SubPlan 1
-             ->  Aggregate
-                   ->  Gather
-                         Workers Planned: 2
-                         ->  Parallel Seq Scan on t
    ->  ProjectSet
-         InitPlan 3 (returns $3)
-           ->  CTE Scan on x
+         InitPlan 2 (returns $2)
+           ->  Aggregate
+                 ->  Function Scan on unnest f
+                 SubPlan 1
+                   ->  Aggregate
+                         ->  Gather
+                               Workers Planned: 2
+                               ->  Parallel Seq Scan on t
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t2
-(17 rows)
+(15 rows)
 
 WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
 SELECT
@@ -1913,6 +1903,7 @@ FROM (
  990 | t
 (2 rows)
 
+
 -- <value,count> API
 EXPLAIN (COSTS OFF)
 WITH
@@ -1926,25 +1917,22 @@ FROM (
     (SELECT p FROM x) AS a,
     tdigest_percentile(v, c, 100, 0.95) AS b
   FROM t) foo;
-                      QUERY PLAN                      
-------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Subquery Scan on foo
-   CTE d
-     ->  Gather
-           Workers Planned: 2
-           ->  Nested Loop
-                 ->  Parallel Seq Scan on t t_1
-                 ->  Function Scan on generate_series
-   CTE x
-     ->  Aggregate
-           ->  CTE Scan on d
-   ->  Aggregate
-         InitPlan 3 (returns $4)
-           ->  CTE Scan on x
+   ->  Finalize Aggregate
+         InitPlan 1 (returns $2)
+           ->  Aggregate
+                 ->  Gather
+                       Workers Planned: 2
+                       ->  Nested Loop
+                             ->  Parallel Seq Scan on t t_1
+                             ->  Function Scan on generate_series
          ->  Gather
                Workers Planned: 2
-               ->  Parallel Seq Scan on t
-(16 rows)
+               ->  Partial Aggregate
+                     ->  Parallel Seq Scan on t
+(13 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
@@ -1974,25 +1962,22 @@ FROM (
     (SELECT p FROM x) AS a,
     tdigest_percentile_of(v, c, 100, 950) AS b
   FROM t) foo;
-                      QUERY PLAN                      
-------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Subquery Scan on foo
-   CTE d
-     ->  Gather
-           Workers Planned: 2
-           ->  Nested Loop
-                 ->  Parallel Seq Scan on t t_1
-                 ->  Function Scan on generate_series
-   CTE x
-     ->  Aggregate
-           ->  CTE Scan on d
-   ->  Aggregate
-         InitPlan 3 (returns $4)
-           ->  CTE Scan on x
+   ->  Finalize Aggregate
+         InitPlan 1 (returns $2)
+           ->  Aggregate
+                 ->  Gather
+                       Workers Planned: 2
+                       ->  Nested Loop
+                             ->  Parallel Seq Scan on t t_1
+                             ->  Function Scan on generate_series
          ->  Gather
                Workers Planned: 2
-               ->  Parallel Seq Scan on t
-(16 rows)
+               ->  Partial Aggregate
+                     ->  Parallel Seq Scan on t
+(13 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
@@ -2024,27 +2009,23 @@ FROM (
     unnest((SELECT p FROM x)) AS a,
     unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t) foo;
-                      QUERY PLAN                      
-------------------------------------------------------
+                            QUERY PLAN                            
+------------------------------------------------------------------
  Subquery Scan on foo
-   CTE d
-     ->  Gather
-           Workers Planned: 2
-           ->  Nested Loop
-                 ->  Parallel Seq Scan on t t_1
-                 ->  Function Scan on generate_series
-   CTE x
-     ->  Aggregate
-           ->  CTE Scan on d
    ->  ProjectSet
-         InitPlan 3 (returns $4)
-           ->  CTE Scan on x
+         InitPlan 1 (returns $2)
+           ->  Aggregate
+                 ->  Gather
+                       Workers Planned: 2
+                       ->  Nested Loop
+                             ->  Parallel Seq Scan on t t_1
+                             ->  Function Scan on generate_series
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t
-(18 rows)
+(14 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
@@ -2079,30 +2060,26 @@ FROM (
     unnest((select x.p from x)) AS a,
     unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
   FROM t) foo;
-                      QUERY PLAN                      
-------------------------------------------------------
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
  Subquery Scan on foo
-   CTE d
-     ->  Gather
-           Workers Planned: 2
-           ->  Nested Loop
-                 ->  Parallel Seq Scan on t t_1
-                 ->  Function Scan on generate_series
-   CTE x
-     ->  Aggregate
-           ->  Function Scan on unnest f
-           SubPlan 2
-             ->  Aggregate
-                   ->  CTE Scan on d
    ->  ProjectSet
-         InitPlan 4 (returns $5)
-           ->  CTE Scan on x
+         InitPlan 2 (returns $3)
+           ->  Aggregate
+                 ->  Function Scan on unnest f
+                 SubPlan 1
+                   ->  Aggregate
+                         ->  Gather
+                               Workers Planned: 2
+                               ->  Nested Loop
+                                     ->  Parallel Seq Scan on t t_1
+                                     ->  Function Scan on generate_series
          ->  Finalize Aggregate
                ->  Gather
                      Workers Planned: 2
                      ->  Partial Aggregate
                            ->  Parallel Seq Scan on t
-(21 rows)
+(17 rows)
 
 WITH
   d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
@@ -2235,4 +2212,3 @@ FROM data;
  t         | t
 (1 row)
 
-RESET extra_float_digits;
