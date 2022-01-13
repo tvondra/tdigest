@@ -1,5 +1,7 @@
 # t-digest extension
 
+[![make installcheck](https://github.com/tvondra/tdigest/actions/workflows/ci.yml/badge.svg)](https://github.com/tvondra/tdigest/actions/workflows/ci.yml)
+
 This PostgreSQL extension implements t-digest, a data structure for on-line
 accumulation of rank-based statistics such as quantiles and trimmed means.
 The algorithm is also very friendly to parallel programs.
