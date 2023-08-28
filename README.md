@@ -89,16 +89,16 @@ functions (with `tdigest` as the first argument).
 
 * `tdigest(value double precision, compression int)`
 
-* `tdigest_percentile(digest tdigest, compression int,
+* `tdigest_percentile(digest tdigest,
                       quantile double precision)`
 
-* `tdigest_percentile(digest tdigest, compression int,
+* `tdigest_percentile(digest tdigest,
                       quantiles double precision[])`
 
-* `tdigest_percentile_of(digest tdigest, compression int,
+* `tdigest_percentile_of(digest tdigest,
                          value double precision)`
 
-* `tdigest_percentile_of(digest tdigest, compression int,
+* `tdigest_percentile_of(digest tdigest,
                          values double precision[])`
 
 So for example you may do this:
