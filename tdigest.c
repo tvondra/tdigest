@@ -2659,7 +2659,6 @@ tdigest_in(PG_FUNCTION_ARGS)
 		/* the centroids should be sorted by mean */
 		if (i > 0)
 		{
-			double	mean = digest->centroids[i].mean;
 			double	mean_prev = digest->centroids[i-1].mean;
 
 			if (!(flags & TDIGEST_STORES_MEAN))
@@ -3058,7 +3057,6 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 	 */
 	if (count > BUFFER_SIZE(state->compression))
 	{
-		int			i;
 		tdigest_t  *new;
 		double		value = PG_GETARG_FLOAT8(1);
 
@@ -3417,6 +3415,6 @@ double_to_array(FunctionCallInfo fcinfo, double *d, int len)
 								  CurrentMemoryContext);
 	}
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayResult(astate,
-										  CurrentMemoryContext));
+	PG_RETURN_ARRAYTYPE_P(DatumGetPointer(makeArrayResult(astate,
+										  CurrentMemoryContext)));
 }
