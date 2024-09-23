@@ -15,6 +15,17 @@ The accuracy of estimates produced by t-digests can be orders of magnitude
 more accurate than those produced by previous digest algorithms in spite of
 the fact that t-digests are much more compact when stored on disk.
 
+## Installation (Ubuntu)
+
+Install required dependencies
+```
+apt install postgresql-server-dev-15 make gcc -y
+```
+
+Run the commands in the repository directory
+```
+make && make install
+```
 
 ## Basic usage
 
