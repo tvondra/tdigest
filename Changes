@@ -1,0 +1,8 @@
+Revision history for PostgreSQL extension tdigest.
+
+1.4.4
+    - Add missing parts of automated release workflow.
+
+1.4.3
+    - PGXN packaging (META etc.).
+    - Automating releases to GitHub / PGXN
