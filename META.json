@@ -2,7 +2,7 @@
    "name": "t-digest",
    "abstract": "Aggregate for an on-line accumulation of rank-based statistics such as quantiles and trimmed means.",
    "description": "This PostgreSQL extension implements t-digest, a data structure for on-line accumulation of rank-based statistics such as quantiles and trimmed means. The algorithm is also very friendly to parallel programs.",
-   "version": "1.4.2",
+   "version": "1.4.3",
    "maintainer": [
      "Tomas Vondra <tomas@vondra.me>",
      "Nils Dijk <nils@citusdata.com>"
@@ -17,9 +17,9 @@
    },
    "provides": {
      "quantile": {
-       "file": "sql/quantile--1.4.1--1.4.2.sql",
+       "file": "sql/quantile--1.4.2--1.4.3.sql",
        "docfile" : "README.md",
-       "version": "1.4.2"
+       "version": "1.4.3"
      }
    },
    "resources": {
