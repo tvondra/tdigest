@@ -128,6 +128,11 @@ PG_FUNCTION_INFO_V1(tdigest_percentiles);
 PG_FUNCTION_INFO_V1(tdigest_percentiles_of);
 PG_FUNCTION_INFO_V1(tdigest_digest);
 
+PG_FUNCTION_INFO_V1(tdigest_array_percentiles_scalar);
+PG_FUNCTION_INFO_V1(tdigest_array_percentiles_of_scalar);
+PG_FUNCTION_INFO_V1(tdigest_percentiles_scalar);
+PG_FUNCTION_INFO_V1(tdigest_percentiles_of_scalar);
+
 PG_FUNCTION_INFO_V1(tdigest_serial);
 PG_FUNCTION_INFO_V1(tdigest_deserial);
 PG_FUNCTION_INFO_V1(tdigest_combine);
@@ -175,6 +180,11 @@ Datum tdigest_percentiles(PG_FUNCTION_ARGS);
 Datum tdigest_percentiles_of(PG_FUNCTION_ARGS);
 
 Datum tdigest_digest(PG_FUNCTION_ARGS);
+
+Datum tdigest_array_percentiles_scalar(PG_FUNCTION_ARGS);
+Datum tdigest_array_percentiles_of_scalar(PG_FUNCTION_ARGS);
+Datum tdigest_percentiles_scalar(PG_FUNCTION_ARGS);
+Datum tdigest_percentiles_of_scalar(PG_FUNCTION_ARGS);
 
 Datum tdigest_serial(PG_FUNCTION_ARGS);
 Datum tdigest_deserial(PG_FUNCTION_ARGS);
@@ -3417,4 +3427,146 @@ double_to_array(FunctionCallInfo fcinfo, double *d, int len)
 
 	PG_RETURN_ARRAYTYPE_P(DatumGetPointer(makeArrayResult(astate,
 										  CurrentMemoryContext)));
+}
+
+/*
+ * Compute percentile from a tdigest. Final function for tdigest aggregate
+ * with a single percentile.
+ */
+Datum
+tdigest_percentiles_scalar(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+	tdigest_t		   *digest;
+	double				ret;
+
+	/* if there's no digest, return NULL */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+
+	state = tdigest_aggstate_allocate(1, 0, digest->compression);
+	state->percentiles[0] = PG_GETARG_FLOAT8(1);
+
+	/* copy data from the tdigest into the aggstate */
+	for (int i = 0; i < digest->ncentroids; i++)
+		tdigest_add_centroid(state, digest->centroids[i].mean,
+									digest->centroids[i].count);
+
+	tdigest_compute_quantiles(state, &ret);
+
+	/* XXX should free the digest / state */
+
+	PG_RETURN_FLOAT8(ret);
+}
+
+/*
+ * Compute percentile from a tdigest. Final function for tdigest aggregate
+ * with a single percentile.
+ */
+Datum
+tdigest_percentiles_of_scalar(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+	tdigest_t		   *digest;
+	double				ret;
+
+	/* if there's no digest, return NULL */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+
+	state = tdigest_aggstate_allocate(0, 1, digest->compression);
+	state->values[0] = PG_GETARG_FLOAT8(1);
+
+	/* copy data from the tdigest into the aggstate */
+	for (int i = 0; i < digest->ncentroids; i++)
+		tdigest_add_centroid(state, digest->centroids[i].mean,
+									digest->centroids[i].count);
+
+	tdigest_compute_quantiles_of(state, &ret);
+
+	/* XXX should free the digest / state */
+
+	PG_RETURN_FLOAT8(ret);
+}
+
+/*
+ * Compute percentiles from a tdigest. Final function for tdigest aggregate
+ * with an array of percentiles.
+ */
+Datum
+tdigest_array_percentiles_scalar(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+	tdigest_t		   *digest;
+	double			   *result;
+	double			   *percentiles = NULL;
+	int					npercentiles = 0;
+
+	/* if there's no digest, return NULL */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+
+	percentiles = array_to_double(fcinfo,
+								  PG_GETARG_ARRAYTYPE_P(1),
+								  &npercentiles);
+
+	check_percentiles(percentiles, npercentiles);
+
+	state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression);
+	memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
+
+	/* copy data from the tdigest into the aggstate */
+	for (int i = 0; i < digest->ncentroids; i++)
+		tdigest_add_centroid(state, digest->centroids[i].mean,
+									digest->centroids[i].count);
+
+	result = palloc(npercentiles * sizeof(double));
+
+	tdigest_compute_quantiles(state, result);
+
+	return double_to_array(fcinfo, result, npercentiles);
+}
+
+/*
+ * Compute percentiles from a tdigest. Final function for tdigest aggregate
+ * with an array of values.
+ */
+Datum
+tdigest_array_percentiles_of_scalar(PG_FUNCTION_ARGS)
+{
+	tdigest_aggstate_t *state;
+	tdigest_t		   *digest;
+	double			   *result;
+	double			   *values = NULL;
+	int					nvalues = 0;
+
+	/* if there's no digest, return NULL */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+
+	values = array_to_double(fcinfo,
+							 PG_GETARG_ARRAYTYPE_P(1),
+							 &nvalues);
+
+	state = tdigest_aggstate_allocate(0, nvalues, digest->compression);
+	memcpy(state->percentiles, values, sizeof(double) * nvalues);
+
+	/* copy data from the tdigest into the aggstate */
+	for (int i = 0; i < digest->ncentroids; i++)
+		tdigest_add_centroid(state, digest->centroids[i].mean,
+									digest->centroids[i].count);
+
+	result = palloc(nvalues * sizeof(double));
+
+	tdigest_compute_quantiles_of(state, result);
+
+	return double_to_array(fcinfo, result, nvalues);
 }
