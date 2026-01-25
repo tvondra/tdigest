@@ -1182,47 +1182,8 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_double_values(PG_FUNCTION_ARGS)
 {
-	tdigest_aggstate_t *state;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest (if it already exists) or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	/* if there's no digest allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		int		compression = PG_GETARG_INT32(2);
-		MemoryContext	oldcontext;
-
-		check_compression(compression);
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	tdigest_add(state, PG_GETARG_FLOAT8(1));
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1232,89 +1193,8 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 {
-	int64				i;
-	int64				count;
-	tdigest_aggstate_t *state;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest (if it already exists) or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	/* if there's no digest allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		int		compression = PG_GETARG_INT32(3);
-		MemoryContext	oldcontext;
-
-		check_compression(compression);
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	if (PG_ARGISNULL(2))
-	{
-		count = 1;
-	}
-	else
-		count = PG_GETARG_INT64(2);
-
-	/* can't add values with non-positive counts */
-	if (count <= 0)
-		elog(ERROR, "invalid count value %lld, must be a positive value",
-			 (long long) count);
-
-	/*
-	 * When adding too many values (than would fit into an empty buffer, and
-	 * thus likely causing too many compactions), we instead build a t-digest
-	 * and then merge it into the existing state.
-	 *
-	 * This is much faster, because the t-digest can be generated in one go,
-	 * so there can be only one compaction at most.
-	 */
-	if (count > BUFFER_SIZE(state->compression))
-	{
-		int			i;
-		tdigest_t  *new;
-		double		value = PG_GETARG_FLOAT8(1);
-
-		new = tdigest_generate(state->compression, value, count);
-
-		for (i = 0; i < new->ncentroids; i++)
-			tdigest_add_centroid(state, value, new->centroids[i].count);
-
-		count = 0;
-	}
-
-	/*
-	 * If there are only a couple values, just add them one by one, so that
-	 * we do proper compaction and sizing of centroids. Otherwise we might end
-	 * up with oversized centroid on the tails etc.
-	 */
-	for (i = 0; i < count; i++)
-		tdigest_add(state, PG_GETARG_FLOAT8(1));
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1391,63 +1271,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_digest_values(PG_FUNCTION_ARGS)
 {
-	int					i;
-	tdigest_aggstate_t *state;
-	tdigest_t		   *digest;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_digest called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest (if it already exists) or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
-
-	/* if there's no aggregate state allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		MemoryContext	oldcontext;
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(digest->compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	/*
-	 * XXX should it be allowed to add digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
-	 */
-
-	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].mean,
-									digest->centroids[i].count);
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1457,47 +1282,8 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_double_array(PG_FUNCTION_ARGS)
 {
-	tdigest_aggstate_t *state;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	/* if there's no digest allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		int compression = PG_GETARG_INT32(2);
-		MemoryContext	oldcontext;
-
-		check_compression(compression);
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	tdigest_add(state, PG_GETARG_FLOAT8(1));
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1507,70 +1293,8 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 {
-	int64				i;
-	int64				count;
-	tdigest_aggstate_t *state;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	/* if there's no digest allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		int compression = PG_GETARG_INT32(3);
-		MemoryContext	oldcontext;
-
-		check_compression(compression);
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	if (PG_ARGISNULL(2))
-	{
-		count = 1;
-	}
-	else
-		count = PG_GETARG_INT64(2);
-
-	/* can't add values with non-positive counts */
-	if (count <= 0)
-		elog(ERROR, "invalid count value %lld, must be a positive value",
-			 (long long) count);
-
-	/*
-	 * Add the values one by one, not as one large centroid with the count.
-	 * We do it like this to allow proper compaction and sizing of centroids,
-	 * otherwise we might end up with oversized centroid on the tails etc.
-	 *
-	 * XXX If this turns out a bit too expensive, we may try determining the
-	 * size by looking for the smallest centroid covering this value.
-	 */
-	for (i = 0; i < count; i++)
-		tdigest_add(state, PG_GETARG_FLOAT8(1));
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1580,47 +1304,8 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 {
-	tdigest_aggstate_t *state;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	/* if there's no digest allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		int compression = PG_GETARG_INT32(2);
-		MemoryContext	oldcontext;
-
-		check_compression(compression);
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	tdigest_add(state, PG_GETARG_FLOAT8(1));
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1630,70 +1315,8 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 {
-	int64				i;
-	int64				count;
-	tdigest_aggstate_t *state;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	/* if there's no digest allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		int compression = PG_GETARG_INT32(3);
-		MemoryContext	oldcontext;
-
-		check_compression(compression);
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	if (PG_ARGISNULL(2))
-	{
-		count = 1;
-	}
-	else
-		count = PG_GETARG_INT64(2);
-
-	/* can't add values with non-positive counts */
-	if (count <= 0)
-		elog(ERROR, "invalid count value %lld, must be a positive value",
-			 (long long) count);
-
-	/*
-	 * Add the values one by one, not as one large centroid with the count.
-	 * We do it like this to allow proper compaction and sizing of centroids,
-	 * otherwise we might end up with oversized centroid on the tails etc.
-	 *
-	 * XXX If this turns out a bit too expensive, we may try determining the
-	 * size by looking for the smallest centroid covering this value.
-	 */
-	for (i = 0; i < count; i++)
-		tdigest_add(state, PG_GETARG_FLOAT8(1));
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1703,63 +1326,8 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_digest_array(PG_FUNCTION_ARGS)
 {
-	int					i;
-	tdigest_aggstate_t *state;
-	tdigest_t		   *digest;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_digest_array called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest (if it already exists) or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
-
-	/* if there's no aggregate state allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		MemoryContext	oldcontext;
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(digest->compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	/*
-	 * XXX should it be allowed to add digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
-	 */
-
-	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].mean,
-									digest->centroids[i].count);
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
@@ -1769,63 +1337,8 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 {
-	int					i;
-	tdigest_aggstate_t *state;
-	tdigest_t		   *digest;
-
-	MemoryContext aggcontext;
-
-	/* cannot be called directly because of internal-type argument */
-	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_digest_array called in non-aggregate context");
-
-	/*
-	 * We want to skip NULL values altogether - we return either the existing
-	 * t-digest (if it already exists) or NULL.
-	 */
-	if (PG_ARGISNULL(1))
-	{
-		if (PG_ARGISNULL(0))
-			PG_RETURN_NULL();
-
-		/* if there already is a state accumulated, don't forget it */
-		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
-	}
-
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
-
-	/* if there's no aggregate state allocated, create it now */
-	if (PG_ARGISNULL(0))
-	{
-		MemoryContext	oldcontext;
-
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		state = tdigest_aggstate_allocate(digest->compression);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
-
-	/*
-	 * XXX should it be allowed to add digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
-	 */
-
-	for (i = 0; i < digest->ncentroids; i++)
-		tdigest_add_centroid(state, digest->centroids[i].mean,
-									digest->centroids[i].count);
-
-	PG_RETURN_POINTER(state);
+	elog(ERROR, "upgrade extension required");
+	PG_RETURN_NULL();
 }
 
 /*
