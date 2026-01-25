@@ -42,13 +42,13 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(v, 100, 0.95) AS b
+    tdigest_percentile(tdigest(v, 100), 0.95) AS b
   FROM t) foo;
                       QUERY PLAN                      
 ------------------------------------------------------
  Subquery Scan on foo
    ->  Finalize Aggregate
-         InitPlan expr_1
+         InitPlan 1
            ->  Aggregate
                  ->  Gather
                        Workers Planned: 2
@@ -66,7 +66,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(v, 100, 0.95) AS b
+    tdigest_percentile(tdigest(v, 100), 0.95) AS b
   FROM t) foo;
  ?column? | ?column? 
 ----------+----------
@@ -80,7 +80,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(v, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, 100), 950) AS b
   FROM t) foo;
                    QUERY PLAN                   
 ------------------------------------------------
@@ -98,7 +98,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(v, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, 100), 950) AS b
   FROM t) foo;
  ?column? | ?column? 
 ----------+----------
@@ -113,13 +113,13 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(d, 0.95) AS b
+    tdigest_percentile(tdigest(d), 0.95) AS b
   FROM t2) foo;
                     QUERY PLAN                    
 --------------------------------------------------
  Subquery Scan on foo
    ->  Finalize Aggregate
-         InitPlan expr_1
+         InitPlan 1
            ->  Aggregate
                  ->  Gather
                        Workers Planned: 2
@@ -137,7 +137,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(d, 0.95) AS b
+    tdigest_percentile(tdigest(d), 0.95) AS b
   FROM t2) foo;
  ?column? | ?column? 
 ----------+----------
@@ -151,7 +151,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(d, 950) AS b
+    tdigest_percentile_of(tdigest(d), 950) AS b
   FROM t2) foo;
                    QUERY PLAN                    
 -------------------------------------------------
@@ -169,7 +169,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(d, 950) AS b
+    tdigest_percentile_of(tdigest(d), 950) AS b
   FROM t2) foo;
  ?column? | ?column? 
 ----------+----------
@@ -186,13 +186,13 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t) foo;
                       QUERY PLAN                      
 ------------------------------------------------------
  Subquery Scan on foo
    ->  ProjectSet
-         InitPlan expr_1
+         InitPlan 1
            ->  Aggregate
                  ->  Gather
                        Workers Planned: 2
@@ -212,7 +212,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t) foo;
   p   | ?column? 
 ------+----------
@@ -231,16 +231,16 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(v, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, 100), ARRAY[950, 990])) AS b
   FROM t) foo;
                           QUERY PLAN                          
 --------------------------------------------------------------
  Subquery Scan on foo
    ->  ProjectSet
-         InitPlan expr_1
+         InitPlan 2
            ->  Aggregate
                  ->  Function Scan on unnest f
-                 SubPlan expr_2
+                 SubPlan 1
                    ->  Aggregate
                          ->  Gather
                                Workers Planned: 2
@@ -260,7 +260,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(v, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, 100), ARRAY[950, 990])) AS b
   FROM t) foo;
   p  | ?column? 
 -----+----------
@@ -277,13 +277,13 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(d, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(d), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t2) foo;
                       QUERY PLAN                       
 -------------------------------------------------------
  Subquery Scan on foo
    ->  ProjectSet
-         InitPlan expr_1
+         InitPlan 1
            ->  Aggregate
                  ->  Gather
                        Workers Planned: 2
@@ -303,7 +303,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(d, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(d), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t2) foo;
   p   | ?column? 
 ------+----------
@@ -322,16 +322,16 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(d, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(d), ARRAY[950, 990])) AS b
   FROM t2) foo;
                         QUERY PLAN                        
 ----------------------------------------------------------
  Subquery Scan on foo
    ->  ProjectSet
-         InitPlan expr_1
+         InitPlan 2
            ->  Aggregate
                  ->  Function Scan on unnest f
-                 SubPlan expr_2
+                 SubPlan 1
                    ->  Aggregate
                          ->  Gather
                                Workers Planned: 2
@@ -351,7 +351,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(d, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(d), ARRAY[950, 990])) AS b
   FROM t2) foo;
   p  | ?column? 
 -----+----------

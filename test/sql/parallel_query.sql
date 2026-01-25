@@ -45,7 +45,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(v, 100, 0.95) AS b
+    tdigest_percentile(tdigest(v, 100), 0.95) AS b
   FROM t) foo;
 
 WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
@@ -55,7 +55,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(v, 100, 0.95) AS b
+    tdigest_percentile(tdigest(v, 100), 0.95) AS b
   FROM t) foo;
 
 
@@ -66,7 +66,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(v, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, 100), 950) AS b
   FROM t) foo;
 
 SELECT
@@ -75,7 +75,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(v, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, 100), 950) AS b
   FROM t) foo;
 
 
@@ -87,7 +87,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(d, 0.95) AS b
+    tdigest_percentile(tdigest(d), 0.95) AS b
   FROM t2) foo;
 
 WITH x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM t)
@@ -97,7 +97,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(d, 0.95) AS b
+    tdigest_percentile(tdigest(d), 0.95) AS b
   FROM t2) foo;
 
 
@@ -108,7 +108,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(d, 950) AS b
+    tdigest_percentile_of(tdigest(d), 950) AS b
   FROM t2) foo;
 
 SELECT
@@ -117,7 +117,7 @@ SELECT
 FROM (
   SELECT
     0.95 AS a,
-    tdigest_percentile_of(d, 950) AS b
+    tdigest_percentile_of(tdigest(d), 950) AS b
   FROM t2) foo;
 
 
@@ -131,7 +131,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t) foo;
 
 WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
@@ -142,7 +142,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t) foo;
 
 
@@ -155,7 +155,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(v, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, 100), ARRAY[950, 990])) AS b
   FROM t) foo;
 
 WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
@@ -166,7 +166,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(v, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, 100), ARRAY[950, 990])) AS b
   FROM t) foo;
 
 
@@ -179,7 +179,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(d, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(d), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t2) foo;
 
 WITH x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM t)
@@ -190,7 +190,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(d, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(d), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t2) foo;
 
 
@@ -203,7 +203,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(d, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(d), ARRAY[950, 990])) AS b
   FROM t2) foo;
 
 WITH x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) FROM t)) AS p FROM unnest(ARRAY[950, 990]) f)
@@ -214,5 +214,5 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile_of(d, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(d), ARRAY[950, 990])) AS b
   FROM t2) foo;
