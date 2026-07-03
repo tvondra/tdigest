@@ -2607,10 +2607,11 @@ tdigest_in(PG_FUNCTION_ARGS)
 	if (r != 4)
 		elog(ERROR, "failed to parse t-digest value");
 
-	if ((compression < 10) || (compression > 10000))
+	if ((compression < MIN_COMPRESSION) || (compression > MAX_COMPRESSION))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("compression for t-digest must be in [10, 10000]")));
+				 errmsg("compression for t-digest must be in [%d, %d]",
+						MIN_COMPRESSION, MAX_COMPRESSION)));
 
 	if (count <= 0)
 		ereport(ERROR,
