@@ -2811,6 +2811,8 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	 */
 	digest = tdigest_update_format(digest);
 
+	AssertCheckTDigest(digest);
+
 	PG_RETURN_POINTER(digest);
 }
 
