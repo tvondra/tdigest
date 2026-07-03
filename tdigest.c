@@ -2736,6 +2736,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	tdigest_t  *digest;
 	int			i;
 	int64		count;
+	int64		total_count;
 	int32		flags;
 	int32		compression;
 	int32		ncentroids;
@@ -2750,6 +2751,27 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	compression = pq_getmsgint(buf, sizeof(int32));
 	ncentroids = pq_getmsgint(buf, sizeof(int32));
 
+	if ((compression < MIN_COMPRESSION) || (compression > MAX_COMPRESSION))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("compression for t-digest must be in [%d, %d]",
+						MIN_COMPRESSION, MAX_COMPRESSION)));
+
+	if (count <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("count value for the t-digest must be positive")));
+
+	if (ncentroids <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("number of centroids for the t-digest must be positive")));
+
+	if (ncentroids > BUFFER_SIZE(compression))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("number of centroids for the t-digest exceeds buffer size")));
+
 	digest = tdigest_allocate(ncentroids);
 
 	digest->flags = flags;
@@ -2757,11 +2779,31 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	digest->compression = compression;
 	digest->ncentroids = ncentroids;
 
+	total_count = 0;
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		digest->centroids[i].mean = pq_getmsgfloat8(buf);
 		digest->centroids[i].count = pq_getmsgint64(buf);
+
+		if (digest->centroids[i].count <= 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("count value for all centroids in a t-digest must be positive")));
+		else if (digest->centroids[i].count > digest->count)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("count value of a centroid exceeds total count")));
+
+		/* track the total count so that we can check later */
+		total_count += digest->centroids[i].count;
 	}
+
+	/* check that the total matches */
+	if (total_count != digest->count)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("total count does not match the data (%lld != %lld)",
+						(long long) total_count, (long long) digest->count)));
 
 	/*
 	 * Make sure we return digest with the new format (it might be the
