@@ -51,6 +51,9 @@ typedef struct tdigest_t {
  */
 #define	TDIGEST_STORES_MEAN		0x0001
 
+/* All valid flags, OR-ed. */
+#define	TDIGEST_VALID_FLAGS		(TDIGEST_STORES_MEAN)
+
 /*
  * An aggregate state, representing the t-digest and some additional info
  * (requested percentiles, ...).
@@ -2591,6 +2594,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 	int			i, r;
 	char	   *str = PG_GETARG_CSTRING(0);
 	tdigest_t  *digest = NULL;
+	size_t		slen;
 
 	/* t-digest header fields */
 	int32       flags;
@@ -2601,11 +2605,18 @@ tdigest_in(PG_FUNCTION_ARGS)
 	int			header_length;
 	char	   *ptr;
 
+	slen = strlen(str);
+
 	r = sscanf(str, "flags %d count " INT64_FORMAT " compression %d centroids %d%n",
 			   &flags, &count, &compression, &ncentroids, &header_length);
 
 	if (r != 4)
 		elog(ERROR, "failed to parse t-digest value");
+
+	if ((flags & ~TDIGEST_VALID_FLAGS) != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid flags for t-digest")));
 
 	if ((compression < MIN_COMPRESSION) || (compression > MAX_COMPRESSION))
 		ereport(ERROR,
@@ -2638,15 +2649,34 @@ tdigest_in(PG_FUNCTION_ARGS)
 	ptr = str + header_length;
 
 	total_count = 0;
+	ncentroids = 0;
 	for (i = 0; i < digest->ncentroids; i++)
 	{
+		int		nbytes = -1;
 		double	mean;
 
-		if (sscanf(ptr, " (%lf, " INT64_FORMAT ")", &mean, &count) != 2)
-			elog(ERROR, "failed to parse centroid");
+		if (sscanf(ptr, " (%lf, " INT64_FORMAT ")%n", &mean, &count, &nbytes) != 2)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("failed to parse centroid")));
 
-		digest->centroids[i].count = count;
-		digest->centroids[i].mean = mean;
+		/*
+		 * The %n might have not been assigned, in which case it kept the -1
+		 * value. Treat it as malformed input value.
+		 */
+		if (nbytes < 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("failed to parse centroid")));
+
+		/*
+		 * We should have parsed the whole format, and the last charater should
+		 * be a closing parenthesis for the centroid. If not, it's malformed.
+		 */
+		if (ptr[nbytes - 1] != ')')
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("malformed centroid, missing closing ')'")));
 
 		if (count <= 0)
 			ereport(ERROR,
@@ -2656,6 +2686,9 @@ tdigest_in(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("count value of a centroid exceeds total count")));
+
+		digest->centroids[i].count = count;
+		digest->centroids[i].mean = mean;
 
 		/* the centroids should be sorted by mean */
 		if (i > 0)
@@ -2676,12 +2709,43 @@ tdigest_in(PG_FUNCTION_ARGS)
 
 		/* track the total count so that we can check later */
 		total_count += count;
+		ncentroids++;
 
-		/* skip to the end of the centroid */
-		ptr = strchr(ptr, ')') + 1;
+		/*
+		 * Skip to the end of the centroid (the character after the closing
+		 * parenthesis). If this is the end of the string, stop parsing, even
+		 * if we failed to parse the right number of centroids).
+		 */
+		ptr += nbytes;
+
+		/* end of string */
+		if (*ptr == '\0')
+			break;
+
+		/* must not scan past the end of the input string */
+		Assert(ptr <= str + slen);
 	}
 
-	Assert(ptr == str + strlen(str));
+	/*
+	 * Malformed inputs may have the wrong number of centroids, in which case
+	 * we either don't consume the whole input (ncentroids too high), or we
+	 * don't get all the expected centroids (ncentroids too high).
+	 */
+	if (ptr < str + slen)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("input t-digest value too long")));
+
+	if (ncentroids != digest->ncentroids)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("input t-digest value too short")));
+
+	/*
+	 * If we consumed just the right number of centroids, we must have read
+	 * the whole input value exactly.
+	 */
+	Assert(ptr == str + slen);
 
 	/* check that the total matches */
 	if (total_count != digest->count)
