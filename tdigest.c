@@ -230,6 +230,7 @@ AssertCheckTDigest(tdigest_t *digest)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		Assert(digest->centroids[i].count > 0);
+		Assert(!isnan(digest->centroids[i].mean));
 		cnt += digest->centroids[i].count;
 		/* FIXME also check this does work with the scale function */
 	}
@@ -267,6 +268,7 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 	for (i = 0; i < state->ncentroids; i++)
 	{
 		Assert(state->centroids[i].count > 0);
+		Assert(!isnan(state->centroids[i].mean));
 		cnt += state->centroids[i].count;
 
 		/* XXX maybe check this does work with the scale function */
@@ -2678,6 +2680,15 @@ tdigest_in(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("malformed centroid, missing closing ')'")));
 
+		/*
+		 * Not sure if this can happen with text input, but better to keep the
+		 * checks the same as in tdigest_recv.
+		 */
+		if (isnan(mean))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("mean value for all centroids in a t-digest must be valid")));
+
 		if (count <= 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -2848,6 +2859,11 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	{
 		digest->centroids[i].mean = pq_getmsgfloat8(buf);
 		digest->centroids[i].count = pq_getmsgint64(buf);
+
+		if (isnan(digest->centroids[i].mean))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("mean value for all centroids in a t-digest must be valid")));
 
 		if (digest->centroids[i].count <= 0)
 			ereport(ERROR,
