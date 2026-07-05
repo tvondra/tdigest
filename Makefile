@@ -28,8 +28,8 @@ FUZZ_LDFLAGS = -fsanitize=fuzzer -Wl,--allow-multiple-definition
 
 FUZZ_RECV_TARGETS = fuzz_tdigest_recv
 FUZZ_IN_TARGETS = fuzz_tdigest_in
-fuzz_tdigest_recv_SYMBOL = tdigest_recv
-fuzz_tdigest_in_SYMBOL = tdigest_in
+fuzz_tdigest_recv_SYMBOL = tdigest_recv_fuzz
+fuzz_tdigest_in_SYMBOL = tdigest_in_fuzz
 FUZZ_TARGETS = $(FUZZ_RECV_TARGETS) $(FUZZ_IN_TARGETS)
 
 FUZZ_RECV_OBJS = $(FUZZ_RECV_TARGETS:%=%.o)

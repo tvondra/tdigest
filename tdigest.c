@@ -140,6 +140,9 @@ PG_FUNCTION_INFO_V1(tdigest_out);
 PG_FUNCTION_INFO_V1(tdigest_send);
 PG_FUNCTION_INFO_V1(tdigest_recv);
 
+PG_FUNCTION_INFO_V1(tdigest_in_fuzz);
+PG_FUNCTION_INFO_V1(tdigest_recv_fuzz);
+
 PG_FUNCTION_INFO_V1(tdigest_count);
 PG_FUNCTION_INFO_V1(tdigest_to_json);
 PG_FUNCTION_INFO_V1(tdigest_to_array);
@@ -187,6 +190,9 @@ Datum tdigest_in(PG_FUNCTION_ARGS);
 Datum tdigest_out(PG_FUNCTION_ARGS);
 Datum tdigest_send(PG_FUNCTION_ARGS);
 Datum tdigest_recv(PG_FUNCTION_ARGS);
+
+Datum tdigest_in_fuzz(PG_FUNCTION_ARGS);
+Datum tdigest_recv_fuzz(PG_FUNCTION_ARGS);
 
 Datum tdigest_count(PG_FUNCTION_ARGS);
 
@@ -2796,6 +2802,29 @@ tdigest_in(PG_FUNCTION_ARGS)
 }
 
 Datum
+tdigest_in_fuzz(PG_FUNCTION_ARGS)
+{
+	tdigest_t *digest;
+	tdigest_aggstate_t *state;
+
+	digest = (tdigest_t *) DatumGetPointer(tdigest_in(fcinfo));
+
+	state = tdigest_digest_to_aggstate(digest);
+
+	for (int i = 0; i < 1000; i++)
+	{
+		tdigest_add(state, (i / 1000.0));
+		//state = (tdigest_aggstate_t *) DatumGetPointer(DirectFunctionCall2(tdigest_add_double,
+		//											PointerGetDatum(state),
+		//											Float8GetDatum(i / 1000.0)));
+	}
+
+	digest = tdigest_aggstate_to_digest(state, true);
+
+	PG_RETURN_POINTER(digest);
+}
+
+Datum
 tdigest_out(PG_FUNCTION_ARGS)
 {
 	int			i;
@@ -2911,6 +2940,29 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	digest = tdigest_update_format(digest);
 
 	AssertCheckTDigest(digest);
+
+	PG_RETURN_POINTER(digest);
+}
+
+Datum
+tdigest_recv_fuzz(PG_FUNCTION_ARGS)
+{
+	tdigest_t *digest;
+	tdigest_aggstate_t *state;
+
+	digest = (tdigest_t *) DatumGetPointer(tdigest_recv(fcinfo));
+
+	state = tdigest_digest_to_aggstate(digest);
+
+	for (int i = 0; i < 1000; i++)
+	{
+		tdigest_add(state, (i / 1000.0));
+		//state = (tdigest_aggstate_t *) DatumGetPointer(DirectFunctionCall2(tdigest_add_double,
+		//											PointerGetDatum(state),
+		//											Float8GetDatum(i / 1000.0)));
+	}
+
+	digest = tdigest_aggstate_to_digest(state, true);
 
 	PG_RETURN_POINTER(digest);
 }
