@@ -1224,7 +1224,7 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
 	 * thus likely causing too many compactions), we instead build a t-digest
-	 * and them merge it into the existing state.
+	 * and then merge it into the existing state.
 	 *
 	 * This is much faster, because the t-digest can be generated in one go,
 	 * so there can be only one compaction at most.
@@ -1237,18 +1237,8 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 
 		new = tdigest_generate(state->compression, value, count);
 
-		/* XXX maybe not necessary if there's enough space in the buffer */
-		tdigest_compact(state);
-
 		for (i = 0; i < new->ncentroids; i++)
-		{
-			centroid_t   *s = &new->centroids[i];
-
-			state->centroids[state->ncentroids].count = s->count;
-			state->centroids[state->ncentroids].mean = value;
-			state->ncentroids++;
-			state->count += s->count;
-		}
+			tdigest_add_centroid(state, value, new->centroids[i].count);
 
 		count = 0;
 	}
@@ -1406,7 +1396,7 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
 	 * thus likely causing too many compactions), we instead build a t-digest
-	 * and them merge it into the existing state.
+	 * and then merge it into the existing state.
 	 *
 	 * This is much faster, because the t-digest can be generated in one go,
 	 * so there can be only one compaction at most.
@@ -1419,18 +1409,8 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 
 		new = tdigest_generate(state->compression, value, count);
 
-		/* XXX maybe not necessary if there's enough space in the buffer */
-		tdigest_compact(state);
-
 		for (i = 0; i < new->ncentroids; i++)
-		{
-			centroid_t   *s = &new->centroids[i];
-
-			state->centroids[state->ncentroids].count = s->count;
-			state->centroids[state->ncentroids].mean = value;
-			state->ncentroids++;
-			state->count += s->count;
-		}
+			tdigest_add_centroid(state, value, new->centroids[i].count);
 
 		count = 0;
 	}
@@ -3188,7 +3168,7 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 	/*
 	 * When adding too many values (than would fit into an empty buffer, and
 	 * thus likely causing too many compactions), we instead build a t-digest
-	 * and them merge it into the existing state.
+	 * and then merge it into the existing state.
 	 *
 	 * This is much faster, because the t-digest can be generated in one go,
 	 * so there can be only one compaction at most.
@@ -3200,18 +3180,8 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 
 		new = tdigest_generate(state->compression, value, count);
 
-		/* XXX maybe not necessary if there's enough space in the buffer */
-		tdigest_compact(state);
-
 		for (i = 0; i < new->ncentroids; i++)
-		{
-			centroid_t   *s = &new->centroids[i];
-
-			state->centroids[state->ncentroids].count = s->count;
-			state->centroids[state->ncentroids].mean = value;
-			state->ncentroids++;
-			state->count += s->count;
-		}
+			tdigest_add_centroid(state, value, new->centroids[i].count);
 
 		count = 0;
 	}
