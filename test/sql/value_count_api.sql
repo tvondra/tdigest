@@ -27,7 +27,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- <value,count> API
-select tdigest_percentile(value, count, 100, 0.95)
+select tdigest_percentile(tdigest(value, count, 100), 0.95)
 from (values
   (47325940488,1),
   (15457695432,2),
@@ -99,7 +99,7 @@ FROM (
         unnest(b) AS b
     FROM
        (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
-       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+       (SELECT tdigest_percentile(tdigest(x, (10 + 100 * cnt)::int, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
 ) baz;
 
 -- 100 centroids (okay-ish)
@@ -117,7 +117,7 @@ FROM (
         unnest(b) AS b
     FROM
        (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
-       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+       (SELECT tdigest_percentile(tdigest(x, (10 + 100 * cnt)::int, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
 ) baz;
 
 -- 1000 centroids (very accurate)
@@ -135,7 +135,7 @@ FROM (
         unnest(b) AS b
     FROM
        (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) a FROM data_expanded) foo,
-       (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
+       (SELECT tdigest_percentile(tdigest(x, (10 + 100 * cnt)::int, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
 ) baz;
 
 -- <value,count> API
@@ -150,7 +150,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(v, c, 100, 0.95) AS b
+    tdigest_percentile(tdigest(v, c, 100), 0.95) AS b
   FROM t) foo;
 
 WITH
@@ -162,7 +162,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(v, c, 100, 0.95) AS b
+    tdigest_percentile(tdigest(v, c, 100), 0.95) AS b
   FROM t) foo;
 
 
@@ -176,7 +176,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile_of(v, c, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, c, 100), 950) AS b
   FROM t) foo;
 
 WITH
@@ -188,7 +188,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile_of(v, c, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, c, 100), 950) AS b
   FROM t) foo;
 
 
@@ -205,7 +205,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, c, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t) foo;
 
 WITH
@@ -218,7 +218,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, c, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM t) foo;
 
 
@@ -233,7 +233,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((select x.p from x)) AS a,
-    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, c, 100), ARRAY[950, 990])) AS b
   FROM t) foo;
 
 WITH
@@ -246,5 +246,5 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((select x.p from x)) AS a,
-    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, c, 100), ARRAY[950, 990])) AS b
   FROM t) foo;

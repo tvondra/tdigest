@@ -18,44 +18,45 @@ the fact that t-digests are much more compact when stored on disk.
 
 ## Basic usage
 
-The extension provides two functions, which you can see as a replacement of
-`percentile_cont` aggregate:
+The extension provides several aggregate functions, building the `tdigest`
+sketch from source data:
 
-* `tdigest_percentile(value double precision, compression int,
-                      quantile double precision)`
+* `tdigest(value double precision, compression int) -> tdigest`
 
-* `tdigest_percentile(value double precision, compression int,
-                      quantiles double precision[])`
+And then a couple functions calculating percentiles (or inverse values)
+for a given `tdigest` sketch:
 
-* `tdigest_percentile_of(value double precision, compression int,
-                         value double precision)`
+* `tdigest_percentile(diget tdigest, percentile double precision) -> double precision`
 
-* `tdigest_percentile_of(value double precision, compression int,
-                         values double precision[])`
+* `tdigest_percentile(diget tdigest, percentile double precision[]) -> double precision[]`
 
-That is, instead of running
+* `tdigest_percentile_of(diget tdigest, percentile double precision) -> double precision`
+
+* `tdigest_percentile_of(diget tdigest, percentile double precision[]) -> double precision[]`
+
+With these building blocks, you can replace
 
 ```
 SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY a) FROM t
 ```
 
-you might now run
+with
 
 ```
-SELECT tdigest_percentile(a, 100, 0.95) FROM t
+SELECT tdigest_percentile(tdigest(a, 100), 0.95) FROM t
 ```
 
 and similarly for the variants with array of percentiles. This should run
-much faster, as the t-digest does not require sort of all the data and can
+much faster, as the t-digest does not require sorting all the data and can
 be parallelized. Also, the memory usage is very limited, depending on the
 compression parameter.
 
 
 ## Accuracy
 
-All functions building the t-digest summaries accept `accuracy` parameter
+All functions building the t-digest summaries accept a `compression` parameter
 that determines how detailed the histogram approximating the CDF is. The
-value essentially limits the number of "buckets" in the t-digest, so the
+value essentially limits the number of "buckets" in the t-digest, and the
 higher the value the larger the digest.
 
 Each bucket is represented by two `double precision` values (i.e. 16B per
@@ -83,23 +84,12 @@ to precompute digests for subsets of data, and then quickly combine those
 digests should be much smaller compared to the original data set, allowing
 significantly faster response times.
 
-To compute the `t-digest` use `tdigest` aggregate function. The digests can
-then be stored on disk and later summarized using the `tdigest_percentile`
-functions (with `tdigest` as the first argument).
+To compute the `t-digest` use `tdigest` aggregate function. The digests may
+be stored on disk and then combined using the `tdigest` aggregate again, to
+get the actual result. And finally passed to the functions calculating the
+percentiles etc.
 
-* `tdigest(value double precision, compression int)`
-
-* `tdigest_percentile(digest tdigest,
-                      quantile double precision)`
-
-* `tdigest_percentile(digest tdigest,
-                      quantiles double precision[])`
-
-* `tdigest_percentile_of(digest tdigest,
-                         value double precision)`
-
-* `tdigest_percentile_of(digest tdigest,
-                         values double precision[])`
+* `tdigest(digest tdigest) -> tdigest`
 
 So for example you may do this:
 
@@ -114,7 +104,7 @@ INSERT INTO t SELECT 10 * random(), 10 * random(), random()
 CREATE TABLE p AS SELECT a, b, tdigest(c, 100) AS d FROM t GROUP BY a, b;
 
 -- summarize the data from "p" (compute the 95-th percentile)
-SELECT a, tdigest_percentile(d, 0.95) FROM p GROUP BY a ORDER BY a;
+SELECT a, tdigest_percentile(d, 0.95) FROM p ORDER BY a;
 ```
 
 The pre-aggregated table is indeed much smaller:
@@ -143,13 +133,13 @@ Time: 6956.566 ms (00:06.957)
 
 -- tdigest estimate (no parallelism)
 SET max_parallel_workers_per_gather = 0;
-SELECT a, tdigest_percentile(c, 100, 0.95) FROM t GROUP BY a ORDER BY a;
+SELECT a, tdigest_percentile(tdigest(c, 100), 0.95) FROM t GROUP BY a ORDER BY a;
   ...
 Time: 2873.116 ms (00:02.873)
 
 -- tdigest estimate (4 workers)
 SET max_parallel_workers_per_gather = 4;
-SELECT a, tdigest_percentile(c, 100, 0.95) FROM t GROUP BY a ORDER BY a;
+SELECT a, tdigest_percentile(tdigest(c, 100), 0.95) FROM t GROUP BY a ORDER BY a;
   ...
 Time: 893.538 ms
 ~~~
@@ -169,22 +159,8 @@ only improve for larger data set.
 
 When dealing with data sets with a lot of redundancy (values repeating
 many times), it may be more efficient to partially pre-aggregate the data
-and use functions that allow specifying the number of occurrences for each
-value. This reduces the number of SQL-function calls.
-
-There are five such aggregate functions:
-
-* `tdigest_percentile(value double precision, count bigint, compression int,
-                      quantile double precision)`
-
-* `tdigest_percentile(value double precision, count bigint, compression int,
-                      quantiles double precision[])`
-
-* `tdigest_percentile_of(value double precision, count bigint, compression int,
-                         value double precision)`
-
-* `tdigest_percentile_of(value double precision, count bigint, compression int,
-                         values double precision[])`
+and use an aggregate function that allows specifying the number of
+occurrences for each value. This reduces the number of SQL-function calls.
 
 * `tdigest(value double precision, count bigint, compression int)`
 
@@ -257,176 +233,13 @@ The extension provides two aggregate functions allowing to calculate trimmed
 
 * `tdigest_avg(digest tdigest, low double precision, high double precision)`
 
-The `low` and `high` parameters specify where to truncte the data.
+The `low` and `high` parameters specify where to truncate the data.
 
 
-## Functions
+## Aggregate Functions
 
-### `tdigest_percentile(value, accuracy, percentile)`
 
-Computes a requested percentile from the data, using a t-digest with the
-specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile(t.c, 100, 0.95) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `accuracy` - accuracy of the t-digest
-- `percentile` - value in [0, 1] specifying the percentile
-
-
-### `tdigest_percentile(value, count, accuracy, percentile)`
-
-Computes a requested percentile from the data, using a t-digest with the
-specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile(t.c, t.a, 100, 0.95) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `count` - number of occurrences of the value
-- `accuracy` - accuracy of the t-digest
-- `percentile` - value in [0, 1] specifying the percentile
-
-
-### `tdigest_percentile(value, accuracy, percentile[])`
-
-Computes requested percentiles from the data, using a t-digest with the
-specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile(t.c, 100, ARRAY[0.95, 0.99]) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `accuracy` - accuracy of the t-digest
-- `percentile[]` - array of values in [0, 1] specifying the percentiles
-
-
-### `tdigest_percentile(value, count, accuracy, percentile[])`
-
-Computes requested percentiles from the data, using a t-digest with the
-specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile(t.c, t.a, 100, ARRAY[0.95, 0.99]) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `count` - number of occurrences of the value
-- `accuracy` - accuracy of the t-digest
-- `percentile[]` - array of values in [0, 1] specifying the percentiles
-
-
-### `tdigest_percentile_of(value, accuracy, hypothetical_value)`
-
-Computes relative rank of a hypothetical value, using a t-digest with the
-specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile_of(t.c, 100, 139832.3) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `accuracy` - accuracy of the t-digest
-- `hypothetical_value` - hypothetical value
-
-
-### `tdigest_percentile_of(value, count, accuracy, hypothetical_value)`
-
-Computes relative rank of a hypothetical value, using a t-digest with the
-specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile_of(t.c, t.a, 100, 139832.3) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `count` - number of occurrences of the value
-- `accuracy` - accuracy of the t-digest
-- `hypothetical_value` - hypothetical value
-
-
-### `tdigest_percentile_of(value, accuracy, hypothetical_value[])`
-
-Computes relative ranks of a hypothetical values, using a t-digest with
-the specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile_of(t.c, 100, ARRAY[6343.43, 139832.3]) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `accuracy` - accuracy of the t-digest
-- `hypothetical_value` - hypothetical values
-
-
-### `tdigest_percentile_of(value, count, accuracy, hypothetical_value[])`
-
-Computes relative ranks of a hypothetical values, using a t-digest with
-the specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest_percentile_of(t.c, t.a, 100, ARRAY[6343.43, 139832.3]) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `count` - number of occurrences of the value
-- `accuracy` - accuracy of the t-digest
-- `hypothetical_value` - hypothetical values
-
-
-### `tdigest(value, accuracy)`
-
-Computes t-digest with the specified accuracy.
-
-#### Synopsis
-
-```
-SELECT tdigest(t.c, 100) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `accuracy` - accuracy of the t-digest
-
-
-### `tdigest(value, count, accuracy)`
+### `tdigest(value double precision, count bigint, accuracy int) -> tdigest`
 
 Computes t-digest with the specified accuracy. The values are added with
 as many occurrences as determined by the count parameter.
@@ -434,7 +247,7 @@ as many occurrences as determined by the count parameter.
 #### Synopsis
 
 ```
-SELECT tdigest(t.c, t.a, 100) FROM t
+SELECT tdigest(t.v, t.c, 100) FROM t
 ```
 
 #### Parameters
@@ -444,20 +257,41 @@ SELECT tdigest(t.c, t.a, 100) FROM t
 - `accuracy` - accuracy of the t-digest
 
 
-### `tdigest_count(tdigest)`
+### `tdigest(value double precision, accuracy int) -> tdigest`
 
-Returns number of items represented by the t-digest.
+Computes t-digest with the specified accuracy.
 
 #### Synopsis
 
 ```
-SELECT tdigest_count(d) FROM (
-    SELECT tdigest(t.c, 100) FROM t
-) foo
+SELECT tdigest(t.v, 100) FROM t
 ```
 
+#### Parameters
 
-### `tdigest_percentile(tdigest, percentile)`
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+
+
+### `tdigest(digest tdigest) -> tdigest`
+
+Computes t-digest by combining the input digests.
+
+#### Synopsis
+
+```
+WITH tmp AS (SELECT tdigest(t.v, 100) AS d FROM t GROUP BY t.a)
+SELECT tdigest(d) FROM tmp
+```
+
+#### Parameters
+
+- `digest` - t-digest sketches to combine
+
+
+## Scalar Functions
+
+### `tdigest_percentile(digest tdigest, percentile double precision) -> double precision`
 
 Computes requested percentile from the pre-computed t-digests.
 
@@ -465,17 +299,17 @@ Computes requested percentile from the pre-computed t-digests.
 
 ```
 SELECT tdigest_percentile(d, 0.99) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.v, 100) FROM t
 ) foo
 ```
 
 #### Parameters
 
-- `tdigest` - t-digest to aggregate and process
+- `digest` - t-digest to aggregate and process
 - `percentile` - value in [0, 1] specifying the percentile
 
 
-### `tdigest_percentile(tdigest, percentile[])`
+### `tdigest_percentile(digest tdigest, percentiles double precision[]) -> double precision[]`
 
 Computes requested percentiles from the pre-computed t-digests.
 
@@ -483,17 +317,17 @@ Computes requested percentiles from the pre-computed t-digests.
 
 ```
 SELECT tdigest_percentile(d, ARRAY[0.95, 0.99]) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.v, 100) FROM t
 ) foo
 ```
 
 #### Parameters
 
-- `tdigest` - t-digest to aggregate and process
+- `digest` - t-digest to aggregate and process
 - `percentile` - values in [0, 1] specifying the percentiles
 
 
-### `tdigest_percentile_of(tdigest, hypothetical_value)`
+### `tdigest_percentile_of(digest tdigest, value double precision) -> double precision`
 
 Computes relative rank of a hypothetical value, using a pre-computed t-digest.
 
@@ -501,17 +335,17 @@ Computes relative rank of a hypothetical value, using a pre-computed t-digest.
 
 ```
 SELECT tdigest_percentile_of(d, 349834.1) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.v, 100) FROM t
 ) foo
 ```
 
 #### Parameters
 
-- `tdigest` - t-digest to aggregate and process
-- `hypothetical_value` - hypothetical value
+- `digest` - t-digest to aggregate and process
+- `value` - hypothetical value
 
 
-### `tdigest_percentile_of(tdigest, hypothetical_value[])`
+### `tdigest_percentile_of(digest tdigest, values double precision[]) -> double precision[]`
 
 Computes relative ranks of hypothetical values, using a pre-computed t-digest.
 
@@ -519,17 +353,122 @@ Computes relative ranks of hypothetical values, using a pre-computed t-digest.
 
 ```
 SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.v, 100) FROM t
 ) foo
 ```
 
 #### Parameters
 
-- `tdigest` - t-digest to aggregate and process
+- `digest` - t-digest to aggregate and process
 - `hypothetical_value` - hypothetical values
 
 
-### `tdigest_add(tdigest, double precision)`
+### `tdigest_count(digest tdigest) -> bigint`
+
+Returns number of items represented by the t-digest.
+
+#### Synopsis
+
+```
+SELECT tdigest_count(d) FROM (
+    SELECT tdigest(t.v, 100) FROM t
+) foo
+```
+
+### `tdigest_json(digest tdigest) -> tdigest`
+
+Returns the t-digest as a JSON value. The function is also exposed as a
+cast from `tdigest` to `json`.
+
+#### Synopsis
+
+```
+SELECT tdigest_json(d) FROM (
+    SELECT tdigest(t.v, 100) AS d FROM t
+) foo;
+
+SELECT CAST(d AS json) FROM (
+    SELECT tdigest(t.v, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `digest` - t-digest to cast to a `json` value
+
+
+### `tdigest_double_array(digest tdigest) -> tdigest`
+
+Returns the t-digest as a `double precision[]` array. The function is also
+exposed as a cast from `tdigest` to `double precision[]`.
+
+#### Synopsis
+
+```
+SELECT tdigest_double_array(d) FROM (
+    SELECT tdigest(t.v, 100) AS d FROM t
+) foo;
+
+SELECT CAST(d AS double precision[]) FROM (
+    SELECT tdigest(t.v, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `digest` - t-digest to cast to a `double precision[]` value
+
+
+
+## Trimmed Aggregates
+
+### `tdigest_avg(digest tdigest, low double precision, high double precision) -> double precision`
+
+Computes trimmed mean of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_avg(d, 0.05, 0.95) FROM (
+    SELECT tdigest(t.v, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `digest` - t-digest to calculate mean from
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+### `tdigest_sum(digest tdigest, low double precision, high double precision) -> double precision`
+
+Computes trimmed sum of values, discarding values at the low and high end.
+The `low` and `high` values specify which part of the sample should be
+included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
+and high values will be discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_sum(d, 0.05, 0.95) FROM (
+    SELECT tdigest(t.v, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `digest` - t-digest to calculate sum from
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+## Incremental API
+
+### `tdigest_add(digest tdigest, value double precision, compression int, compact bool) -> tdigest`
 
 Performs incremental update of the t-digest by adding a single value.
 
@@ -541,13 +480,13 @@ UPDATE t SET d = tdigest_add(d, random());
 
 #### Parameters
 
-- `tdigest` - t-digest to update
-- `element` - value to add to the digest
+- `digest` - t-digest to update
+- `value` - value to add to the digest
 - `compression` - compression t (used when t-digest is `NULL`)
 - `compact` - force compaction (default: true)
 
 
-### `tdigest_add(tdigest, double precision[])`
+### `tdigest_add(digest tdigest, values double precision[], compression int, compact bool) -> tdigest`
 
 Performs incremental update of the t-digest by adding values from an array.
 
@@ -559,13 +498,13 @@ UPDATE t SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
 
 #### Parameters
 
-- `tdigest` - t-digest to update
-- `elements` - array of values to add to the digest
+- `digest` - t-digest to update
+- `value` - array of values to add to the digest
 - `compression` - compression t (used when t-digest is `NULL`)
 - `compact` - force compaction (default: true)
 
 
-### `tdigest_union(tdigest, tdigest)`
+### `tdigest_union(digest tdigest, digest tdigest) -> tdigest`
 
 Performs incremental update of the t-digest by merging-in another digest.
 
@@ -578,197 +517,10 @@ UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
 
 #### Parameters
 
-- `tdigest` - t-digest to update
+- `digest` - t-digest to update
 - `tdigest_add` - t-digest to merge into `tdigest`
 - `compression` - compression t (used when t-digest is `NULL`)
 - `compact` - force compaction (default: true)
-
-
-### `tdigest_json(tdigest)`
-
-Returns the t-digest as a JSON value. The function is also exposed as a
-cast from `tdigest` to `json`.
-
-#### Synopsis
-
-```
-SELECT tdigest_json(d) FROM (
-    SELECT tdigest(t.c, 100) AS d FROM t
-) foo;
-
-SELECT CAST(d AS json) FROM (
-    SELECT tdigest(t.c, 100) AS d FROM t
-) foo;
-```
-
-#### Parameters
-
-- `tdigest` - t-digest to cast to a `json` value
-
-
-### `tdigest_double_array(tdigest)`
-
-Returns the t-digest as a `double precision[]` array. The function is also
-exposed as a cast from `tdigest` to `double precision[]`.
-
-#### Synopsis
-
-```
-SELECT tdigest_double_array(d) FROM (
-    SELECT tdigest(t.c, 100) AS d FROM t
-) foo;
-
-SELECT CAST(d AS double precision[]) FROM (
-    SELECT tdigest(t.c, 100) AS d FROM t
-) foo;
-```
-
-#### Parameters
-
-- `tdigest` - t-digest to cast to a `double precision[]` value
-
-
-### `tdigest_avg(value, count, accuracy, low, high)`
-
-Computes trimmed mean of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
-
-#### Synopsis
-
-```
-SELECT tdigest_avg(t.v, t.c, 100, 0.1, 0.9) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `count` - number of occurrences of the value
-- `accuracy` - accuracy of the t-digest
-- `low` - low threshold percentile (values below are discarded)
-- `high` - high threshold percentile (values above are discarded)v
-
-
-### `tdigest_avg(tdigest, low, high)`
-
-Computes trimmed mean of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
-
-#### Synopsis
-
-```
-SELECT tdigest_avg(d, 0.05, 0.95) FROM (
-    SELECT tdigest(t.c, 100) AS d FROM t
-) foo;
-```
-
-#### Parameters
-
-- `tdigest` - tdigest to calculate mean from
-- `low` - low threshold percentile (values below are discarded)
-- `high` - high threshold percentile (values above are discarded)
-
-
-### `tdigest_sum(value, accuracy, low, high)`
-
-Computes trimmed sum of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
-
-#### Synopsis
-
-```
-SELECT tdigest_sum(t.v, 100, 0.1, 0.9) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `accuracy` - accuracy of the t-digest
-- `low` - low threshold percentile (values below are discarded)
-- `high` - high threshold percentile (values above are discarded)
-
-
-### `tdigest_sum(value, count, accuracy, low, high)`
-
-Computes trimmed sum of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
-
-#### Synopsis
-
-```
-SELECT tdigest_sum(t.v, t.c, 100, 0.1, 0.9) FROM t
-```
-
-#### Parameters
-
-- `value` - values to aggregate
-- `count` - number of occurrences of the value
-- `accuracy` - accuracy of the t-digest
-- `low` - low threshold percentile (values below are discarded)
-- `high` - high threshold percentile (values above are discarded)
-
-
-### `tdigest_sum(tdigest, low, high)`
-
-Computes trimmed sum of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
-
-#### Synopsis
-
-```
-SELECT tdigest_sum(d, 0.05, 0.95) FROM (
-    SELECT tdigest(t.c, 100) AS d FROM t
-) foo;
-```
-
-#### Parameters
-
-- `tdigest` - tdigest to calculate sum from
-- `low` - low threshold percentile (values below are discarded)
-- `high` - high threshold percentile (values above are discarded)
-
-
-### `tdigest_avg(tdigest, double precision, double precision)`
-
-Calculates average of values between the low and high threshold.
-
-#### Synopsis
-
-```
-SELECT tdigest_avg(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
-```
-
-#### Parameters
-
-- `tdigest` - t-digest to calculate average for
-- `low` - low threshold (truncate values below)
-- `high` - high threshold (truncate values above)
-
-
-### `tdigest_sum(tdigest, double precision, double precision)`
-
-Calculates sum of values between the low and high threshold.
-
-#### Synopsis
-
-```
-SELECT tdigest_sum(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
-```
-
-#### Parameters
-
-- `tdigest` - t-digest to calculate sum for
-- `low` - low threshold (truncate values below)
-- `high` - high threshold (truncate values above)
 
 
 Notes
