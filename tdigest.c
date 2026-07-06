@@ -2968,7 +2968,7 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 		 * actually a sum, so convert it to mean now. We have to check the
 		 * diget->flags, not the local variable.
 		 */
-		if (! (digest->flags && TDIGEST_STORES_MEAN))
+		if (! (digest->flags & TDIGEST_STORES_MEAN))
 			mean = mean / digest->centroids[i].count;
 
 		/* don't print insignificant zeroes to the right of decimal point */
@@ -3041,7 +3041,7 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 		 * actually a sum, so convert it to mean now. We have to check the
 		 * diget->flags, not the local variable.
 		 */
-		if (! (digest->flags && TDIGEST_STORES_MEAN))
+		if (! (digest->flags & TDIGEST_STORES_MEAN))
 			mean = mean / digest->centroids[i].count;
 
 		/* don't print insignificant zeroes to the right of decimal point */
