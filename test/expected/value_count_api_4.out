@@ -184,7 +184,7 @@ FROM (
 ------------------------------------------------------------------
  Subquery Scan on foo
    ->  Finalize Aggregate
-         InitPlan 1
+         InitPlan expr_1
            ->  Aggregate
                  ->  Gather
                        Workers Planned: 2
@@ -229,7 +229,7 @@ FROM (
 ------------------------------------------------------------------
  Subquery Scan on foo
    ->  Finalize Aggregate
-         InitPlan 1
+         InitPlan expr_1
            ->  Aggregate
                  ->  Gather
                        Workers Planned: 2
@@ -276,7 +276,7 @@ FROM (
 ------------------------------------------------------------------
  Subquery Scan on foo
    ->  ProjectSet
-         InitPlan 1
+         InitPlan expr_1
            ->  Aggregate
                  ->  Gather
                        Workers Planned: 2
@@ -327,10 +327,10 @@ FROM (
 --------------------------------------------------------------------------
  Subquery Scan on foo
    ->  ProjectSet
-         InitPlan 2
+         InitPlan expr_1
            ->  Aggregate
                  ->  Function Scan on unnest f
-                 SubPlan 1
+                 SubPlan expr_2
                    ->  Aggregate
                          ->  Gather
                                Workers Planned: 2
