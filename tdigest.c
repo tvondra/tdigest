@@ -744,25 +744,24 @@ static void
 tdigest_add(tdigest_aggstate_t *state, double v)
 {
 	int	compression = state->compression;
-	int	ncentroids = state->ncentroids;
 
 	AssertCheckTDigestAggState(state);
+
+	/*
+	 * If the buffer is full, trigger compaction here so that we have
+	 * free space for the new value.
+	 */
+	if (state->ncentroids == BUFFER_SIZE(compression))
+		tdigest_compact(state);
 
 	/* make sure we have space for the value */
 	Assert(state->ncentroids < BUFFER_SIZE(compression));
 
 	/* for a single point, the value is both sum and mean */
-	state->centroids[ncentroids].count = 1;
-	state->centroids[ncentroids].mean = v;
+	state->centroids[state->ncentroids].count = 1;
+	state->centroids[state->ncentroids].mean = v;
 	state->ncentroids++;
 	state->count++;
-
-	Assert(state->ncentroids <= BUFFER_SIZE(compression));
-
-	/* if the buffer got full, trigger compaction here so that next
-	 * insert has free space */
-	if (state->ncentroids == BUFFER_SIZE(compression))
-		tdigest_compact(state);
 }
 
 /*
@@ -773,25 +772,24 @@ static void
 tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 {
 	int	compression = state->compression;
-	int	ncentroids = state->ncentroids;
 
 	AssertCheckTDigestAggState(state);
+
+	/*
+	 * If the buffer is full, trigger compaction here so that we have
+	 * free space for the new value.
+	 */
+	if (state->ncentroids == BUFFER_SIZE(compression))
+		tdigest_compact(state);
 
 	/* make sure we have space for the value */
 	Assert(state->ncentroids < BUFFER_SIZE(compression));
 
 	/* for a single point, the value is both sum and mean */
-	state->centroids[ncentroids].count = count;
-	state->centroids[ncentroids].mean = mean;
+	state->centroids[state->ncentroids].count = count;
+	state->centroids[state->ncentroids].mean = mean;
 	state->ncentroids++;
 	state->count += count;
-
-	Assert(state->ncentroids <= BUFFER_SIZE(compression));
-
-	/* if the buffer got full, trigger compaction here so that next
-	 * insert has free space */
-	if (state->ncentroids == BUFFER_SIZE(compression))
-		tdigest_compact(state);
 }
 
 /* allocate t-digest with enough space for a requested number of centroids */
