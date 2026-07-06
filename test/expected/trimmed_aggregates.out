@@ -115,3 +115,163 @@ FROM data;
  t         | t
 (1 row)
 
+-- results should not depend on ordering of input data (with compression
+-- large enough to not compact anything)
+SELECT tdigest_sum(i, 10000, 0.0, 0.5) FROM generate_series(1, 10000) s(i);
+ tdigest_sum 
+-------------
+    12502500
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.0, 0.5) from generate_series(10000, 1, -1) s(i);
+ tdigest_sum 
+-------------
+    12502500
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.0, 0.25) FROM generate_series(1, 10000) s(i);
+ tdigest_sum 
+-------------
+     3126250
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.0, 0.25) from generate_series(10000, 1, -1) s(i);
+ tdigest_sum 
+-------------
+     3126250
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.1, 0.2) FROM generate_series(1, 10000) s(i);
+ tdigest_sum 
+-------------
+     1500500
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.1, 0.2) from generate_series(10000, 1, -1) s(i);
+ tdigest_sum 
+-------------
+     1500500
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.5, 1.0) FROM generate_series(1, 10000) s(i);
+ tdigest_sum 
+-------------
+    37502500
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.5, 1.0) from generate_series(10000, 1, -1) s(i);
+ tdigest_sum 
+-------------
+    37502500
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.75, 1.0) FROM generate_series(1, 10000) s(i);
+ tdigest_sum 
+-------------
+    21876250
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.75, 1.0) from generate_series(10000, 1, -1) s(i);
+ tdigest_sum 
+-------------
+    21876250
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.75, 0.9) FROM generate_series(1, 10000) s(i);
+ tdigest_sum 
+-------------
+    12375750
+(1 row)
+
+SELECT tdigest_sum(i, 10000, 0.75, 0.9) from generate_series(10000, 1, -1) s(i);
+ tdigest_sum 
+-------------
+    12375750
+(1 row)
+
+-- the same thing with calculating a t-digest first (but make sure all
+-- centroids have count 1, to make it exactly the same)
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.0, 0.5) from tmp;
+ tdigest_sum 
+-------------
+      281625
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.0, 0.5) from tmp;
+ tdigest_sum 
+-------------
+      281625
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.0, 0.25) from tmp;
+ tdigest_sum 
+-------------
+       70500
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.0, 0.25) from tmp;
+ tdigest_sum 
+-------------
+       70500
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.1, 0.2) from tmp;
+ tdigest_sum 
+-------------
+       33825
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.1, 0.2) from tmp;
+ tdigest_sum 
+-------------
+       33825
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.5, 1.0) from tmp;
+ tdigest_sum 
+-------------
+      844125
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.5, 1.0) from tmp;
+ tdigest_sum 
+-------------
+      844125
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.75, 1.0) from tmp;
+ tdigest_sum 
+-------------
+      492375
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.75, 1.0) from tmp;
+ tdigest_sum 
+-------------
+      492375
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
+ tdigest_sum 
+-------------
+      278550
+(1 row)
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
+ tdigest_sum 
+-------------
+      278550
+(1 row)
+

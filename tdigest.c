@@ -3347,6 +3347,9 @@ tdigest_trimmed_avg(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
+	/* make sure the centroids are sorted */
+	tdigest_sort(state);
+
 	tdigest_trimmed_agg(state->centroids, state->ncentroids,
 						state->count, state->trim_low, state->trim_high,
 						&sum, &count);
@@ -3378,6 +3381,9 @@ tdigest_trimmed_sum(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	/* make sure the centroids are sorted */
+	tdigest_sort(state);
 
 	tdigest_trimmed_agg(state->centroids, state->ncentroids,
 						state->count, state->trim_low, state->trim_high,

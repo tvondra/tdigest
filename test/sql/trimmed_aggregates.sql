@@ -87,3 +87,56 @@ SELECT
     tdigest_digest_sum(data.d, 0.05, 0.95) between 9000 * 0.45 and 9000 * 0.55 AS sum_05_95,
     tdigest_digest_avg(data.d, 0.05, 0.95) between 0.45 and 0.55 AS mean_05_95
 FROM data;
+
+-- results should not depend on ordering of input data (with compression
+-- large enough to not compact anything)
+
+SELECT tdigest_sum(i, 10000, 0.0, 0.5) FROM generate_series(1, 10000) s(i);
+SELECT tdigest_sum(i, 10000, 0.0, 0.5) from generate_series(10000, 1, -1) s(i);
+
+SELECT tdigest_sum(i, 10000, 0.0, 0.25) FROM generate_series(1, 10000) s(i);
+SELECT tdigest_sum(i, 10000, 0.0, 0.25) from generate_series(10000, 1, -1) s(i);
+
+SELECT tdigest_sum(i, 10000, 0.1, 0.2) FROM generate_series(1, 10000) s(i);
+SELECT tdigest_sum(i, 10000, 0.1, 0.2) from generate_series(10000, 1, -1) s(i);
+
+SELECT tdigest_sum(i, 10000, 0.5, 1.0) FROM generate_series(1, 10000) s(i);
+SELECT tdigest_sum(i, 10000, 0.5, 1.0) from generate_series(10000, 1, -1) s(i);
+
+SELECT tdigest_sum(i, 10000, 0.75, 1.0) FROM generate_series(1, 10000) s(i);
+SELECT tdigest_sum(i, 10000, 0.75, 1.0) from generate_series(10000, 1, -1) s(i);
+
+SELECT tdigest_sum(i, 10000, 0.75, 0.9) FROM generate_series(1, 10000) s(i);
+SELECT tdigest_sum(i, 10000, 0.75, 0.9) from generate_series(10000, 1, -1) s(i);
+
+-- the same thing with calculating a t-digest first (but make sure all
+-- centroids have count 1, to make it exactly the same)
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.0, 0.5) from tmp;
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.0, 0.5) from tmp;
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.0, 0.25) from tmp;
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.0, 0.25) from tmp;
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.1, 0.2) from tmp;
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.1, 0.2) from tmp;
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.5, 1.0) from tmp;
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.5, 1.0) from tmp;
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.75, 1.0) from tmp;
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.75, 1.0) from tmp;
+
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
+SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
+WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
+SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
