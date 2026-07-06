@@ -1519,6 +1519,12 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
+	/*
+	 * XXX should it be allowed to add digest to a state with a different
+	 * compression value? Will it produce a "good" t-digest or does it break
+	 * the assumptions and produce much worse estimates?
+	 */
+
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
@@ -1595,6 +1601,12 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	/*
+	 * XXX should it be allowed to add digest to a state with a different
+	 * compression value? Will it produce a "good" t-digest or does it break
+	 * the assumptions and produce much worse estimates?
+	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
@@ -1958,6 +1970,12 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
+	/*
+	 * XXX should it be allowed to add digest to a state with a different
+	 * compression value? Will it produce a "good" t-digest or does it break
+	 * the assumptions and produce much worse estimates?
+	 */
+
 	for (i = 0; i < digest->ncentroids; i++)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
@@ -2027,6 +2045,12 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	/*
+	 * XXX should it be allowed to add digest to a state with a different
+	 * compression value? Will it produce a "good" t-digest or does it break
+	 * the assumptions and produce much worse estimates?
+	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
@@ -2337,6 +2361,12 @@ tdigest_combine(PG_FUNCTION_ARGS)
 
 	AssertCheckTDigestAggState(dst);
 	AssertCheckTDigestAggState(src);
+
+	/*
+	 * XXX should it be allowed to add digest to a state with a different
+	 * compression value? Will it produce a "good" t-digest or does it break
+	 * the assumptions and produce much worse estimates?
+	 */
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < src->ncentroids; i++)
@@ -3256,6 +3286,12 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
+
+	/*
+	 * XXX should it be allowed to add digest to a state with a different
+	 * compression value? Will it produce a "good" t-digest or does it break
+	 * the assumptions and produce much worse estimates?
+	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
