@@ -14,7 +14,7 @@ MODULES = tdigest
 
 CFLAGS=`pg_config --includedir-server`
 
-REGRESS      = basic copy cast conversions incremental parallel_query value_count_api trimmed_aggregates
+REGRESS      = basic copy cast conversions incremental parallel_query value_count_api trimmed_aggregates combine_crash
 REGRESS_OPTS = --inputdir=test
 
 PG_CONFIG = pg_config

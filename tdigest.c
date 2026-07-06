@@ -2301,6 +2301,7 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	tdigest_aggstate_t	 *dst;
 	MemoryContext aggcontext;
 	MemoryContext oldcontext;
+	int	i;
 
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
 		elog(ERROR, "tdigest_combine called in non-aggregate context");
@@ -2334,29 +2335,13 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	src = (tdigest_aggstate_t *) PG_GETARG_POINTER(1);
 	dst = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	/*
-	 * Do a compaction on each digest, to make sure we have enough space.
-	 *
-	 * XXX Maybe do this only when necessary, i.e. when we can't fit the
-	 * data into the dst digest? Also, is it really ensured this gives us
-	 * enough free space?
-	 */
-	tdigest_compact(dst);
-	tdigest_compact(src);
-
 	AssertCheckTDigestAggState(dst);
 	AssertCheckTDigestAggState(src);
 
-	/* copy the second part */
-	memcpy(&dst->centroids[dst->ncentroids],
-		   src->centroids,
-		   src->ncentroids * sizeof(centroid_t));
-
-	dst->ncentroids += src->ncentroids;
-	dst->count += src->count;
-
-	/* mark the digest as not compacted */
-	dst->ncompacted = 0;
+	/* copy data from the tdigest into the aggstate */
+	for (i = 0; i < src->ncentroids; i++)
+		tdigest_add_centroid(dst, src->centroids[i].mean,
+								  src->centroids[i].count);
 
 	AssertCheckTDigestAggState(dst);
 
