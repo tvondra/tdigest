@@ -694,7 +694,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 			 * There may be multiple centroids with this mean (i.e. containing
 			 * this value), so find all of them and sum their weights.
 			 */
-			while (state->centroids[j].mean == value && j < state->ncentroids)
+			while ((j < state->ncentroids) && (state->centroids[j].mean == value))
 			{
 				count_at_value += state->centroids[j].count;
 				j++;
