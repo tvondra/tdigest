@@ -2,6 +2,9 @@ Revision history for PostgreSQL extension tdigest.
 
 1.4.4
     - Add missing parts of automated release workflow.
+    - Make regression tests pass on Postgres 19 branch
+    - Fix various issues when parsing/validating input data
+    - Fix combinning t-digests with different parameters
 
 1.4.3
     - PGXN packaging (META etc.).
