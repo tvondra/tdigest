@@ -1,0 +1,96 @@
+-- partitioned table: two partitions, each containing a t-digest with vastly
+-- different compression values
+CREATE TABLE digest_combine_test(k int, d tdigest) PARTITION BY LIST (k);
+CREATE TABLE digest_combine_test_1 PARTITION OF digest_combine_test FOR VALUES IN (1);
+CREATE TABLE digest_combine_test_2 PARTITION OF digest_combine_test FOR VALUES IN (2);
+DO $$
+DECLARE
+    v_version numeric;
+BEGIN
+
+    SELECT substring(setting from '\d+')::numeric INTO v_version FROM pg_settings WHERE name = 'server_version';
+
+    -- GUCs common for all versions
+    PERFORM set_config('parallel_setup_cost', '0', false);
+    PERFORM set_config('parallel_tuple_cost', '0', false);
+    PERFORM set_config('max_parallel_workers_per_gather', '2', false);
+
+    -- 9.6 used somewhat different GUC name for relation size
+    IF v_version < 10 THEN
+        PERFORM set_config('min_parallel_relation_size', '0', false);
+    ELSE
+        PERFORM set_config('min_parallel_table_scan_size', '0', false);
+    END IF;
+
+    -- parallel_leader_participation and enable_partitionwise_aggregate
+    -- were introduced in 11
+    IF v_version >= 11 THEN
+        PERFORM set_config('parallel_leader_participation', 'off', false);
+        PERFORM set_config('enable_partitionwise_aggregate', 'on', false);
+    END IF;
+
+END;
+$$ LANGUAGE plpgsql;
+DO $$
+DECLARE
+    v_scale_1  INT;
+    v_scale_2  INT;
+    v_compress INT;
+    v_rows     INT;
+    v_rec      RECORD;
+BEGIN
+
+    FOR v_scale_1 IN 1..3 LOOP
+
+        FOR v_scale_2 IN 1..3 LOOP
+
+            FOR r IN 1..10 LOOP
+
+                TRUNCATE digest_combine_test;
+
+                -- first random t-digest
+                v_compress := pow(10, v_scale_1) + (random() * pow(10, (v_scale_1 + 1)))::int;
+                v_compress := GREATEST(10, LEAST(v_compress, 10000));
+
+                v_rows := (random() * v_compress * 10);
+                v_rows := GREATEST(100, LEAST(v_rows, 100000));
+
+                -- RAISE NOTICE '% %', v_compress, v_rows;
+
+                INSERT INTO digest_combine_test SELECT 1, tdigest(v * random(), v_compress) FROM generate_series(1, v_rows) v;
+
+                -- second ranndom t-digest
+                v_compress := pow(10, v_scale_2) + (random() * pow(10, (v_scale_2 + 1)))::int;
+                v_compress := GREATEST(10, LEAST(v_compress, 10000));
+
+                v_rows := (random() * v_compress * 10);
+                v_rows := GREATEST(100, LEAST(v_rows, 100000));
+
+                -- RAISE NOTICE '% %', v_compress, v_rows;
+
+                INSERT INTO digest_combine_test SELECT 2, tdigest(v * random(), v_compress) FROM generate_series(1, v_rows) v;
+
+                -- duplicate the data enough times to reliably trigger partitionwise aggregate
+                INSERT INTO digest_combine_test SELECT * FROM digest_combine_test;
+                INSERT INTO digest_combine_test SELECT * FROM digest_combine_test;
+                INSERT INTO digest_combine_test SELECT * FROM digest_combine_test;
+                INSERT INTO digest_combine_test SELECT * FROM digest_combine_test;
+
+                ANALYZE digest_combine_test;
+
+                -- FOR v_rec IN EXPLAIN SELECT tdigest(d) FROM digest_combine_test LOOP
+                --    RAISE NOTICE '%', v_rec."QUERY PLAN";
+                -- END LOOP;
+
+                -- tdigest_combine(d1, d2)
+                PERFORM tdigest(d) FROM digest_combine_test;
+
+            END LOOP;
+
+        END LOOP;
+
+    END LOOP;
+
+END;
+$$ LANGUAGE plpgsql;
+DROP TABLE digest_combine_test;
