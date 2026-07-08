@@ -16,7 +16,7 @@
       }
    },
    "provides": {
-     "quantile": {
+     "tdigest": {
        "file": "tdigest--1.4.3--1.4.4.sql",
        "docfile" : "README.md",
        "version": "1.4.4"
