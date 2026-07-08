@@ -745,8 +745,6 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 {
 	int	compression = state->compression;
 
-	AssertCheckTDigestAggState(state);
-
 	/*
 	 * If the buffer is full, trigger compaction here so that we have
 	 * free space for the new value.
@@ -772,8 +770,6 @@ static void
 tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 {
 	int	compression = state->compression;
-
-	AssertCheckTDigestAggState(state);
 
 	/*
 	 * If the buffer is full, trigger compaction here so that we have
@@ -1044,6 +1040,8 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -1251,6 +1249,8 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -1315,6 +1315,8 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	AssertCheckTDigestAggState(state);
 
 	PG_RETURN_POINTER(state);
 }
@@ -1423,6 +1425,8 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -1508,6 +1512,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -1590,6 +1596,8 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -1651,6 +1659,8 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	AssertCheckTDigestAggState(state);
 
 	PG_RETURN_POINTER(state);
 }
@@ -1737,6 +1747,8 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -1796,6 +1808,8 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	AssertCheckTDigestAggState(state);
 
 	PG_RETURN_POINTER(state);
 }
@@ -1880,6 +1894,8 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -1958,6 +1974,8 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -2033,6 +2051,8 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+
+	AssertCheckTDigestAggState(state);
 
 	PG_RETURN_POINTER(state);
 }
@@ -2382,6 +2402,8 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 							 digest->centroids[i].mean,
 							 digest->centroids[i].count);
 
+	AssertCheckTDigestAggState(state);
+
 	return state;
 }
 
@@ -2438,6 +2460,8 @@ tdigest_add_double_increment(PG_FUNCTION_ARGS)
 		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
+
+	AssertCheckTDigestAggState(state);
 
 	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
 }
@@ -2502,6 +2526,8 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < nvalues; i++)
 		tdigest_add(state, values[i]);
+
+	AssertCheckTDigestAggState(state);
 
 	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
 }
@@ -3103,6 +3129,8 @@ tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -3194,6 +3222,8 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
 
+	AssertCheckTDigestAggState(state);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -3264,6 +3294,8 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+
+	AssertCheckTDigestAggState(state);
 
 	PG_RETURN_POINTER(state);
 }
