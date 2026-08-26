@@ -493,7 +493,20 @@ tdigest_compact(tdigest_aggstate_t *state)
 		q0 = count_so_far / (double) total_count;
 		q2 = (count_so_far + proposed_count) / (double) total_count;
 
-		should_add = (z <= (q0 * (1 - q0))) && (z <= (q2 * (1 - q2)));
+		/*
+		 * Calculate the (1 - q) factors from the exact integer remainders,
+		 * instead of subtracting the quotients from 1.
+		 *
+		 * The two are equivalent with exact arithmetic, but not in double. If
+		 * a single centroid holds almost the whole weight of the digest, the
+		 * quotient rounds to exactly 1.0, and (1 - q) cancels to exactly 0.
+		 * The size limit then says no two centroids may be merged, even
+		 * though the exact limit is small but positive - and the compaction
+		 * ends up not making any progress at all.
+		 */
+		should_add =
+			(z <= (q0 * ((double) (total_count - count_so_far) / (double) total_count))) &&
+			(z <= (q2 * ((double) (total_count - count_so_far - proposed_count) / (double) total_count)));
 
 		if (should_add)
 		{
