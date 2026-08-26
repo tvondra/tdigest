@@ -3465,6 +3465,49 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Convert a (count * fraction) product back to a count.
+ *
+ * The product is calculated in double, so for very high counts it may end up
+ * outside the int64 range - even for frac = 1.0. For example
+ *
+ * 1.000000 * 9223372036854775296 = 9223372036854775808.000000
+ *
+ * which is above both the count and INT64_MAX (9223372036854775807). That
+ * makes the conversion undefined. It can't lead to underflow/overflow, as
+ * we're not using this to access memory, but it might lead to bogus results
+ * (e.g. NULL instead of the correct result).
+ *
+ * Clamp it to the [0, maxvalue] range, which is the only range that makes
+ * sense anyway.
+ *
+ * Note: We know the frac value is in [0.0, 1.0], but we don't rely on that
+ * here. We'll clamp it to [0, maxvalue].
+ */
+static int64
+double_to_int64(double value, int64 maxvalue)
+{
+	/* paranoia: we should not get NaN values here */
+	if (isnan(value))
+		return 0;
+
+	/* clamp it to the [0, count] range */
+	if (value < 0)
+		return 0;
+
+	/*
+	 * The comparison is done in double on purpose. If we did it as int64,
+	 * it might already overflow and wrap. Converting count to double may
+	 * round it up to 2^63, but that should be tine - the comparison is
+	 * still correct, and we return count for anything that large.
+	 */
+	if (value >= (double) maxvalue)
+		return maxvalue;
+
+	/* ok, should be safe to count */
+	return (int64) value;
+}
+
+/*
  * Calculate trimmed aggregates from centroids.
  */
 static void
@@ -3479,8 +3522,11 @@ tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
 			count_high;
 
 	/* translate the percentiles to counts */
-	count_low = floor(count * low);
-	count_high = ceil(count * high);
+	count_low = double_to_int64(floor(count * low), count);
+	count_high = double_to_int64(ceil(count * high), count);
+
+	/* verify sane range */
+	Assert((count_low <= count_high) && (0 <= count_low)  && (count_high <= count));
 
 	count = 0;
 	for (i = 0; i < ncentroids; i++)

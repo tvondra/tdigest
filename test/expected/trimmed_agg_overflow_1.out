@@ -1,0 +1,95 @@
+-- Use terse verbosity, so that the expected output does not depend on the
+-- error context, which differs between PostgreSQL versions (particularly
+-- for the COPY ... FROM statements below).
+\set VERBOSITY terse
+-- Reproducer: tdigest_trimmed_agg() computes the trimmed range in double, so
+-- it overflows on the way back to int64 and silently returns NULL.
+--
+-- This one does not crash, it just gives wrong answers.
+--
+-- tdigest_trimmed_agg() converts the trim boundaries to counts with
+--
+--     count_low  = ceil(state->count * low);
+--     count_high = ceil(state->count * high);       (tdigest.c around lines 3357-3358)
+--
+-- state->count is int64 and the multiplication is done in double. double has
+-- a 53-bit mantissa, so once the total count gets close enough to 2^63 the
+-- product rounds up to exactly 2^63, which is not representable as int64. The
+-- conversion back to int64 is undefined behaviour; on x86-64 it yields
+-- INT64_MIN. count_high then ends up hugely negative, every centroid falls
+-- outside [count_low, count_high], nothing is accumulated, and the function
+-- returns NULL as if the digest were empty.
+--
+-- The threshold is sharp - the last total count that still works is
+-- 9223372036854775295, one more and the answer turns into NULL:
+--
+--     total count           tdigest_digest_sum
+--     9223372036854775295   1.844674407370955e+19    correct
+--     9223372036854775296   NULL                     wrong
+--     9223372036854775807   NULL                     wrong
+--
+-- This affects tdigest_digest_sum() and tdigest_digest_avg() as well as the
+-- tdigest_sum() and tdigest_avg() aggregates, i.e. anything going through
+-- tdigest_trimmed_agg().
+-- the last value that still produces the right answer
+SELECT tdigest_digest_sum('flags 1 count 9223372036854775295 compression 10 centroids 1 (2, 9223372036854775295)'::tdigest);
+  tdigest_digest_sum  
+----------------------
+ 1.84467440737095e+19
+(1 row)
+
+SELECT tdigest_digest_avg('flags 1 count 9223372036854775295 compression 10 centroids 1 (2, 9223372036854775295)'::tdigest);
+ tdigest_digest_avg 
+--------------------
+                  2
+(1 row)
+
+-- one more, and the result silently becomes NULL
+SELECT tdigest_digest_sum('flags 1 count 9223372036854775296 compression 10 centroids 1 (2, 9223372036854775296)'::tdigest);
+  tdigest_digest_sum  
+----------------------
+ 1.84467440737096e+19
+(1 row)
+
+SELECT tdigest_digest_avg('flags 1 count 9223372036854775296 compression 10 centroids 1 (2, 9223372036854775296)'::tdigest);
+ tdigest_digest_avg 
+--------------------
+                  2
+(1 row)
+
+-- INT64_MAX, same thing
+SELECT tdigest_digest_sum('flags 1 count 9223372036854775807 compression 10 centroids 1 (2, 9223372036854775807)'::tdigest);
+  tdigest_digest_sum  
+----------------------
+ 1.84467440737096e+19
+(1 row)
+
+SELECT tdigest_digest_avg('flags 1 count 9223372036854775807 compression 10 centroids 1 (2, 9223372036854775807)'::tdigest);
+ tdigest_digest_avg 
+--------------------
+                  2
+(1 row)
+
+-- side by side, so the discontinuity is easy to see
+SELECT n AS total_count, tdigest_digest_sum(('flags 1 count ' || n || ' compression 10 centroids 1 (2, ' || n || ')')::tdigest) AS sum
+  FROM (VALUES (9223372036854775295::bigint),
+               (9223372036854775296::bigint),
+               (9223372036854775807::bigint)) v(n);
+     total_count     |         sum          
+---------------------+----------------------
+ 9223372036854775295 | 1.84467440737095e+19
+ 9223372036854775296 | 1.84467440737096e+19
+ 9223372036854775807 | 1.84467440737096e+19
+(3 rows)
+
+SELECT n AS total_count, tdigest_digest_avg(('flags 1 count ' || n || ' compression 10 centroids 1 (2, ' || n || ')')::tdigest) AS avg
+  FROM (VALUES (9223372036854775295::bigint),
+               (9223372036854775296::bigint),
+               (9223372036854775807::bigint)) v(n);
+     total_count     | avg 
+---------------------+-----
+ 9223372036854775295 |   2
+ 9223372036854775296 |   2
+ 9223372036854775807 |   2
+(3 rows)
+
