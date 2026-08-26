@@ -1,0 +1,17 @@
+-- Use terse verbosity, so that the expected output does not depend on the
+-- error context, which differs between PostgreSQL versions (particularly
+-- for the COPY ... FROM statements below).
+\set VERBOSITY terse
+
+-- via the tdigest(value, count, compression) aggregate
+SELECT length(tdigest(1.0::float8, 9223372036854775807::bigint, 10000)::text);
+
+-- the count does not have to be anywhere near the int64 limit, a large enough
+-- count with a moderate compression is enough
+SELECT length(tdigest(1.0::float8, 1000000000000000000::bigint, 1000)::text);
+
+-- via the percentile aggregates on the value/count API
+SELECT tdigest_percentile(1.0::float8, 9223372036854775807::bigint, 10000, 0.5);
+
+-- via the trimmed aggregates on the value/count API
+SELECT tdigest_avg(1.0::float8, 9223372036854775807::bigint, 10000, 0.1, 0.9);
