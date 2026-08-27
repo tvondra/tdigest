@@ -35,3 +35,21 @@ FROM tdigest_src src JOIN tdigest_dst dst ON (src.id = dst.id);
 
 DROP TABLE tdigest_src;
 DROP TABLE tdigest_dst;
+
+-- tdigest_recv() has to reject digests with unsorted centroids
+--
+-- Test through a binary COPY, which goes through the receive function.
+-- We build the input with the send functions of the individual fields.
+
+CREATE TABLE tdigest_dst (s tdigest);
+
+COPY (SELECT int4send(1)                            -- flags
+          || int8send(3::bigint)                    -- count
+          || int4send(10)                           -- compression
+          || int4send(2)                            -- ncentroids
+          || float8send(5) || int8send(2::bigint)
+          || float8send(1) || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_unsorted.bin' WITH (FORMAT binary);
+COPY tdigest_dst FROM '/tmp/tdigest_recv_unsorted.bin' WITH (FORMAT binary);
+
+DROP TABLE tdigest_dst;

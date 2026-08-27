@@ -3201,6 +3201,24 @@ tdigest_recv(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("count value of a centroid exceeds total count")));
 
+		/* the centroids should be sorted by mean */
+		if (i > 0)
+		{
+			double	mean = digest->centroids[i].mean;
+			double	mean_prev = digest->centroids[i - 1].mean;
+
+			if (!(flags & TDIGEST_STORES_MEAN))
+			{
+				mean = (mean / digest->centroids[i].count);
+				mean_prev = (mean_prev / digest->centroids[i - 1].count);
+			}
+
+			if (mean_prev > mean)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("centroids not sorted by mean")));
+		}
+
 		/*
 		 * track the total count so that we can check later
 		 *
