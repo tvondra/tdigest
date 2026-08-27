@@ -141,6 +141,67 @@ SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
 SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
 
+-- simple sanity checks of high/low thresholds
+
+-- correct low/high ranges
+SELECT tdigest_sum(1.0, 100, 0.0, 1.0);
+SELECT tdigest_avg(1.0, 100, 0.0, 1.0);
+
+SELECT tdigest_sum(1.0, 100, 0.25, 0.75);
+SELECT tdigest_avg(1.0, 100, 0.25, 0.75);
+
+SELECT tdigest_sum(1.0, 100, 0.5, 0.5);
+SELECT tdigest_avg(1.0, 100, 0.5, 0.5);
+
+-- inverted range
+SELECT tdigest_sum(1.0, 100, 0.75, 0.25);
+SELECT tdigest_avg(1.0, 100, 0.75, 0.25);
+
+-- negative low threshold
+SELECT tdigest_sum(1.0, 100, -1.0, 1.0);
+SELECT tdigest_avg(1.0, 100, -1.0, 1.0);
+
+-- bogus high threshold
+SELECT tdigest_sum(1.0, 100, -1.0, 1.0);
+SELECT tdigest_avg(1.0, 100, -1.0, 1.0);
+
+-- infinity in low threshold
+SELECT tdigest_sum(1.0, 100, '-infinity'::double precision, 1.0);
+SELECT tdigest_avg(1.0, 100, '-infinity'::double precision, 1.0);
+
+SELECT tdigest_sum(1.0, 100, 'infinity'::double precision, 1.0);
+SELECT tdigest_avg(1.0, 100, 'infinity'::double precision, 1.0);
+
+-- infinity in high threshold
+SELECT tdigest_sum(1.0, 100, 0.0, '-infinity'::double precision);
+SELECT tdigest_avg(1.0, 100, 0.0, '-infinity'::double precision);
+
+SELECT tdigest_sum(1.0, 100, 0.0, 'infinity'::double precision);
+SELECT tdigest_avg(1.0, 100, 0.0, 'infinity'::double precision);
+
+-- infinity in both thresholds
+SELECT tdigest_sum(1.0, 100, '-infinity'::double precision, '-infinity'::double precision);
+SELECT tdigest_avg(1.0, 100, '-infinity'::double precision, '-infinity'::double precision);
+
+SELECT tdigest_sum(1.0, 100, '-infinity'::double precision, 'infinity'::double precision);
+SELECT tdigest_avg(1.0, 100, '-infinity'::double precision, 'infinity'::double precision);
+
+SELECT tdigest_sum(1.0, 100, 'infinity'::double precision, '-infinity'::double precision);
+SELECT tdigest_avg(1.0, 100, 'infinity'::double precision, '-infinity'::double precision);
+
+SELECT tdigest_sum(1.0, 100, 'infinity'::double precision, 'infinity'::double precision);
+SELECT tdigest_avg(1.0, 100, 'infinity'::double precision, 'infinity'::double precision);
+
+-- NaN in thresholds
+SELECT tdigest_sum(1.0, 100, 'NaN'::double precision, 1.0);
+SELECT tdigest_avg(1.0, 100, 'NaN'::double precision, 1.0);
+
+SELECT tdigest_sum(1.0, 100, 0.0, 'NaN'::double precision);
+SELECT tdigest_avg(1.0, 100, 0.0, 'NaN'::double precision);
+
+SELECT tdigest_sum(1.0, 100, 'NaN'::double precision, 'NaN'::double precision);
+SELECT tdigest_avg(1.0, 100, 'NaN'::double precision, 'NaN'::double precision);
+
 -- check tdigest_trimmed_agg() calculates and aggregates the right range
 -- of centroids to process, especially when [count_low, count_high) falls
 -- into a single centroid

@@ -1085,16 +1085,16 @@ check_compression(int compression)
 static void
 check_trim_values(double low, double high)
 {
-	if (low < 0.0)
+	if (!((low >= 0.0) && (low <= 1.0)))
 		elog(ERROR, "invalid low percentile value %f, should be in [0.0, 1.0]",
 			 low);
 
-	if (high > 1.0)
+	if (!((high >= 0.0) && (high <= 1.0)))
 		elog(ERROR, "invalid high percentile value %f, should be in [0.0, 1.0]",
 			 high);
 
-	if (low >= high)
-		elog(ERROR, "invalid low/high percentile values %f/%f, should be low < high",
+	if (low > high)
+		elog(ERROR, "invalid low/high percentile values %f/%f, should be low <= high",
 			 low, high);
 }
 
@@ -3658,6 +3658,8 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 
 	AssertCheckTDigest(digest);
 
+	check_trim_values(low, high);
+
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
 
@@ -3684,6 +3686,8 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
 	int64		count;
 
 	AssertCheckTDigest(digest);
+
+	check_trim_values(low, high);
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
