@@ -804,24 +804,37 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 	{
 		int			j;
 		double		count;
-		centroid_t *c = NULL;
-		centroid_t *prev;
 		double		value = state->values[i];
 		double		m, x;
 
+		/* next and previous centroids */
+		centroid_t *curr = NULL;
+		centroid_t *prev = NULL;
+
+		/*
+		 * Find the first centroid with (mean >= value), and remember the
+		 * last centroid before that - if the value is in between, we will
+		 * be calculate the percentile by linear approximation.
+		 */
 		count = 0;
 		for (j = 0; j < state->ncentroids; j++)
 		{
-			c = &state->centroids[j];
+			/* remember the previous centroid, grab the next one */
+			prev = curr;
+			curr = &state->centroids[j];
 
-			if (c->mean >= value)
+			if (curr->mean >= value)
 				break;
 
-			count += c->count;
+			count += curr->count;
 		}
 
-		/* the value exactly matches the mean */
-		if (value == c->mean)
+		/*
+		 * If the value exactly matches the mean of the current centroid,
+		 * we're almost there. There may be multiple centroids with the same
+		 * mean, so we just need to advance past those.
+		 */
+		if (value == curr->mean)
 		{
 			int64	count_at_value = 0;
 
@@ -836,18 +849,34 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 			}
 
 			result[i] = (count + (count_at_value / 2.0)) / state->count;
+
+			/* the next centroid has a higher mean, so we're done */
 			continue;
 		}
-		else if (value > c->mean)	/* past the largest */
+
+		/*
+		 * If (value > curr->mean), it means we went through all centroids
+		 * without finding one with a larger mean. So the value is above
+		 * all centroids, and so it's 1.0 percentile.
+		 */
+		if (value > curr->mean)	/* past the largest centroid */
 		{
 			result[i] = 1;
 			continue;
 		}
-		else if (j == 0)			/* past the smallest */
+
+		/*
+		 * It's also possible even the first centroid has a higher mean, in
+		 * which case the value is 0.0 percentile.
+		 */
+		if (prev == NULL)		/* before the smallest centroid */
 		{
 			result[i] = 0;
 			continue;
 		}
+
+		/* we have two distinct centroids */
+		Assert((prev != NULL) && (curr != NULL) && (prev != curr));
 
 		/*
 		 * The value lies somewhere between two centroids. We want to figure out
@@ -855,9 +884,11 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		 *
 		 * FIXME What if there are multiple centroids with the same mean as the
 		 * prev/curr centroid? This probably needs to lookup all of them and sum
-		 * their counts, just like we did in case of the exact match, no?
+		 * their counts, just like we did in case of the exact mean equality, no?
+		 * Both for the current and previous centroids, so that the approximation
+		 * works well.
 		 */
-		prev = c - 1;
+
 		count -= (prev->count / 2);
 
 		/*
@@ -866,7 +897,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		 * are in prev->mean and at (prev->count/2 + curr->count/2) we're at
 		 * curr->mean.
 		 */
-		m = (c->mean - prev->mean) / (c->count / 2.0 + prev->count / 2.0);
+		m = (curr->mean - prev->mean) / (curr->count / 2.0 + prev->count / 2.0);
 		x = (value - prev->mean) / m;
 
 		result[i] = (double) (count + x) / state->count;
