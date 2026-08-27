@@ -100,3 +100,33 @@ SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::t
 ERROR:  invalid high percentile value -Infinity, should be in [0.0, 1.0]
 SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 0.0, 'infinity'::double precision);
 ERROR:  invalid high percentile value Infinity, should be in [0.0, 1.0]
+-- validation of input values
+-- input functions must reject NaN / infinity means in various places
+SELECT 'flags 1 count 1 compression 10 centroids 1 (NaN, 1)'::tdigest;
+ERROR:  mean value for all centroids in a t-digest must be valid
+LINE 1: SELECT 'flags 1 count 1 compression 10 centroids 1 (NaN, 1)'...
+               ^
+SELECT 'flags 1 count 1 compression 10 centroids 1 (infinity, 1)'::tdigest;
+ERROR:  mean value for all centroids in a t-digest must be valid
+LINE 1: SELECT 'flags 1 count 1 compression 10 centroids 1 (infinity...
+               ^
+SELECT 'flags 1 count 1 compression 10 centroids 1 (-infinity, 1)'::tdigest;
+ERROR:  mean value for all centroids in a t-digest must be valid
+LINE 1: SELECT 'flags 1 count 1 compression 10 centroids 1 (-infinit...
+               ^
+-- the aggregates building the digest have to reject NaN / infinity too
+SELECT tdigest('NaN'::float8, 10);
+ERROR:  all values added to t-digest must be finite
+SELECT tdigest('infinity'::float8, 10);
+ERROR:  all values added to t-digest must be finite
+SELECT tdigest('-infinity'::float8, 10);
+ERROR:  all values added to t-digest must be finite
+-- same for the value/count API
+SELECT tdigest('NaN'::float8, 50::bigint, 10);
+ERROR:  all values added to t-digest must be finite
+SELECT tdigest('NaN'::float8, 200::bigint, 10);
+ERROR:  all values added to t-digest must be finite
+SELECT tdigest('Infinity'::float8, 200::bigint, 10);
+ERROR:  all values added to t-digest must be finite
+SELECT tdigest('-Infinity'::float8, 200::bigint, 10);
+ERROR:  all values added to t-digest must be finite

@@ -880,6 +880,12 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 {
 	int	compression = state->compression;
 
+	/* make sure we're not adding bogus NaN/infinity values as centroids */
+	if (!isfinite(v))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("all values added to t-digest must be finite")));
+
 	/*
 	 * If the buffer is full, trigger compaction here so that we have
 	 * free space for the new value.
@@ -910,6 +916,9 @@ static void
 tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 {
 	int	compression = state->compression;
+
+	/* we should not have an infinite/NaN mean in a digest */
+	Assert(isfinite(mean));
 
 	/*
 	 * If the buffer is full, trigger compaction here so that we have
@@ -1212,6 +1221,12 @@ tdigest_add_generated(tdigest_aggstate_t *state, double value, int64 count)
 	double		denom;
 	double		normalizer;
 	int			compression = state->compression;
+
+	/* make sure we're not adding bogus NaN/infinity values as centroids */
+	if (!isfinite(value))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("all values added to t-digest must be finite")));
 
 	denom = 2 * M_PI * count * log(count);
 	normalizer = compression / denom;
@@ -2981,7 +2996,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 		 * Not sure if this can happen with text input, but better to keep the
 		 * checks the same as in tdigest_recv.
 		 */
-		if (isnan(mean))
+		if (!isfinite(mean))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("mean value for all centroids in a t-digest must be valid")));
@@ -3172,7 +3187,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 		digest->centroids[i].mean = pq_getmsgfloat8(buf);
 		digest->centroids[i].count = pq_getmsgint64(buf);
 
-		if (isnan(digest->centroids[i].mean))
+		if (!isfinite(digest->centroids[i].mean))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("mean value for all centroids in a t-digest must be valid")));

@@ -52,3 +52,20 @@ SELECT tdigest_avg(1.0::double precision, 10, 'infinity'::double precision, 1.0)
 SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 0.0, 'NaN'::double precision);
 SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 0.0, '-infinity'::double precision);
 SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 0.0, 'infinity'::double precision);
+
+-- validation of input values
+-- input functions must reject NaN / infinity means in various places
+SELECT 'flags 1 count 1 compression 10 centroids 1 (NaN, 1)'::tdigest;
+SELECT 'flags 1 count 1 compression 10 centroids 1 (infinity, 1)'::tdigest;
+SELECT 'flags 1 count 1 compression 10 centroids 1 (-infinity, 1)'::tdigest;
+
+-- the aggregates building the digest have to reject NaN / infinity too
+SELECT tdigest('NaN'::float8, 10);
+SELECT tdigest('infinity'::float8, 10);
+SELECT tdigest('-infinity'::float8, 10);
+
+-- same for the value/count API
+SELECT tdigest('NaN'::float8, 50::bigint, 10);
+SELECT tdigest('NaN'::float8, 200::bigint, 10);
+SELECT tdigest('Infinity'::float8, 200::bigint, 10);
+SELECT tdigest('-Infinity'::float8, 200::bigint, 10);
