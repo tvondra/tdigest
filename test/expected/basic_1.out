@@ -1,0 +1,102 @@
+-- validation of percentile values
+-- correct values
+SELECT tdigest_percentile(1.0, 10, 0.0);
+ tdigest_percentile 
+--------------------
+                  1
+(1 row)
+
+SELECT tdigest_percentile(1.0, 10, 0.1);
+ tdigest_percentile 
+--------------------
+                  1
+(1 row)
+
+SELECT tdigest_percentile(1.0, 10, 0.5);
+ tdigest_percentile 
+--------------------
+                  1
+(1 row)
+
+SELECT tdigest_percentile(1.0, 10, 0.9);
+ tdigest_percentile 
+--------------------
+                  1
+(1 row)
+
+SELECT tdigest_percentile(1.0, 10, 1.0);
+ tdigest_percentile 
+--------------------
+                  1
+(1 row)
+
+SELECT tdigest_percentile(1.0, 10, ARRAY[0.0, 0.1, 0.5, 0.9, 1.0]);
+ tdigest_percentile 
+--------------------
+ {1,1,1,1,1}
+(1 row)
+
+-- out of range values
+SELECT tdigest_percentile(1.0, 10, -1.0);
+ERROR:  invalid percentile value -1.000000, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0, 10, 1.5);
+ERROR:  invalid percentile value 1.500000, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0, 10, ARRAY[0.0, -1.0, 0.5, 0.9, 1.0]);
+ERROR:  invalid percentile value -1.000000, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0, 10, ARRAY[0.0, 0.1, 0.5, 0.9, 1.5]);
+ERROR:  invalid percentile value 1.500000, should be in [0.0, 1.0]
+-- NaN
+SELECT tdigest_percentile(1.0, 10, 'NaN'::double precision);
+ERROR:  invalid percentile value nan, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0, 10, ARRAY[0.0, 'NaN'::double precision, 0.5, 0.9, 1.0]);
+ERROR:  invalid percentile value nan, should be in [0.0, 1.0]
+-- infinite values
+SELECT tdigest_percentile(1.0, 10, 'infinity'::double precision);
+ERROR:  invalid percentile value inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0, 10, '-infinity'::double precision);
+ERROR:  invalid percentile value -inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0, 10, ARRAY[0.0, 'infinity'::double precision, 0.5, 0.9, 1.0]);
+ERROR:  invalid percentile value inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0, 10, ARRAY[0.0, '-infinity'::double precision, 0.5, 0.9, 1.0]);
+ERROR:  invalid percentile value -inf, should be in [0.0, 1.0]
+-- more tests
+SELECT tdigest_percentile(1.0::double precision, 10, 'NaN'::double precision);
+ERROR:  invalid percentile value nan, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0::double precision, 10, '-infinity'::double precision);
+ERROR:  invalid percentile value -inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0::double precision, 10, 'infinity'::double precision);
+ERROR:  invalid percentile value inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0::double precision, 10, ARRAY[0.5, 'NaN']::double precision[]);
+ERROR:  invalid percentile value nan, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0::double precision, 10, ARRAY[0.5, '-infinity']::double precision[]);
+ERROR:  invalid percentile value -inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile(1.0::double precision, 10, ARRAY[0.5, 'infinity']::double precision[]);
+ERROR:  invalid percentile value inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 'NaN'::double precision);
+ERROR:  invalid percentile value nan, should be in [0.0, 1.0]
+SELECT tdigest_percentile('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, '-infinity'::double precision);
+ERROR:  invalid percentile value -inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 'infinity'::double precision);
+ERROR:  invalid percentile value inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest,
+                          ARRAY[0.5, 'NaN']::double precision[]);
+ERROR:  invalid percentile value nan, should be in [0.0, 1.0]
+SELECT tdigest_percentile('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest,
+                          ARRAY[0.5, '-infinity']::double precision[]);
+ERROR:  invalid percentile value -inf, should be in [0.0, 1.0]
+SELECT tdigest_percentile('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest,
+                          ARRAY[0.5, 'infinity']::double precision[]);
+ERROR:  invalid percentile value inf, should be in [0.0, 1.0]
+-- trim thresholds are checked too
+SELECT tdigest_avg(1.0::double precision, 10, 'NaN'::double precision, 1.0);
+ERROR:  invalid low percentile value nan, should be in [0.0, 1.0]
+SELECT tdigest_avg(1.0::double precision, 10, '-infinity'::double precision, 1.0);
+ERROR:  invalid low percentile value -inf, should be in [0.0, 1.0]
+SELECT tdigest_avg(1.0::double precision, 10, 'infinity'::double precision, 1.0);
+ERROR:  invalid low percentile value inf, should be in [0.0, 1.0]
+SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 0.0, 'NaN'::double precision);
+ERROR:  invalid high percentile value nan, should be in [0.0, 1.0]
+SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 0.0, '-infinity'::double precision);
+ERROR:  invalid high percentile value -inf, should be in [0.0, 1.0]
+SELECT tdigest_digest_sum('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest, 0.0, 'infinity'::double precision);
+ERROR:  invalid high percentile value inf, should be in [0.0, 1.0]

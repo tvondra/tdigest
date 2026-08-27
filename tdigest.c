@@ -1069,7 +1069,7 @@ check_percentiles(double *percentiles, int npercentiles)
 
 	for (i = 0; i < npercentiles; i++)
 	{
-		if ((percentiles[i] < 0.0) || (percentiles[i] > 1.0))
+		if (!((percentiles[i] >= 0.0) && (percentiles[i] <= 1.0)))
 			elog(ERROR, "invalid percentile value %f, should be in [0.0, 1.0]",
 				 percentiles[i]);
 	}
