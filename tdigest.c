@@ -13,6 +13,7 @@
 #include <limits.h>
 
 #include "postgres.h"
+#include "common/int.h"
 #include "libpq/pqformat.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -223,6 +224,8 @@ AssertCheckTDigest(tdigest_t *digest)
 	Assert((digest->compression >= MIN_COMPRESSION) &&
 		   (digest->compression <= MAX_COMPRESSION));
 
+	Assert(digest->count >= 0);
+
 	Assert(digest->ncentroids >= 0);
 	Assert(digest->ncentroids <= BUFFER_SIZE(digest->compression));
 
@@ -260,6 +263,8 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 
 	Assert((state->compression >= MIN_COMPRESSION) &&
 		   (state->compression <= MAX_COMPRESSION));
+
+	Assert(state->count >= 0);
 
 	Assert(state->ncentroids >= 0);
 	Assert(state->ncentroids <= BUFFER_SIZE(state->compression));
@@ -759,7 +764,12 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 	state->centroids[state->ncentroids].count = 1;
 	state->centroids[state->ncentroids].mean = v;
 	state->ncentroids++;
-	state->count++;
+
+	/* make sure the total does not overflow */
+	if (pg_add_s64_overflow(state->count, 1, &state->count))
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("tdigest count overflow")));
 }
 
 /*
@@ -785,7 +795,12 @@ tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 	state->centroids[state->ncentroids].count = count;
 	state->centroids[state->ncentroids].mean = mean;
 	state->ncentroids++;
-	state->count += count;
+
+	/* make sure the total does not overflow */
+	if (pg_add_s64_overflow(state->count, count, &state->count))
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("tdigest count overflow")));
 }
 
 /* allocate t-digest with enough space for a requested number of centroids */
@@ -2748,8 +2763,22 @@ tdigest_in(PG_FUNCTION_ARGS)
 						 errmsg("centroids not sorted by mean")));
 		}
 
-		/* track the total count so that we can check later */
-		total_count += count;
+		/*
+		 * track the total count so that we can check later
+		 *
+		 * Make sure the count does not overflow at any point. It could
+		 * overflow and then wrap around to the expected total, but it would
+		 * still cause an issue.
+		 */
+		if (pg_add_s64_overflow(total_count, count, &total_count))
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("tdigest count overflow")));
+
+		/*
+		 * This can't overflow - each centroid has a positive count, and if
+		 * the total_count does not overflow, this can't either.
+		 */
 		ncentroids++;
 
 		/*
@@ -2904,8 +2933,18 @@ tdigest_recv(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("count value of a centroid exceeds total count")));
 
-		/* track the total count so that we can check later */
-		total_count += digest->centroids[i].count;
+		/*
+		 * track the total count so that we can check later
+		 *
+		 * Make sure the count does not overflow at any point. It could
+		 * overflow and then wrap around to the expected total, but it would
+		 * still cause an issue.
+		 */
+		if (pg_add_s64_overflow(total_count, digest->centroids[i].count,
+								&total_count))
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("tdigest count overflow")));
 	}
 
 	/* check that the total matches */
