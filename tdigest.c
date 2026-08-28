@@ -467,57 +467,89 @@ tdigest_sort(tdigest_aggstate_t *state)
 static void
 tdigest_compact_forced(tdigest_aggstate_t *state)
 {
-	int			i;
-	int			cur = 0;	/* current output centroid */
-	int			group;		/* input centroids per output centroid */
-	int64		count = 0;
-	double		sum = 0;
-	double		mean = 0;
-	bool		same_mean = true;
+	int			cur = 0;		/* current output centroid */
+	int			group_size;		/* input centroids per output centroid */
 
 	Assert(state->ncentroids > state->compression);
 
-	group = (state->ncentroids + state->compression - 1) / state->compression;
+	group_size = (state->ncentroids + state->compression - 1) / state->compression;
 
 	/*
 	 * Groups need to be large enough for the compacted digest to fit into
 	 * the requested compression.
 	 */
-	Assert(group * state->compression >= state->ncentroids);
+	Assert(group_size * state->compression >= state->ncentroids);
 
-	for (i = 0; i < state->ncentroids; i++)
+	/* process groups of input centrois */
+	for (;;)
 	{
-		if (i % group == 0)
-		{
-			/* start of a group, reset the accumulators */
-			count = 0;
-			sum = 0;
-			mean = state->centroids[i].mean;
-			same_mean = true;
-		}
-		else if (state->centroids[i].mean != mean)
-			same_mean = false;
+		int		i;
+		int64	group_count = 0;
+		double	mean = 0;
+
+		/* range of indexes of input centroids */
+		int		start = cur * group_size;
+		int		end = Min(start + group_size, state->ncentroids);
+
+		/* stop after processing all input centroids */
+		if (start >= end)
+			break;
 
 		/*
+		 * total count of the range of input centroids
+		 *
 		 * This can't overflow - the counts add up to the total count of the
 		 * digest, which is known not to overflow. So no need to check for
 		 * overflows here.
 		 */
-		count += state->centroids[i].count;
-		sum += state->centroids[i].count * state->centroids[i].mean;
-
-		/* close the group at the boundary, or after the last centroid */
-		if (((i + 1) % group == 0) || ((i + 1) == state->ncentroids))
+		for (i = start; i < end; i++)
 		{
-			/*
-			 * If all the centroids in the group have the same mean, keep it
-			 * as it is. Recalculating it would only introduce rounding
-			 * errors, making the means drift apart over time.
-			 */
-			state->centroids[cur].count = count;
-			state->centroids[cur].mean = same_mean ? mean : (sum / count);
-			cur++;
+			group_count += state->centroids[i].count;
 		}
+
+		/*
+		 * calculate the group mean using the overflow-resistant approach
+		 *
+		 * XXX We could detect "same mean" case, similar to tdigest_compact,
+		 * and furthermore we could find runs of the same mean in the group,
+		 * and only average when the mean changes. Doesn't seem worth it,
+		 * this is a fallback anyway.
+		 *
+		 * XXX Maybe this is not entirely overflow-free? The weights are
+		 * calculated in double, so can't that lose precision and sum to a
+		 * total > 1.0? Then the result might "drift" above the valid means.
+		 * And consider two centroids with means close to DBL_MAX, with one
+		 * centroid having very high count value. Could it happen that
+		 * (mean * 0.9999 > mean) for a positive mean? Maybe it could even
+		 * overflow to +/- infinity.
+		 */
+		for (i = start; i < end; i++)
+		{
+			mean += state->centroids[i].mean * (state->centroids[i].count / (double) group_count);
+		}
+
+		/*
+		 * XXX It should not be possible to get a NaN mean. That would require
+		 * adding up -infinity and +infinity in the loop above, but the input
+		 * means should be finite (or we have bigger problem earlier). And for
+		 * the multiplication to overflow, the weight needs to be close to 1.0,
+		 * but that can happen only for a single centroid.
+		 */
+		Assert(!isnan(mean));
+
+		/*
+		 * Handle a possible overflow in the mean calculation above, by clamping
+		 * it by the min/max mean of the group we're compacting.
+		 *
+		 * XXX I'm not convinced it can happen, but better safe than sorry. We
+		 * don't want to end up storing digests with bogus means.
+		 */
+		mean = Max(Min(state->centroids[end - 1].mean, mean),
+				   state->centroids[start].mean);
+
+		state->centroids[cur].count = group_count;
+		state->centroids[cur].mean = mean;
+		cur++;
 	}
 
 	state->ncentroids = cur;
