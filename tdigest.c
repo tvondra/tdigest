@@ -811,6 +811,19 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		centroid_t *curr = NULL;
 		centroid_t *prev = NULL;
 
+		/* handle infinity/NaN values by mapping them to 0.0, 1.0 and NaN */
+		if (!isfinite(value))
+		{
+			if (isnan(value))
+				result[i] = NAN;
+			else if (value < 0)	/* -infinity */
+				result[i] = 0.0;
+			else				/* infinity */
+				result[i] = 1.0;
+
+			continue;
+		}
+
 		/*
 		 * Find the first centroid with (mean >= value), and remember the
 		 * last centroid before that - if the value is in between, we will
