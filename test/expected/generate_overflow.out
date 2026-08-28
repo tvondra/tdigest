@@ -6,7 +6,7 @@
 SELECT length(tdigest(1.0::float8, 9223372036854775807::bigint, 10000)::text);
  length 
 --------
-  69139
+  46844
 (1 row)
 
 -- the count does not have to be anywhere near the int64 limit, a large enough
@@ -14,7 +14,7 @@ SELECT length(tdigest(1.0::float8, 9223372036854775807::bigint, 10000)::text);
 SELECT length(tdigest(1.0::float8, 1000000000000000000::bigint, 1000)::text);
  length 
 --------
-   7883
+   5377
 (1 row)
 
 -- via the percentile aggregates on the value/count API

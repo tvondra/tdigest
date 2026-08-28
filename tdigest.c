@@ -20,6 +20,11 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+
+#if PG_VERSION_NUM >= 120000
+#include "utils/float.h"	/* float8out_internal */
+#endif
+
 #include "catalog/pg_type.h"
 
 PG_MODULE_MAGIC;
@@ -3100,9 +3105,13 @@ tdigest_out(PG_FUNCTION_ARGS)
 	 * the TDIGEST_STORES_MEAN flag.
 	 */
 	for (i = 0; i < digest->ncentroids; i++)
-		appendStringInfo(&str, " (%lf, " INT64_FORMAT ")",
-						 digest->centroids[i].mean,
-						 digest->centroids[i].count);
+	{
+		char *tmp = float8out_internal(digest->centroids[i].mean);
+
+		appendStringInfo(&str, " (%s, " INT64_FORMAT ")",
+						 tmp, digest->centroids[i].count);
+		pfree(tmp);
+	}
 
 	PG_RETURN_CSTRING(str.data);
 }
@@ -3279,6 +3288,7 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		double	mean = digest->centroids[i].mean;
+		char *tmp;
 
 		if (i > 0)
 			appendStringInfoString(&str, ", ");
@@ -3291,8 +3301,11 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 		if (! (digest->flags & TDIGEST_STORES_MEAN))
 			mean = mean / digest->centroids[i].count;
 
+		tmp = float8out_internal(mean);
+
 		/* don't print insignificant zeroes to the right of decimal point */
-		appendStringInfo(&str, "%g", mean);
+		appendStringInfo(&str, "%s", tmp);
+		pfree(tmp);
 	}
 
 	appendStringInfoString(&str, "], ");

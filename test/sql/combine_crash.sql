@@ -29,6 +29,9 @@ SET min_parallel_table_scan_size = 0;
 EXPLAIN (COSTS OFF)
 SELECT tdigest(d) FROM combine_crash_test;
 
+-- stabilize the output (some randomness due to parallelism)
+SET extra_float_digits = 0;
+
 SELECT tdigest(d) FROM combine_crash_test;
 
 DROP TABLE combine_crash_test;
