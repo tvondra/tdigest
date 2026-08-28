@@ -257,7 +257,7 @@ AssertCheckTDigest(tdigest_t *digest)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		Assert(digest->centroids[i].count > 0);
-		Assert(!isnan(digest->centroids[i].mean));
+		Assert(isfinite(digest->centroids[i].mean));
 		cnt += digest->centroids[i].count;
 		/* FIXME also check this does work with the scale function */
 	}
@@ -297,7 +297,7 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 	for (i = 0; i < state->ncentroids; i++)
 	{
 		Assert(state->centroids[i].count > 0);
-		Assert(!isnan(state->centroids[i].mean));
+		Assert(isfinite(state->centroids[i].mean));
 		cnt += state->centroids[i].count;
 
 		/* XXX maybe check this does work with the scale function */
