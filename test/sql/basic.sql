@@ -85,3 +85,21 @@ SELECT c AS compression,
                           0.9999999999999998::double precision)
   FROM (VALUES (10), (100), (1000), (10000)) v(c)
  GROUP BY c ORDER BY c;
+
+-- make sure finite inputs do not not produce infinite centroids
+SELECT tdigest_count(tdigest(v, 10))
+FROM (SELECT (CASE WHEN i % 2 = 0 THEN 1e308 ELSE 1e307 END)::float8 AS v
+      FROM generate_series(1,200) i) x;
+
+-- make sure finite inputs do not result in NaN means
+WITH x AS (SELECT (CASE i % 4 WHEN 0 THEN -1e308
+                              WHEN 1 THEN -1e307
+                              WHEN 2 THEN 1e307
+                              ELSE 1e308 END)::float8 AS v
+           FROM generate_series(1,400) i)
+SELECT tdigest_percentile(v,10,0.5) FROM x;
+
+-- extreme digest - make sure we can read the output we produced
+SELECT tdigest_count((SELECT tdigest(v, c, 10)
+        FROM (VALUES (1e307::float8, 1000000::bigint),
+                     (1e308::float8, 1000000::bigint)) x(v, c))::text::tdigest);

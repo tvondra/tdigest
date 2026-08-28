@@ -161,3 +161,33 @@ SELECT c AS compression,
        10000 |                  2
 (4 rows)
 
+-- make sure finite inputs do not not produce infinite centroids
+SELECT tdigest_count(tdigest(v, 10))
+FROM (SELECT (CASE WHEN i % 2 = 0 THEN 1e308 ELSE 1e307 END)::float8 AS v
+      FROM generate_series(1,200) i) x;
+ tdigest_count 
+---------------
+           200
+(1 row)
+
+-- make sure finite inputs do not result in NaN means
+WITH x AS (SELECT (CASE i % 4 WHEN 0 THEN -1e308
+                              WHEN 1 THEN -1e307
+                              WHEN 2 THEN 1e307
+                              ELSE 1e308 END)::float8 AS v
+           FROM generate_series(1,400) i)
+SELECT tdigest_percentile(v,10,0.5) FROM x;
+   tdigest_percentile    
+-------------------------
+ 1.8260099550716747e+306
+(1 row)
+
+-- extreme digest - make sure we can read the output we produced
+SELECT tdigest_count((SELECT tdigest(v, c, 10)
+        FROM (VALUES (1e307::float8, 1000000::bigint),
+                     (1e308::float8, 1000000::bigint)) x(v, c))::text::tdigest);
+ tdigest_count 
+---------------
+       2000000
+(1 row)
+

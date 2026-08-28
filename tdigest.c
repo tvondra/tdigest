@@ -459,6 +459,10 @@ tdigest_sort(tdigest_aggstate_t *state)
  *
  * Expects the centroids to be already sorted. We only call this from
  * tdigest_compact(), which does tdigest_sort() at the beginning.
+ *
+ * XXX At this point this is likely dead code, because the regular compaction
+ * in tdigest_compact should always make progress and free some space. But
+ * that needs more consideration/verification.
  */
 static void
 tdigest_compact_forced(tdigest_aggstate_t *state)
@@ -627,16 +631,42 @@ tdigest_compact(tdigest_aggstate_t *state)
 			 */
 			if (state->centroids[cur].mean != state->centroids[i].mean)
 			{
-				double	sum;
+				double	mean;
 				int64	count;
 
-				sum = state->centroids[i].count * state->centroids[i].mean;
-				sum += state->centroids[cur].count * state->centroids[cur].mean;
-
+				/* count can't overflow int64 (total is within INT64_MAX) */
 				count = state->centroids[i].count;
 				count += state->centroids[cur].count;
 
-				state->centroids[cur].mean = (sum / count);
+				/* calculate the mean in a way that should not overflow */
+				mean = state->centroids[i].mean * (state->centroids[i].count / (double) count);
+				mean += state->centroids[cur].mean * (state->centroids[cur].count / (double) count);
+
+				/* should not happen for finite inputs */
+				Assert(!isnan(mean));
+
+				/*
+				 * paranoia: clamp to not underflow/overflow the inputs
+				 *
+				 * We may be walking the centroids forward or backwards, which
+				 * determines whether (cur < i) or (cur > i).
+				 */
+				if (step > 0)
+				{
+					Assert(cur < i);
+
+					mean = Min(Max(state->centroids[cur].mean, mean),
+							   state->centroids[i].mean);
+				}
+				else
+				{
+					Assert(cur > i);
+
+					mean = Min(Max(state->centroids[i].mean, mean),
+							   state->centroids[cur].mean);
+				}
+
+				state->centroids[cur].mean = mean;
 			}
 
 			/* XXX Do this after possibly recalculating the mean. */
