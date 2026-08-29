@@ -1842,6 +1842,21 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 			 (long long) count);
 
 	/*
+	 * When adding too many values (than would fit into an empty buffer, and
+	 * thus likely causing too many compactions), we instead add them as
+	 * properly sized centroids.
+	 *
+	 * This is much faster, because the centroids can be generated in one go,
+	 * so there are only very few compactions.
+	 */
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		tdigest_add_generated(state, PG_GETARG_FLOAT8(1), count);
+
+		count = 0;
+	}
+
+	/*
 	 * Add the values one by one, not as one large centroid with the count.
 	 * We do it like this to allow proper compaction and sizing of centroids,
 	 * otherwise we might end up with oversized centroid on the tails etc.
@@ -1987,6 +2002,21 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 	if (count <= 0)
 		elog(ERROR, "invalid count value %lld, must be a positive value",
 			 (long long) count);
+
+	/*
+	 * When adding too many values (than would fit into an empty buffer, and
+	 * thus likely causing too many compactions), we instead add them as
+	 * properly sized centroids.
+	 *
+	 * This is much faster, because the centroids can be generated in one go,
+	 * so there are only very few compactions.
+	 */
+	if (count > BUFFER_SIZE(state->compression))
+	{
+		tdigest_add_generated(state, PG_GETARG_FLOAT8(1), count);
+
+		count = 0;
+	}
 
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
@@ -3277,7 +3307,7 @@ tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 {
-	int		i;
+	int64	i;
 	int64	count;
 	tdigest_aggstate_t *state;
 
