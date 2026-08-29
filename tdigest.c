@@ -1455,12 +1455,19 @@ tdigest_add_generated(tdigest_aggstate_t *state, double value, int64 count)
 	{
 		int64	proposed_count;
 		double	q0;
-		double	a, b, c;
+		double	b, c, d;
 		double	r1, r2;
 
-		/* solving z <= q0 * (1 - q0) is trivial */
+		/*
+		 * Solving z <= q0 * (1 - q0) is trivial.
+		 *
+		 * Just like in tdigest_compact, we must not calculate (1 - q0) by
+		 * subtracting the two doubles - for q0 close to 1 that cancels out all
+		 * the significant digits. We already have count_remaining, which is
+		 * exactly (count - count_so_far), so use that remainder instead.
+		 */
 		q0 = count_so_far / (double) count;
-		r1 = (q0 * (1 - q0) / normalizer);
+		r1 = (q0 * (count_remaining / (double) count) / normalizer);
 
 		/*
 		 * Solve z <= q2 * (1 - q2) as a quadratic equation. The inequatily we
@@ -1468,37 +1475,61 @@ tdigest_add_generated(tdigest_aggstate_t *state, double value, int64 count)
 		 *
 		 *	0 <= a * x^2 + b * x + c
 		 *
-		 * with these coefficients.
+		 * with (a = -1) and the following coefficients.
 		 *
 		 * XXX The counts may be very high values (int64), so we need to be
 		 * careful to prevent overflows by doing everything with double.
+		 *
+		 * XXX c is mathematically (count_so_far * (count - count_so_far)), so
+		 * calculate it as a plain product of the two exact integers. The
+		 * expanded form (count_so_far * count - count_so_far * count_so_far)
+		 * is a difference of two huge and nearly equal values, which loses
+		 * almost all the precision.
 		 */
-		a = -1;
 		b = ((double) count - 2 * (double) count_so_far - (double) count * (double) count * normalizer);
-		c = ((double) count_so_far * (double) count - (double) count_so_far * (double) count_so_far);
+		c = ((double) count_so_far * (double) count_remaining);
 
 		/*
 		 * As this is an "upside down" parabola, the values between the roots
-		 * are positive - we're looking for the largest of the two values.
+		 * are positive - we're looking for the larger of the two roots, which
+		 * for a = -1 is (b + sqrt(b*b + 4*c)) / 2.
 		 *
-		 * XXX Tthe first root should be the higher one, because sqrt is
-		 * always positive, so (-b - sqrt()) is smaller and negative, and
-		 * we're dividing by negative value.
+		 * XXX Evaluating that expression directly is only safe for b >= 0.
+		 * For b < 0 the sqrt is very close to -b, so the addition cancels out
+		 * all the significant digits (and often yields exactly zero, forcing
+		 * us to emit a single-item centroid). Use the equivalent "conjugate"
+		 * form 2*c / (sqrt(b*b + 4*c) - b) in that case, which only ever adds
+		 * values of the same sign. Both branches are hit in practice - b is
+		 * positive whenever compression < 2*pi*ln(count).
+		 *
+		 * XXX c is never negative, so the discriminant is a sum of two
+		 * non-negative values and the sqrt is always well defined.
 		 */
-		r2 = Max((-b - sqrt(b * b - 4 * a * c)) / (2 * a),
-				 (-b + sqrt(b * b - 4 * a * c)) / (2 * a));
+		d = sqrt(b * b + 4 * c);
 
-		/* We need to meet both conditions, so use the smaller solution. */
-		proposed_count = floor(Min(r1, r2));
+		if (b >= 0)
+			r2 = (b + d) / 2;
+		else
+			r2 = (2 * c) / (d - b);
+
+		/*
+		 * paranoia: We should not be dealing withh NaN values here. Crash in
+		 * debug build, double_to_int64 will mitigate it in regular builds.
+		 */
+		Assert(isfinite(r1) && isfinite(r2));
+
+		/*
+		 * We need to meet both conditions, so use the smaller solution. The
+		 * value may be large (or NaN), so clamp it - we must not add more
+		 * than what remains anyway.
+		 */
+		proposed_count = double_to_int64(floor(Min(r1, r2)), count_remaining);
 
 		/*
 		 * It's possible to get very low values on the tails, but we must add
 		 * at least something, otherwise we'd get infinite loops.
 		 */
 		proposed_count = Max(proposed_count, 1);
-
-		/* and we must not add more than what remains */
-		proposed_count = Min(proposed_count, count_remaining);
 
 		tdigest_add_centroid(state, value, proposed_count);
 

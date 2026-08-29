@@ -26,8 +26,8 @@ SELECT tdigest_percentile(1.0::float8, 9223372036854775807::bigint, 10000, 0.5);
 
 -- via the trimmed aggregates on the value/count API
 SELECT tdigest_avg(1.0::float8, 9223372036854775807::bigint, 10000, 0.1, 0.9);
-    tdigest_avg     
---------------------
- 0.9999999999999999
+ tdigest_avg 
+-------------
+           1
 (1 row)
 
