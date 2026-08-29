@@ -2563,6 +2563,10 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 
 	/* parse the second digest */
 	digest = PG_GETARG_TDIGEST(1);
+
+	/* make sure we get a digest with the new format */
+	digest = tdigest_update_format(digest);
+
 	AssertCheckTDigest(digest);
 
 	/* copy data from the tdigest into the aggstate */
@@ -3442,6 +3446,9 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 
 	AssertCheckTDigest(digest);
 
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
+
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
 						digest->count, low, high, &sum, &count);
 
@@ -3465,6 +3472,9 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
 	int64		count;
 
 	AssertCheckTDigest(digest);
+
+	/* make sure we get digest with the new format */
+	digest = tdigest_update_format(digest);
 
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
 						digest->count, low, high, &sum, &count);
