@@ -3914,16 +3914,100 @@ double_to_int64(double value, int64 maxvalue)
 }
 
 /*
+ * How many items of a centroid to use for the aggregate?
+ *
+ * Calculates the number of items of a centroid that fall into the
+ * [count_low, count_high) range of items, with count_done items preceding
+ * the centroid.
+ *
+ * The centroids in the middle of the range are included as a whole, but the
+ * first and last one may be cut in half by the boundary, in which case only
+ * part of the centroid is included.
+ */
+static int64
+tdigest_trimmed_count(centroid_t *centroid, int64 count_done,
+					  int64 count_low, int64 count_high)
+{
+	int64	count_add;
+
+	/* Assume the whole centroid falls into the range. */
+	count_add = centroid->count;
+
+	/*
+	 * If we haven't reached the low threshold yet, skip appropriate
+	 * part of the centroid.
+	 *
+	 * (count_low - count_done) is how far we're from the low threshold, so a
+	 * positive value is how many items we still need to "skip" (capped to
+	 * size of the centroid). A negative value means we're past the low
+	 * threshold, and the centroid may be in the range (unless it's past the
+	 * high threshold too).
+	 */
+	count_add -= Min(Max(0, count_low - count_done),
+					 count_add);
+
+	/*
+	 * If we have reached the upper threshold, ignore the overflowing
+	 * part of the centroid.
+	 *
+	 * The items we still have start at count_low (or at the beginning of
+	 * the centroid, whichever comes later), not at count_done - the part
+	 * below count_low was already removed by the preceding step. Don't
+	 * count that part a second time, i.e. don't start at the beginning
+	 * of the centroid.
+	 */
+	count_add = Min(Max(0, count_high - Max(count_done, count_low)),
+					count_add);
+
+	return count_add;
+}
+
+/*
  * Calculate trimmed aggregates from centroids.
+ *
+ * Returns the trimmed mean, the trimmed sum, and the number of items in the
+ * trimmed range.
+ *
+ * The obvious way to calculate the mean is to add (mean * count) for all the
+ * centroids in the range, and then divide the sum by the number of items.
+ * That however may overflow to infinity, even when the mean is perfectly
+ * representable - the average of 1e307 values is 1e307, but the sum of many
+ * such values is not. And once one partial sum saturates to +Infinity and
+ * another one to -Infinity, the accumulator turns into NaN.
+ *
+ * The mean of a digest is always within the range of the centroid means, so
+ * it should never overflow. We just have to calculate it in a way that does
+ * not overflow either, i.e. as a weighted average of the centroid means,
+ * similarly to how tdigest_compact() does when merging centroids
+ *
+ *     mean += centroids[i].mean * (count_add / total_count)
+ *
+ * The weights are non-negative and add up to 1.0 (albeit maybe not perfectly,
+ * due to limited precision of float8), so the running mean stays within the
+ * range of the centroid means.
+ *
+ * This needs the total number of items in the range up front, so we walk the
+ * centroids twice. The first pass determines the first and last centroid of
+ * the range, and adds up the (int64) counts - that can't overflow, as the
+ * counts add up to the total count of the digest.
+ *
+ * The sum, on the other hand, may legitimately exceed the float8 range, so we
+ * keep accumulating it the simple way (which is also exact), and leave it to
+ * the caller to complain about the overflow.
  */
 static void
 tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
 					int64 count, double low, double high,
-					double *sump, int64 *countp)
+					double *meanp, double *sump, int64 *countp)
 {
 	int		i;
-	double	sum = 0;
+	int		first = 0,
+			last = -1;
+	double	mean = 0,
+			sum = 0;
 	int64	count_done = 0,
+			count_first = 0,
+			count_total = 0,
 			count_low,
 			count_high;
 
@@ -3934,48 +4018,111 @@ tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
 	/* verify sane range */
 	Assert((count_low <= count_high) && (0 <= count_low)  && (count_high <= count));
 
-	count = 0;
+	*meanp = 0;
+	*sump = 0;
+	*countp = 0;
+
+	/*
+	 * Find the first and last centroid of the range, and the number of items
+	 * the range contains.
+	 */
 	for (i = 0; i < ncentroids; i++)
 	{
-		int64	count_add = 0;
+		int64	count_add = tdigest_trimmed_count(&centroids[i], count_done,
+												  count_low, count_high);
 
-		/* Assume the whole centroid falls into the range. */
-		count_add = centroids[i].count;
+		if (count_add > 0)
+		{
+			/* remember where the range starts, including the item offset */
+			if (last == -1)
+			{
+				first = i;
+				count_first = count_done;
+			}
 
-		/*
-		 * If we haven't reached the low threshold yet, skip appropriate
-		 * part of the centroid.
-		 */
-		count_add -= Min(Max(0, count_low - count_done),
-						 count_add);
-
-		/*
-		 * If we have reached the upper threshold, ignore the overflowing
-		 * part of the centroid.
-		 *
-		 * The items we still have start at count_low (or at the beginning of
-		 * the centroid, whichever comes later), not at count_done - the part
-		 * below count_low was already removed by the preceding step. Don't
-		 * count that part a second time, i.e. don't start at the beginning
-		 * of the centroid.
-		 */
-		count_add = Min(Max(0, count_high - Max(count_done, count_low)),
-						 count_add);
+			last = i;
+			count_total += count_add;
+		}
 
 		/* consider the whole centroid processed */
 		count_done += centroids[i].count;
-
-		/* increment the sum / count */
-		sum += centroids[i].mean * count_add;
-		count += count_add;
 
 		/* break once we cross the high threshold */
 		if (count_done >= count_high)
 			break;
 	}
 
+	/* no items in the range, the callers return NULL in that case */
+	if (count_total == 0)
+		return;
+
+	/* now walk just the centroids in the range, and calculate mean / sum */
+	count_done = count_first;
+
+	for (i = first; i <= last; i++)
+	{
+		int64	count_add = tdigest_trimmed_count(&centroids[i], count_done,
+												  count_low, count_high);
+
+		/* consider the whole centroid processed */
+		count_done += centroids[i].count;
+
+		/* increment the mean / sum */
+		mean += centroids[i].mean * (count_add / (double) count_total);
+		sum += centroids[i].mean * count_add;
+
+		Assert(!isnan(mean));
+	}
+
+	// Assert((centroids[first].mean <= mean) && (mean <= centroids[last].mean));
+
+	/*
+	 * paranoia: handle possible overflow of the mean by clamping it to the
+	 * valid range using the mean of the first/last centroid
+	 *
+	 * Maybe overflow is not the right term, but what can happen easily is
+	 * the value "drifting" outside the valid range with very high counts,
+	 * even if the centroids have the exact same mean. For example with
+	 * centroids like (1, 22522773787004704) and (1, 22627252715671912) the
+	 * mean will drift to 1.0000000000000002.
+	 *
+	 * To confirm, uncomment the assert above, and rerun tests. There's a
+	 * query that triggers it.
+	 */
+	mean = Max(Min(centroids[last].mean, mean),
+			   centroids[first].mean);
+
+	*meanp = mean;
 	*sump = sum;
-	*countp = count;
+	*countp = count_total;
+}
+
+/*
+ * Return the trimmed sum, and complain if it overflowed - just like the
+ * regular float8 arithmetic does, instead of silently returning infinity.
+ *
+ * Infinity is a perfectly valid result if some of the input values were
+ * infinite, in which case the mean is infinite too.
+ *
+ * XXX This is what float8_mul() does, but that's only available on PG12+.
+ */
+static double
+tdigest_trimmed_sum_value(double sum, double mean, int64 count)
+{
+	/*
+	 * The accumulator may overflow even when the sum itself is perfectly
+	 * representable (e.g. with values of the opposite sign). The mean can't
+	 * overflow, so recalculate the sum from that.
+	 */
+	if (!isfinite(sum) && isfinite(mean))
+		sum = mean * (double) count;
+
+	if (isinf(sum) && !isinf(mean))
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("value out of range: overflow")));
+
+	return sum;
 }
 
 
@@ -3988,6 +4135,7 @@ tdigest_trimmed_avg(PG_FUNCTION_ARGS)
 {
 	tdigest_aggstate_t	   *state;
 	MemoryContext	aggcontext;
+	double			mean;
 	double			sum;
 	int64			count;
 
@@ -4006,10 +4154,10 @@ tdigest_trimmed_avg(PG_FUNCTION_ARGS)
 
 	tdigest_trimmed_agg(state->centroids, state->ncentroids,
 						state->count, state->trim_low, state->trim_high,
-						&sum, &count);
+						&mean, &sum, &count);
 
 	if (count > 0)
-		PG_RETURN_FLOAT8(sum / count);
+		PG_RETURN_FLOAT8(mean);
 
 	PG_RETURN_NULL();
 }
@@ -4023,6 +4171,7 @@ tdigest_trimmed_sum(PG_FUNCTION_ARGS)
 {
 	tdigest_aggstate_t	   *state;
 	MemoryContext	aggcontext;
+	double			mean;
 	double			sum;
 	int64			count;
 
@@ -4041,10 +4190,10 @@ tdigest_trimmed_sum(PG_FUNCTION_ARGS)
 
 	tdigest_trimmed_agg(state->centroids, state->ncentroids,
 						state->count, state->trim_low, state->trim_high,
-						&sum, &count);
+						&mean, &sum, &count);
 
 	if (count > 0)
-		PG_RETURN_FLOAT8(sum);
+		PG_RETURN_FLOAT8(tdigest_trimmed_sum_value(sum, mean, count));
 
 	PG_RETURN_NULL();
 }
@@ -4059,6 +4208,7 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 	double		low = PG_GETARG_FLOAT8(1);
 	double		high = PG_GETARG_FLOAT8(2);
 
+	double		mean;
 	double		sum;
 	int64		count;
 
@@ -4070,10 +4220,10 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 	digest = tdigest_update_format(digest);
 
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
-						digest->count, low, high, &sum, &count);
+						digest->count, low, high, &mean, &sum, &count);
 
 	if (count > 0)
-		PG_RETURN_FLOAT8(sum);
+		PG_RETURN_FLOAT8(tdigest_trimmed_sum_value(sum, mean, count));
 
 	PG_RETURN_NULL();
 }
@@ -4088,6 +4238,7 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
 	double		low = PG_GETARG_FLOAT8(1);
 	double		high = PG_GETARG_FLOAT8(2);
 
+	double		mean;
 	double		sum;
 	int64		count;
 
@@ -4099,10 +4250,10 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
 	digest = tdigest_update_format(digest);
 
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
-						digest->count, low, high, &sum, &count);
+						digest->count, low, high, &mean, &sum, &count);
 
 	if (count > 0)
-		PG_RETURN_FLOAT8(sum / count);
+		PG_RETURN_FLOAT8(mean);
 
 	PG_RETURN_NULL();
 }

@@ -14,4 +14,8 @@ SELECT length(tdigest(1.0::float8, 1000000000000000000::bigint, 1000)::text);
 SELECT tdigest_percentile(1.0::float8, 9223372036854775807::bigint, 10000, 0.5);
 
 -- via the trimmed aggregates on the value/count API
-SELECT tdigest_avg(1.0::float8, 9223372036854775807::bigint, 10000, 0.1, 0.9);
+--
+-- The exact value depends on where exactly the centroid boundaries end up,
+-- so don't compare it to an exact value - it'd be a 1 ULP difference away
+-- from failing. It just has to be (close to) 1.0, not 0.9 or NULL.
+SELECT abs(tdigest_avg(1.0::float8, 9223372036854775807::bigint, 10000, 0.1, 0.9) - 1.0) < 1e-12;
