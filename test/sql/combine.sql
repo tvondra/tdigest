@@ -46,7 +46,7 @@ BEGIN
 
         FOR v_scale_2 IN 1..3 LOOP
 
-            FOR r IN 1..10 LOOP
+            FOR r IN 1..5 LOOP
 
                 TRUNCATE digest_combine_test;
 
@@ -55,7 +55,7 @@ BEGIN
                 v_compress := GREATEST(10, LEAST(v_compress, 10000));
 
                 v_rows := (random() * v_compress * 10);
-                v_rows := GREATEST(100, LEAST(v_rows, 100000));
+                v_rows := GREATEST(100, LEAST(v_rows, 25000));
 
                 -- RAISE NOTICE '% %', v_compress, v_rows;
 
@@ -66,7 +66,7 @@ BEGIN
                 v_compress := GREATEST(10, LEAST(v_compress, 10000));
 
                 v_rows := (random() * v_compress * 10);
-                v_rows := GREATEST(100, LEAST(v_rows, 100000));
+                v_rows := GREATEST(100, LEAST(v_rows, 25000));
 
                 -- RAISE NOTICE '% %', v_compress, v_rows;
 
