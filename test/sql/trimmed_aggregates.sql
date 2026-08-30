@@ -140,3 +140,83 @@ WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
 SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
 SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
+
+-- check tdigest_trimmed_agg() calculates and aggregates the right range
+-- of centroids to process, especially when [count_low, count_high) falls
+-- into a single centroid
+--
+-- A digest holding a single centroid, i.e. 100 items that all have the value
+-- 10. The trimmed sum then has to be exactly (10 * number of items in the
+-- range) for every range, which makes the expected values easy to derive
+--
+-- count_low = floor(100 * lo) and count_high = ceil(100 * hi).
+SELECT lo, hi,
+       tdigest_digest_sum(d, lo, hi) AS trimmed_sum,
+       10 * (ceil(100::double precision * hi) - floor(100::double precision * lo)) AS expected_sum,
+       tdigest_digest_avg(d, lo, hi) AS trimmed_avg
+  FROM (SELECT 'flags 1 count 100 compression 10 centroids 1 (10, 100)'::tdigest) t(d),
+       (VALUES (0.0::double precision,  1.0::double precision),
+               (0.0::double precision,  0.5::double precision),
+               (0.5::double precision,  1.0::double precision),
+               (0.4::double precision,  0.5::double precision),
+               (0.1::double precision,  0.2::double precision),
+               (0.25::double precision, 0.75::double precision)) v(lo, hi)
+ ORDER BY lo, hi;
+
+-- The same through the aggregates, to cover tdigest_trimmed_sum() and
+-- tdigest_trimmed_avg() too. All the input values are the same, so the digest
+-- is a single centroid no matter how the compaction merges the centroids.
+SELECT tdigest(10.0::double precision, 10) AS digest
+  FROM generate_series(1, 100);
+
+SELECT tdigest_sum(10.0::double precision, 10, 0.4, 0.5) AS agg_sum,
+       tdigest_avg(10.0::double precision, 10, 0.4, 0.5) AS agg_avg
+  FROM generate_series(1, 100);
+
+-- Now the same thing, but with more than one centroid, covering a range
+-- inside the middle centroid, a range straddling a centroid boundary, a
+-- range inside the last centroid, and the untrimmed case.
+SELECT lo, hi,
+       tdigest_digest_sum(d, lo, hi) AS trimmed_sum,
+       tdigest_digest_avg(d, lo, hi) AS trimmed_avg
+  FROM (SELECT 'flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest) t(d),
+       (VALUES (0.4::float8,  0.5::float8),
+               (0.35::float8, 0.45::float8),
+               (0.45::float8, 0.55::float8),
+               (0.3::float8,  0.6::float8),
+               (0.6::float8,  0.9::float8),
+               (0.0::float8,  1.0::float8)) v(lo, hi)
+ ORDER BY lo, hi;
+
+-- Exhaustive cross-check of every trimmed range against a brute-force
+-- expansion of the same digest into individual items. Expected to return no
+-- rows; any row is a range where the trimmed sum disagrees with the sum of
+-- the items the range is supposed to cover.
+WITH digest(d) AS (
+  SELECT 'flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest
+),
+-- the individual items of the digest, with their 0-based index
+items(idx, val) AS (
+  SELECT c.first_idx + g - 1, c.mean
+    FROM (VALUES (0, 10.0::float8, 10),
+                 (10, 20.0::float8, 5),
+                 (15, 30.0::float8, 15)) c(first_idx, mean, cnt),
+         generate_series(1, c.cnt) g
+),
+ranges(lo, hi) AS (
+  SELECT (a / 20.0)::float8, (b / 20.0)::float8
+    FROM generate_series(0, 20) a, generate_series(0, 20) b
+   WHERE a < b
+)
+SELECT r.lo, r.hi,
+       tdigest_digest_sum(digest.d, r.lo, r.hi) AS trimmed_sum,
+       (SELECT sum(i.val) FROM items i
+         WHERE i.idx >= floor(30::float8 * r.lo)
+           AND i.idx <  ceil(30::float8 * r.hi)) AS expected_sum
+  FROM ranges r, digest
+ WHERE tdigest_digest_sum(digest.d, r.lo, r.hi)
+       IS DISTINCT FROM
+       (SELECT sum(i.val) FROM items i
+         WHERE i.idx >= floor(30::float8 * r.lo)
+           AND i.idx <  ceil(30::float8 * r.hi))
+ ORDER BY r.lo, r.hi;

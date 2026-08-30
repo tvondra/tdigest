@@ -3347,8 +3347,14 @@ tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
 		/*
 		 * If we have reached the upper threshold, ignore the overflowing
 		 * part of the centroid.
+		 *
+		 * The items we still have start at count_low (or at the beginning of
+		 * the centroid, whichever comes later), not at count_done - the part
+		 * below count_low was already removed by the preceding step. Don't
+		 * count that part a second time, i.e. don't start at the beginning
+		 * of the centroid.
 		 */
-		count_add = Min(Max(0, count_high - count_done),
+		count_add = Min(Max(0, count_high - Max(count_done, count_low)),
 						 count_add);
 
 		/* consider the whole centroid processed */
