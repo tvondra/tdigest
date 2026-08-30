@@ -130,3 +130,34 @@ SELECT tdigest('Infinity'::float8, 200::bigint, 10);
 ERROR:  all values added to t-digest must be finite
 SELECT tdigest('-Infinity'::float8, 200::bigint, 10);
 ERROR:  all values added to t-digest must be finite
+-- t-digest extreme enough for the percentile to fall to the right of the last centroid
+SELECT tdigest_percentile('flags 1 count 4611686018427388928 compression 10 centroids 3 (1, 4611686018427387904) (2, 512) (3, 512)'::tdigest,
+                          0.9999999999999998::double precision);
+ tdigest_percentile 
+--------------------
+                  2
+(1 row)
+
+-- same centroid, but the percentile falls in between the second and third centroid
+SELECT tdigest_percentile('flags 1 count 4611686018427388928 compression 10 centroids 3 (1, 4611686018427387904) (2, 512) (3, 512)'::tdigest,
+                          ARRAY[0.0, 0.5, 0.9999999999999996, 1.0]::double precision[]);
+ tdigest_percentile 
+--------------------
+ {1,1,2,3}
+(1 row)
+
+-- the same digest with other compressions, to show the compression does not affect this
+-- the compaction leaves the digest alone for all compression values
+SELECT c AS compression,
+       tdigest_percentile(('flags 1 count 4611686018427388928 compression ' || c  || ' centroids 3 (1, 4611686018427387904) (2, 512) (3, 512)')::tdigest,
+                          0.9999999999999998::double precision)
+  FROM (VALUES (10), (100), (1000), (10000)) v(c)
+ GROUP BY c ORDER BY c;
+ compression | tdigest_percentile 
+-------------+--------------------
+          10 |                  2
+         100 |                  2
+        1000 |                  2
+       10000 |                  2
+(4 rows)
+

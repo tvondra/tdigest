@@ -217,6 +217,7 @@ Datum tdigest_digest_avg(PG_FUNCTION_ARGS);
 
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
+static int64 double_to_int64(double value, int64 maxvalue);
 
 #if PG_VERSION_NUM < 150000
 /*
@@ -694,15 +695,37 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 	 */
 	tdigest_compact(state);
 
+	/*
+	 * Determine the two centroids the quantile lies between, and calculate the
+	 * estimate using linear interpolation.
+	 *
+	 * XXX All of this works fine for t-digests with non-extreme counts, up to
+	 * about 2^52. At that point the double precision ULP gets > 1.0, and some
+	 * of the calculations here start misbehaving a little. For example the
+	 * (count * 0.9999...) can get higher than count, etc. We try to prevent
+	 * obviously bogus results, but it's futile to try to fix this perfectly.
+	 * The cases are extremely rare, and we're calculating estimates anyway.
+	 * If we wanted to fix this properly, we'd need to use some sort of large
+	 * float data type (there seems to be "long double" and binary128).
+	 *
+	 * XXX The rounding/precision issues affect only accuracy of results, not
+	 * correctness of the code. For example, it must not result in OOB access
+	 * to bogus centroids etc.
+	 */
 	for (i = 0; i < state->npercentiles; i++)
 	{
-		double	count;
-		double	delta;
-		double	goal = (state->percentiles[i] * state->count);
-		bool	on_the_right;
-		centroid_t *prev, *next;
-		centroid_t *c = NULL;
-		double	slope;
+		int64	count;
+		double	goal = (state->count * state->percentiles[i]);
+		bool	is_before = false;
+
+		centroid_t *c = NULL,
+				   *prev,
+				   *next;
+
+		/* integer and fractional parts of half-centroids before/after */
+		double	distance,
+				total_distance,
+				q;
 
 		/* first centroid for percentile 1.0 */
 		if (state->percentiles[i] == 0.0)
@@ -720,63 +743,139 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 			continue;
 		}
 
-		/* walk throught the centroids and count number of items */
+		/*
+		 * Walk the centroids and calculate running sum of counts. Stop before
+		 * adding a centroid that would exceed the goal - we don't know if the
+		 * goal falls before/after the mean yet.
+		 *
+		 * FIXME There can be multiple centroids with the same mean, in which
+		 * case we should use the total count for all of them. Not sure how
+		 * likely it's to have centroids with exactly the same mean. But it
+		 * might affect the interpolation later.
+		 */
 		count = 0;
 		for (j = 0; j < state->ncentroids; j++)
 		{
 			c = &state->centroids[j];
 
-			/* have we exceeded the expected count? */
-			if (count + c->count > goal)
+			/* Adding the centroid would exceeded the goal, so stop. */
+			if (count + c->count >= goal)
 				break;
 
-			/* account for the centroid */
 			count += c->count;
 		}
 
-		delta = goal - count - (c->count / 2.0);
+		/*
+		 * Adding the whole entroid would exceed the goal, but we don't know
+		 * on which side of the mean the value lies yet. We might have also
+		 * hit the mean exactly. Let's figure that out.
+		 *
+		 * This will determine which centroids we'll look at for linear
+		 * interpolation (previous/following one) later.
+		 *
+		 * We know centroid "c" exceeds the goal, but did we hit the mean,
+		 * or are we to the left/right? We assume half the items is before
+		 * the mean, half after.
+		 */
+		is_before = goal < (count + c->count / 2.0);
 
 		/*
-		 * double arithmetics, so don't compare to 0.0 direcly, it's enough
-		 * to be "close enough"
+		 * Pick centroids for linear interpolation, depending on which side
+		 * of the "current" centroid we fell on. Either use the previous or
+		 * the following centroid.
+		 *
+		 * For extreme percentile values (or somehow weird digests) we can
+		 * end up before/after the last centroid, in which case we need to
+		 * be careful to not access OOB.
 		 */
-		if (fabs(delta) < 0.000000001)
+		if (is_before)
 		{
-			result[i] = c->mean;
-			continue;
-		}
+			/* no previous centroid, use the current (first) one */
+			if (j == 0)
+			{
+				result[i] = c->mean;
+				continue;
+			}
 
-		on_the_right = (delta > 0.0);
+			prev = &state->centroids[j - 1];
+			next = &state->centroids[j];
 
-		/*
-		 * for extreme percentiles we might end on the right of the last node or on the
-		 * left of the first node, instead of interpolating we return the mean of the node
-		 */
-		if ((on_the_right && (j+1) >= state->ncentroids) ||
-			(!on_the_right && (j-1) < 0))
-		{
-			result[i] = c->mean;
-			continue;
-		}
+			Assert(next == c);
 
-		if (on_the_right)
-		{
-			prev = &state->centroids[j];
-			AssertBounds(j+1, state->ncentroids);
-			next = &state->centroids[j+1];
-			count += (prev->count / 2.0);
+			/*
+			 * Undo the centroid already added above (count is integer,
+			 * so we can't undo half of it without possibly losing half
+			 * of the count). We'll deal with that later.
+			 */
+			count -= prev->count;
 		}
 		else
 		{
-			AssertBounds(j-1, state->ncentroids);
-			prev = &state->centroids[j-1];
-			next = &state->centroids[j];
-			count -= (prev->count / 2.0);
+			/* no following centroid, use the current (last) one */
+			if (j == (state->ncentroids - 1))
+			{
+				result[i] = c->mean;
+				continue;
+			}
+
+			prev = &state->centroids[j];
+			next = &state->centroids[j + 1];
+
+			Assert(prev == c);
 		}
 
-		slope = (next->mean - prev->mean) / (next->count / 2.0 + prev->count / 2.0);
+		/* paranoia: make sure the prev/next centroids are valid */
+		Assert(prev >= &state->centroids[0]);
+		Assert(next <= &state->centroids[state->ncentroids - 1]);
+		Assert((prev + 1) == next);
 
-		result[i] = prev->mean + slope * (goal - count);
+		/*
+		 * Now we know the quantile lies somewhere between the centroids,
+		 * we need to calculate the correct value. (We know it's not at
+		 * either mean, that's what the above branches are for.)
+		 *
+		 * We will calculate the distance from the first mean, the total
+		 * distance between the means. And we'll do linear interpolation.
+		 */
+
+		/* distance to the first mean (of the previous centroid) */
+		distance = (double) (goal - count) - prev->count / 2.0;
+
+		/* distance between the means of the two centroids */
+		total_distance = (prev->count / 2.0) + (next->count / 2.0);
+
+		/*
+		 * We should be "to the right" the first centroid, and should not
+		 * be so far ahead to exceed the next one.
+		 *
+		 * XXX We can get equalities in case we hit a mean of one of the
+		 * centroids exactly, or when the centroids have very high count
+		 * (in the area where double ULP > 1.0).
+		 *
+		 * XXX It's possibly this gets hit even when everything is correct,
+		 * due to the rounding. I'm leaving it here to catch such issues
+		 * and investigate that, instead of papering over it by the clamps.
+		 */
+		Assert((distance >= 0) && (distance <= total_distance));
+
+		/*
+		 * Clamp distance to [0, total_distance], to mitigate unexpected
+		 * rouding / precision errors in production builds without asserts.
+		 */
+		distance = Max(0.0, Min(total_distance, distance));
+
+		/*
+		 * the actual linear interpolation, using the formula
+		 *
+		 *   (1 - q) * v1 + q * v2
+		 *
+		 * XXX The "q" should not overflow/underflow or misbehave in other
+		 * ways, as distance is in [0.0, total_distance]. But clamp anyway,
+		 * to deal with unexpected rounding / precision errors.
+		 */
+		q = Max(0.0, Min(1.0, distance / total_distance));
+
+		result[i] = (1 - q) * prev->mean + q * next->mean;
 	}
 }
 
