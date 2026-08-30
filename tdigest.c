@@ -2235,6 +2235,13 @@ tdigest_serial(PG_FUNCTION_ARGS)
 	PG_RETURN_POINTER(v);
 }
 
+/*
+ * XXX Unlike the other "input" functions (tdigest_in/tdigest_recv), this
+ * does not validate the digest at all. We assume this function is used only
+ * on data we created in the same process (possibly in a parallel worker),
+ * and not on untrusted values controlled by the user (which is why the other
+ * input functions need the validation).
+ */
 Datum
 tdigest_deserial(PG_FUNCTION_ARGS)
 {
