@@ -1,0 +1,3 @@
+test: init
+test: cast incremental conversions combine_crash
+test: copy parallel_query value_count_api trimmed_aggregates combine random
