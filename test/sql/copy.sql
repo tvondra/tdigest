@@ -32,3 +32,6 @@ SELECT
   COUNT(*) AS count_all,
   COUNT(CASE WHEN (src.s::text != dst.s::text) THEN 1 ELSE NULL END) AS count_mismatching
 FROM tdigest_src src JOIN tdigest_dst dst ON (src.id = dst.id);
+
+DROP TABLE tdigest_src;
+DROP TABLE tdigest_dst;

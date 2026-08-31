@@ -33,3 +33,5 @@ FROM tdigest_src src JOIN tdigest_dst dst ON (src.id = dst.id);
        200 |                 0
 (1 row)
 
+DROP TABLE tdigest_src;
+DROP TABLE tdigest_dst;

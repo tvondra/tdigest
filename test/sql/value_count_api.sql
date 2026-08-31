@@ -138,11 +138,16 @@ FROM (
        (SELECT tdigest_percentile(x, (10 + 100 * cnt)::int, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) b FROM data) bar
 ) baz;
 
+-- generate data
+CREATE TABLE test_value_count (v double precision, c int, d int);
+INSERT INTO test_value_count SELECT 1000 * random(), 1 + mod(i,7), mod(i,113) FROM generate_series(1,100000) s(i);
+ANALYZE test_value_count;
+
 -- <value,count> API
 
 EXPLAIN (COSTS OFF)
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM d)
 SELECT
   0.95,
@@ -151,10 +156,10 @@ FROM (
   SELECT
     (SELECT p FROM x) AS a,
     tdigest_percentile(v, c, 100, 0.95) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
 
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT percentile_disc(0.95) WITHIN GROUP (ORDER BY v) AS p FROM d)
 SELECT
   0.95,
@@ -163,12 +168,12 @@ FROM (
   SELECT
     (SELECT p FROM x) AS a,
     tdigest_percentile(v, c, 100, 0.95) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
 
 
 EXPLAIN (COSTS OFF)
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT percent_rank(950) WITHIN GROUP (ORDER BY v) AS p FROM d)
 SELECT
   950,
@@ -177,10 +182,10 @@ FROM (
   SELECT
     (SELECT p FROM x) AS a,
     tdigest_percentile_of(v, c, 100, 950) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
 
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT percent_rank(950) WITHIN GROUP (ORDER BY v) AS p FROM d)
 SELECT
   950,
@@ -189,14 +194,14 @@ FROM (
   SELECT
     (SELECT p FROM x) AS a,
     tdigest_percentile_of(v, c, 100, 950) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
 
 
 
 -- array of percentiles / values
 EXPLAIN (COSTS OFF)
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM d)
 SELECT
   p,
@@ -206,10 +211,10 @@ FROM (
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
     unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
 
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT percentile_disc(ARRAY[0.0, 0.95, 0.99, 1.0]) WITHIN GROUP (ORDER BY v) AS p FROM d)
 SELECT
   p,
@@ -219,12 +224,12 @@ FROM (
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
     unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
 
 
 EXPLAIN (COSTS OFF)
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) AS p FROM d)) p FROM unnest(ARRAY[950, 990]) f)
 SELECT
   p,
@@ -234,10 +239,10 @@ FROM (
     unnest(ARRAY[950, 990]) AS p,
     unnest((select x.p from x)) AS a,
     unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
 
 WITH
-  d AS (SELECT t.* FROM t, LATERAL generate_series(1,t.c)),
+  d AS (SELECT test_value_count.* FROM test_value_count, LATERAL generate_series(1,test_value_count.c)),
   x AS (SELECT array_agg((SELECT percent_rank(f) WITHIN GROUP (ORDER BY v) AS p FROM d)) p FROM unnest(ARRAY[950, 990]) f)
 SELECT
   p,
@@ -247,4 +252,6 @@ FROM (
     unnest(ARRAY[950, 990]) AS p,
     unnest((select x.p from x)) AS a,
     unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
-  FROM t) foo;
+  FROM test_value_count) foo;
+
+DROP TABLE test_value_count;

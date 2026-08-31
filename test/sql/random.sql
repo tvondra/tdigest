@@ -892,6 +892,8 @@ FROM (
          pg_percentile
 ) foo;
 
+DROP TABLE intermediate_tdigest;
+
 -- verify 'extreme' percentiles for the dataset would not read out of bounds on the centroids
 WITH data AS (SELECT x FROM generate_series(1,10) AS x)
 SELECT
