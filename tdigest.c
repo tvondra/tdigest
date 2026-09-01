@@ -966,7 +966,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		int			j;
 		double		count;
 		double		value = state->values[i];
-		double		m, x;
+		double		c, d, q, q1, q2;
 
 		/* next and previous centroids */
 		centroid_t *curr = NULL;
@@ -988,7 +988,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		/*
 		 * Find the first centroid with (mean >= value), and remember the
 		 * last centroid before that - if the value is in between, we will
-		 * be calculate the percentile by linear approximation.
+		 * be calculating the percentile by linear approximation.
 		 */
 		count = 0;
 		for (j = 0; j < state->ncentroids; j++)
@@ -1051,6 +1051,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 
 		/* we have two distinct centroids */
 		Assert((prev != NULL) && (curr != NULL) && (prev != curr));
+		Assert(prev->mean < curr->mean);
 
 		/*
 		 * The value lies somewhere between two centroids. We want to figure out
@@ -1063,18 +1064,47 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		 * works well.
 		 */
 
-		count -= (prev->count / 2);
+		count -= (prev->count / 2.0);
 
 		/*
 		 * We assume for both prev/curr centroid, half the count is on left/righ,
 		 * so between them we have (prev->count/2 + curr->count/2). At zero we
 		 * are in prev->mean and at (prev->count/2 + curr->count/2) we're at
 		 * curr->mean.
+		 *
+		 * XXX Because (count >= 1), each centroid contributes at least 0.5, so
+		 * we know (c >= 1.0). It can get a bit imprecise for extreme values, due
+		 * to (int64 -> double) conversion. The double ULP is ~512.
 		 */
-		m = (curr->mean - prev->mean) / (curr->count / 2.0 + prev->count / 2.0);
-		x = (value - prev->mean) / m;
+		c = (curr->count / 2.0 + prev->count / 2.0);
+		d = (curr->mean - prev->mean);
 
-		result[i] = (double) (count + x) / state->count;
+		/* quantiles for the prev/next mean */
+		q1 = count / (double) state->count;
+		q2 = (count + c) / (double) state->count;
+
+		Assert(q1 <= q2);
+
+		/*
+		 * Calculate the linear interpolation of q1/q2 percentiles.
+		 *
+		 * We need to be careful about infinity/NaN during calculation. The
+		 * means may be so close to +/- DBL_MAX, that with "d" gets infinite.
+		 * That's equivalent to 0 slope, but we can do a bit better - if this
+		 * happens, we halve the values, which makes the difference finite
+		 * again (in exchange for loss of precision, but that's acceptable).
+		 */
+		if (isfinite(d))
+			q = (value - prev->mean) / d;
+		else
+		{
+			/* trick - halve the means, so the difference can't overflow */
+			q = (value / 2.0 - prev->mean / 2.0) / (curr->mean / 2.0 - prev->mean / 2.0);
+		}
+
+		result[i] = (1 - q) * q1 + q * q2;
+
+		Assert((q1 <= result[i]) && (result[i] <= q2));
 	}
 }
 

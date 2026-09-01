@@ -1,0 +1,123 @@
+-- tdigest_percentile_of() interpolates between two centroids by computing the
+-- slope of the line connecting their means
+--
+--     m = (curr->mean - prev->mean) / (curr->count / 2.0 + prev->count / 2.0);
+--     x = (value - prev->mean) / m;
+--
+-- and both the difference of the means and the slope may leave the float8
+-- range even though every input is an ordinary finite number:
+--
+--   * (curr->mean - prev->mean) overflows to infinity when the means are
+--     large and have opposite signs. The slope is then infinity, and x is
+--     either 0 (silently wrong) or NaN.
+--
+--   * the slope underflows to zero when the means are tiny (subnormal) and
+--     the counts are huge. x is then infinity, and so is the result.
+--
+-- tdigest_compute_quantiles() was reworked to use a convex combination
+-- exactly to avoid this. tdigest_compute_quantiles_of() still uses the slope,
+-- and it is the last place in the code that does.
+--
+-- A percentile is a probability, so the result always has to be a finite
+-- number in the [0, 1] range. It also must not depend on the scale of the
+-- data - scaling all the means and the probed value by the same power of two
+-- has to produce exactly the same percentiles.
+
+\set VERBOSITY terse
+
+SET extra_float_digits = 0;
+
+CREATE TABLE tdigest_extreme_digests (id int, descr text, d tdigest, probes double precision[]);
+
+INSERT INTO tdigest_extreme_digests VALUES
+    (1, 'means of opposite sign, the difference overflows',
+        'flags 1 count 2 compression 10000 centroids 2 (-1.7e308, 1) (1.7e308, 1)',
+        ARRAY[-1.7e308, -1e308, -1e307, 0, 1e307, 1e308, 1.7e308]),
+    (2, 'the same, with uneven counts',
+        'flags 1 count 10 compression 10000 centroids 2 (-1.5e308, 7) (1.5e308, 3)',
+        ARRAY[-1.5e308, -1e308, 0, 1e308, 1.5e308]),
+    (3, 'the same, with a centroid in the middle',
+        'flags 1 count 3 compression 10000 centroids 3 (-1.7e308, 1) (0, 1) (1.7e308, 1)',
+        ARRAY[-1.7e308, -1e308, -1e-300, 0, 1e-300, 1e308, 1.7e308]),
+    (4, 'subnormal means and huge counts, the slope underflows',
+        'flags 1 count 9223372036854775806 compression 10000 centroids 2 (1e-320, 4611686018427387903) (2e-320, 4611686018427387903)',
+        ARRAY[1e-320, 1.2e-320, 1.5e-320, 1.8e-320, 2e-320]),
+    (5, 'almost adjacent means and huge counts',
+        'flags 1 count 9223372036854775806 compression 10000 centroids 2 (1, 4611686018427387903) (1.0000000000000004, 4611686018427387903)',
+        ARRAY[1, 1.0000000000000002, 1.0000000000000004]),
+    (6, 'large means and huge counts',
+        'flags 1 count 4611686018427387903 compression 10000 centroids 2 (-1e308, 2305843009213693951) (1e308, 2305843009213693952)',
+        ARRAY[-1e308, -5e307, 0, 5e307, 1e308]),
+    (7, 'ordinary means, for comparison',
+        'flags 1 count 10 compression 10000 centroids 2 (-1.5, 7) (1.5, 3)',
+        ARRAY[-1.5, -1, 0, 1, 1.5]);
+
+-- Every result has to be a probability. Currently some of them are NaN
+-- (the difference of the means overflowed) or Infinity (the slope underflowed
+-- to zero).
+WITH q AS (
+    SELECT id, descr, probes, tdigest_percentile_of(d, probes) AS res
+      FROM tdigest_extreme_digests
+     GROUP BY id, descr, probes
+)
+SELECT id, descr, v AS value, r AS percentile_of
+  FROM q, unnest(q.probes, q.res) WITH ORDINALITY AS x(v, r, ord)
+ WHERE NOT (r BETWEEN 0 AND 1)
+ ORDER BY id, ord;
+
+-- And the result still has to be a non-decreasing function of the value.
+WITH q AS (
+    SELECT id, descr, probes, tdigest_percentile_of(d, probes) AS res
+      FROM tdigest_extreme_digests
+     GROUP BY id, descr, probes
+), u AS (
+    SELECT id, descr, ord, v, r
+      FROM q, unnest(q.probes, q.res) WITH ORDINALITY AS x(v, r, ord)
+), s AS (
+    SELECT id, descr, v, r, lag(v) OVER w AS prev_v, lag(r) OVER w AS prev_r
+      FROM u WINDOW w AS (PARTITION BY id ORDER BY ord)
+)
+SELECT id, descr, count(*) AS decreasing_steps
+  FROM s WHERE r < prev_r
+ GROUP BY id, descr ORDER BY id;
+
+-- This is reachable without writing the digest by hand - two ordinary finite
+-- values are enough to build a digest whose centroid means are far enough
+-- apart.
+WITH q AS (
+    SELECT tdigest_percentile_of(v, 10000, ARRAY[-1e307, 0.0, 1e307]::double precision[]) AS res
+      FROM (VALUES (-1.7e308::double precision), (1.7e308::double precision)) t(v)
+)
+SELECT bool_and(r BETWEEN 0 AND 1) AS all_probabilities
+  FROM q, unnest(q.res) AS r;
+
+WITH q AS (
+    SELECT tdigest_percentile_of(v, c, 10000, ARRAY[-1e307, 0.0, 1e307]::double precision[]) AS res
+      FROM (VALUES (-1.7e308::double precision, 7::bigint),
+                   (1.7e308::double precision, 3::bigint)) t(v, c)
+)
+SELECT bool_and(r BETWEEN 0 AND 1) AS all_probabilities
+  FROM q, unnest(q.res) AS r;
+
+-- The percentile only depends on where the value sits between the two
+-- centroid means, so multiplying the means and the probed values by the same
+-- power of two must not change the result in any way. 2^1022 pushes the
+-- difference of the means (4) just past the float8 range, while every single
+-- mean still fits comfortably. The comparison allows for a rounding error of
+-- a couple of ULPs, the difference we are looking for here is 0.0625.
+WITH s(k) AS (
+    VALUES (1::double precision), (2::double precision ^ 1022)
+), r AS (
+    SELECT s.k, tdigest_percentile_of(t.v * s.k, t.c, 10000,
+                                      ARRAY[-3*s.k, -2*s.k, -1*s.k, 0*s.k, 1*s.k]) AS q
+      FROM s, (VALUES (-3.0::double precision, 3::bigint),
+                      (1.0::double precision, 1::bigint)) t(v, c)
+     GROUP BY s.k
+), z AS (
+    SELECT a.q AS unscaled, b.q AS scaled
+      FROM r a, r b WHERE a.k = 1 AND b.k <> 1
+)
+SELECT bool_and(abs(u - s) <= 1e-15) AS scale_invariant
+  FROM z, unnest(z.unscaled, z.scaled) AS x(u, s);
+
+DROP TABLE tdigest_extreme_digests;
