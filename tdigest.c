@@ -1872,10 +1872,6 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
 
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
-
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
@@ -1958,10 +1954,6 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -2371,10 +2363,6 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
 
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
-
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
@@ -2450,10 +2438,6 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -2833,10 +2817,6 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
 
 	state = tdigest_aggstate_allocate(0, 0, digest->compression);
 
@@ -3859,10 +3839,6 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
-
-	/* make sure the t-digest format is supported */
-	if (digest->flags != TDIGEST_STORES_MEAN)
-		elog(ERROR, "unsupported t-digest on-disk format");
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
