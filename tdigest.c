@@ -159,7 +159,6 @@ PG_FUNCTION_INFO_V1(tdigest_union_double_increment);
 PG_FUNCTION_INFO_V1(tdigest_add_double_trimmed);
 PG_FUNCTION_INFO_V1(tdigest_add_double_count_trimmed);
 PG_FUNCTION_INFO_V1(tdigest_add_digest_trimmed);
-PG_FUNCTION_INFO_V1(tdigest_add_digest_count_trimmed);
 PG_FUNCTION_INFO_V1(tdigest_trimmed_avg);
 PG_FUNCTION_INFO_V1(tdigest_trimmed_sum);
 
@@ -208,7 +207,6 @@ Datum tdigest_to_array(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_trimmed(PG_FUNCTION_ARGS);
 Datum tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS);
 Datum tdigest_add_digest_trimmed(PG_FUNCTION_ARGS);
-Datum tdigest_add_digest_count_trimmed(PG_FUNCTION_ARGS);
 Datum tdigest_trimmed_avg(PG_FUNCTION_ARGS);
 Datum tdigest_trimmed_sum(PG_FUNCTION_ARGS);
 
