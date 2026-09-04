@@ -1,0 +1,49 @@
+-- Regression test for adding a value with a count exceeding BUFFER_SIZE in
+-- tdigest_add_double_array_values_count.
+--
+-- Adding the values one by one would mean too many compactions, so counts
+-- larger than the buffer (BUFFER_SIZE = 10 * compression, i.e. 100 for the
+-- smallest compression) are added as pre-generated centroids instead. Both
+-- paths have to produce comparable results.
+-- a single distinct value, so the result is exact on both sides of the
+-- BUFFER_SIZE threshold
+SELECT tdigest_percentile_of(v, 100::bigint, 10, ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+ {0.5}
+(1 row)
+
+SELECT tdigest_percentile_of(v, 101::bigint, 10, ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+ {0.5}
+(1 row)
+
+SELECT tdigest_percentile_of(v, 1000000::bigint, 10, ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+ {0.5}
+(1 row)
+
+-- two distinct values, with the counts just below and just above the
+-- threshold
+SELECT tdigest_percentile_of(v, 100::bigint, 10, ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+ {0.0725,0.775}
+(1 row)
+
+SELECT tdigest_percentile_of(v, 101::bigint, 10, ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+ {0.25,0.75}
+(1 row)
+
+-- a larger compression means a larger buffer, so the very same count now
+-- goes through the one-by-one path
+SELECT tdigest_percentile_of(v, 101::bigint, 100, ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+          tdigest_percentile_of           
+------------------------------------------
+ {0.24504950495049505,0.7846534653465347}
+(1 row)
+
