@@ -1,0 +1,20 @@
+-- Regression test for the NULL handling in the incremental API.
+--
+-- None of the incremental functions is strict, so NULL arguments do reach
+-- them. Adding a NULL value (or merging a NULL digest) is a no-op, and
+-- returns the digest passed in - possibly NULL, if that was NULL too.
+
+-- tdigest_add_double_increment
+SELECT tdigest_add(NULL::tdigest, NULL::double precision);
+SELECT tdigest_add('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest, NULL::double precision);
+SELECT tdigest_add(NULL::tdigest, 1.0::double precision, 100);
+
+-- tdigest_add_double_array_increment
+SELECT tdigest_add(NULL::tdigest, NULL::double precision[]);
+SELECT tdigest_add('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest, NULL::double precision[]);
+SELECT tdigest_add(NULL::tdigest, ARRAY[1.0]::double precision[], 100);
+
+-- tdigest_union_double_increment
+SELECT tdigest_union(NULL::tdigest, NULL::tdigest);
+SELECT tdigest_union('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest, NULL::tdigest);
+SELECT tdigest_union(NULL::tdigest, 'flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest);
