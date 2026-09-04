@@ -4,3 +4,11 @@ results/
 **/*.so
 regression.diffs
 regression.out
+**/*.gcda
+**/*.gcno
+**/*.gcov
+**/*.gcov.out
+lcov_base.info
+lcov_test.info
+coverage/
+coverage-html-stamp
