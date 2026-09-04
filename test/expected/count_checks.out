@@ -1,0 +1,27 @@
+-- Regression test for the count check in tdigest_add_double_count(), the
+-- transition function of the aggregates accepting an explicit number of
+-- occurrences of a value.
+--
+-- The count says how many times the value is added to the digest, so it
+-- has to be a positive value.
+\set VERBOSITY terse
+-- zero count
+SELECT tdigest(v, 0::bigint, 100) FROM (VALUES (1.0)) AS t(v);
+ERROR:  invalid count value 0, must be a positive value
+-- negative count
+SELECT tdigest(v, -1::bigint, 100) FROM (VALUES (1.0)) AS t(v);
+ERROR:  invalid count value -1, must be a positive value
+-- the smallest valid count has to work
+SELECT tdigest(v, 1::bigint, 100) FROM (VALUES (1.0)) AS t(v);
+                      tdigest                       
+----------------------------------------------------
+ flags 1 count 1 compression 100 centroids 1 (1, 1)
+(1 row)
+
+-- NULL count means a single occurrence, so it's valid too
+SELECT tdigest(v, NULL::bigint, 100) FROM (VALUES (1.0)) AS t(v);
+                      tdigest                       
+----------------------------------------------------
+ flags 1 count 1 compression 100 centroids 1 (1, 1)
+(1 row)
+
