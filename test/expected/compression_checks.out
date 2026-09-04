@@ -1,0 +1,28 @@
+-- Regression test for check_compression(), which rejects compression
+-- values outside the [MIN_COMPRESSION, MAX_COMPRESSION] = [10, 10000]
+-- range accepted by the t-digest implementation.
+\set VERBOSITY terse
+-- compression below the minimum
+SELECT tdigest_percentile(v, 9, 0.5) FROM (VALUES (1.0)) AS t(v);
+ERROR:  invalid compression value 9
+-- compression above the maximum
+SELECT tdigest_percentile(v, 10001, 0.5) FROM (VALUES (1.0)) AS t(v);
+ERROR:  invalid compression value 10001
+-- the incremental API checks the compression too
+SELECT tdigest_add(NULL::tdigest, 1.0, 9);
+ERROR:  invalid compression value 9
+SELECT tdigest_add(NULL::tdigest, ARRAY[1.0], 10001);
+ERROR:  invalid compression value 10001
+-- both ends of the accepted range have to work
+SELECT tdigest_percentile(v, 10, 0.5) FROM (VALUES (1.0)) AS t(v);
+ tdigest_percentile 
+--------------------
+                  1
+(1 row)
+
+SELECT tdigest_percentile(v, 10000, 0.5) FROM (VALUES (1.0)) AS t(v);
+ tdigest_percentile 
+--------------------
+                  1
+(1 row)
+
