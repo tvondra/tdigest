@@ -1,0 +1,76 @@
+-- Regression test for a NULL "count" argument in the transition functions
+-- accepting an explicit number of occurrences of a value.
+--
+-- The count argument is not required to be non-NULL, and a NULL count is
+-- interpreted as a single occurrence of the value - exactly like the
+-- variants without the count argument.
+-- tdigest_add_double_values_count
+SELECT tdigest_percentile_of(v, NULL::bigint, 100, 1.0) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+                  0.25
+(1 row)
+
+SELECT tdigest_percentile_of(v, 1::bigint, 100, 1.0) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+                  0.25
+(1 row)
+
+-- tdigest_add_double_array_count
+SELECT tdigest_percentile(v, NULL::bigint, 100, ARRAY[0.5]) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile 
+--------------------
+ {1.5}
+(1 row)
+
+SELECT tdigest_percentile(v, 1::bigint, 100, ARRAY[0.5]) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile 
+--------------------
+ {1.5}
+(1 row)
+
+-- tdigest_add_double_array_values_count
+SELECT tdigest_percentile_of(v, NULL::bigint, 100, ARRAY[1.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+ {0.25}
+(1 row)
+
+SELECT tdigest_percentile_of(v, 1::bigint, 100, ARRAY[1.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_percentile_of 
+-----------------------
+ {0.25}
+(1 row)
+
+-- tdigest_add_double_count_trimmed
+SELECT tdigest_avg(v, NULL::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_avg 
+-------------
+         1.5
+(1 row)
+
+SELECT tdigest_avg(v, 1::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0), (2.0)) AS t(v);
+ tdigest_avg 
+-------------
+         1.5
+(1 row)
+
+-- tdigest_add_digest_trimmed has no count argument - the counts come from
+-- the centroids of the digest - so the closest equivalent is a NULL digest,
+-- which contributes no values at all
+SELECT tdigest_avg(d, 0.0, 1.0) FROM (VALUES (NULL::tdigest), (NULL)) AS t(d);
+ tdigest_avg 
+-------------
+            
+(1 row)
+
+SELECT tdigest_avg(d, 0.0, 1.0)
+  FROM (VALUES ('flags 1 count 2 compression 100 centroids 2 (1, 1) (2, 1)'::tdigest),
+               (NULL),
+               ('flags 1 count 2 compression 100 centroids 2 (3, 1) (4, 1)'::tdigest)) AS t(d);
+ tdigest_avg 
+-------------
+         2.5
+(1 row)
+
