@@ -1,0 +1,96 @@
+-- Regression test for the input function tdigest_in(), which parses the
+-- textual representation of a t-digest.
+--
+-- The input is user supplied, so it has to be validated carefully - both
+-- the syntax of the value and the sanity of the parsed data. The queries
+-- exercise all the error checks in the input function, one by one.
+\set VERBOSITY terse
+-- a valid value, to make sure the checks don't reject correct input
+SELECT 'flags 1 count 3 compression 10 centroids 2 (1, 1) (2, 2)'::tdigest;
+                         tdigest                          
+----------------------------------------------------------
+ flags 1 count 3 compression 10 centroids 2 (1, 1) (2, 2)
+(1 row)
+
+--
+-- syntax errors detected while parsing the individual fields
+--
+-- unexpected space (the value must not start with whitespace)
+SELECT ' flags 1 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+ERROR:  failed to parse t-digest value, unexpected space at character 8
+-- unexpected space (only a single space may separate the fields)
+SELECT 'flags 1  count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+ERROR:  failed to parse t-digest value, unexpected space at character 8
+-- missing space (the fields have to be separated)
+SELECT 'flags 1count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+ERROR:  failed to parse t-digest value, missing space at character 8
+-- unexpected keyword
+SELECT 'flgs 1 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+ERROR:  failed to parse t-digest value, expected "flags" at character 8
+-- integer field that is not a number at all
+SELECT 'flags x count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+ERROR:  failed to parse flags of a t-digest at character 8
+-- integer field that does not fit into bigint
+SELECT 'flags 1 count 99999999999999999999 compression 10 centroids 1 (1, 3)'::tdigest;
+ERROR:  count of a t-digest is out of range for bigint at character 8
+-- integer field that fits into bigint but not into integer
+SELECT 'flags 1 count 3 compression 3000000000 centroids 1 (1, 3)'::tdigest;
+ERROR:  compression of a t-digest is out of range for integer at character 8
+-- floating point field that is not a number at all
+SELECT 'flags 1 count 3 compression 10 centroids 1 (x, 3)'::tdigest;
+ERROR:  failed to parse mean of a centroid of a t-digest at character 8
+-- floating point field that does not fit into double precision
+SELECT 'flags 1 count 3 compression 10 centroids 1 (1e400, 3)'::tdigest;
+ERROR:  mean of a centroid of a t-digest is out of range for double precision at character 8
+--
+-- sanity checks on the parsed header
+--
+-- unknown flags
+SELECT 'flags 2 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+ERROR:  invalid flags for t-digest at character 8
+-- compression out of the supported range
+SELECT 'flags 1 count 3 compression 9 centroids 1 (1, 3)'::tdigest;
+ERROR:  compression for t-digest must be in [10, 10000] at character 8
+SELECT 'flags 1 count 3 compression 10001 centroids 1 (1, 3)'::tdigest;
+ERROR:  compression for t-digest must be in [10, 10000] at character 8
+-- non-positive total count
+SELECT 'flags 1 count 0 compression 10 centroids 1 (1, 1)'::tdigest;
+ERROR:  count value for the t-digest must be positive at character 8
+-- non-positive number of centroids
+SELECT 'flags 1 count 3 compression 10 centroids 0'::tdigest;
+ERROR:  number of centroids for the t-digest must be positive at character 8
+-- more centroids than fit into the buffer (10 * compression)
+SELECT 'flags 1 count 3 compression 10 centroids 101'::tdigest;
+ERROR:  number of centroids for the t-digest exceeds buffer size at character 8
+--
+-- sanity checks on the parsed centroids
+--
+-- centroid mean that is not a valid number
+SELECT 'flags 1 count 3 compression 10 centroids 1 (NaN, 3)'::tdigest;
+ERROR:  mean value for all centroids in a t-digest must be valid at character 8
+SELECT 'flags 1 count 3 compression 10 centroids 1 (Infinity, 3)'::tdigest;
+ERROR:  mean value for all centroids in a t-digest must be valid at character 8
+-- non-positive centroid count
+SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 0)'::tdigest;
+ERROR:  count value for all centroids in a t-digest must be positive at character 8
+-- centroid count exceeding the total count
+SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 4)'::tdigest;
+ERROR:  count value of a centroid exceeds total count at character 8
+-- centroids not sorted by mean
+SELECT 'flags 1 count 3 compression 10 centroids 2 (2, 1) (1, 2)'::tdigest;
+ERROR:  centroids not sorted by mean at character 8
+-- centroid counts overflowing the total count
+SELECT 'flags 1 count 9223372036854775807 compression 10 centroids 2 (1, 9223372036854775807) (2, 9223372036854775807)'::tdigest;
+ERROR:  tdigest count overflow at character 8
+--
+-- sanity checks on the value as a whole
+--
+-- more centroids than the header says
+SELECT 'flags 1 count 1 compression 10 centroids 1 (1, 1) (2, 1)'::tdigest;
+ERROR:  input t-digest value too long at character 8
+-- fewer centroids than the header says
+SELECT 'flags 1 count 3 compression 10 centroids 3 (1, 1)'::tdigest;
+ERROR:  input t-digest value too short at character 8
+-- centroid counts not adding up to the total count
+SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 1)'::tdigest;
+ERROR:  total count does not match the data (1 != 3) at character 8
