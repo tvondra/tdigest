@@ -1681,7 +1681,7 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double called in non-aggregate context");
+		elog(ERROR, "tdigest_add_double_values called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -1750,7 +1750,7 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double called in non-aggregate context");
+		elog(ERROR, "tdigest_add_double_values_count called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -1935,7 +1935,7 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_digest called in non-aggregate context");
+		elog(ERROR, "tdigest_add_digest_values called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -2079,7 +2079,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
+		elog(ERROR, "tdigest_add_double_array_count called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -2243,7 +2243,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_array called in non-aggregate context");
+		elog(ERROR, "tdigest_add_double_array_values_count called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -2419,7 +2419,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_digest_array called in non-aggregate context");
+		elog(ERROR, "tdigest_add_digest_array_values called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -3673,7 +3673,7 @@ tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_mean called in non-aggregate context");
+		elog(ERROR, "tdigest_add_double_trimmed called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -3729,7 +3729,7 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_double_mean called in non-aggregate context");
+		elog(ERROR, "tdigest_add_double_count_trimmed called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -3820,7 +3820,7 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_add_digest called in non-aggregate context");
+		elog(ERROR, "tdigest_add_digest_trimmed called in non-aggregate context");
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -4145,7 +4145,7 @@ tdigest_trimmed_avg(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_percentiles called in non-aggregate context");
+		elog(ERROR, "tdigest_trimmed_avg called in non-aggregate context");
 
 	/* if there's no digest, return NULL */
 	if (PG_ARGISNULL(0))
@@ -4181,7 +4181,7 @@ tdigest_trimmed_sum(PG_FUNCTION_ARGS)
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
-		elog(ERROR, "tdigest_percentiles called in non-aggregate context");
+		elog(ERROR, "tdigest_trimmed_sum called in non-aggregate context");
 
 	/* if there's no digest, return NULL */
 	if (PG_ARGISNULL(0))
