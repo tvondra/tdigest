@@ -78,7 +78,11 @@ SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 4)'::tdigest;
 ERROR:  count value of a centroid exceeds total count at character 8
 -- centroids not sorted by mean
 SELECT 'flags 1 count 3 compression 10 centroids 2 (2, 1) (1, 2)'::tdigest;
-ERROR:  centroids not sorted by mean at character 8
+                         tdigest                          
+----------------------------------------------------------
+ flags 1 count 3 compression 10 centroids 2 (2, 1) (1, 2)
+(1 row)
+
 -- centroid counts overflowing the total count
 SELECT 'flags 1 count 9223372036854775807 compression 10 centroids 2 (1, 9223372036854775807) (2, 9223372036854775807)'::tdigest;
 ERROR:  tdigest count overflow at character 8

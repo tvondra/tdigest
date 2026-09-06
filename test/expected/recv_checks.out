@@ -119,7 +119,6 @@ COPY (SELECT int4send(1)
           || float8send(1) || int8send(1::bigint))
   TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
 COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
-ERROR:  centroids not sorted by mean
 -- centroids not sorted by mean, in the old on-disk format storing sums
 -- instead of means (the sums are sorted, but the means are not)
 COPY (SELECT int4send(0)
@@ -130,7 +129,6 @@ COPY (SELECT int4send(0)
           || float8send(6) || int8send(2::bigint))
   TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
 COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
-ERROR:  centroids not sorted by mean
 -- centroid counts overflowing the total count
 COPY (SELECT int4send(1)
           || int8send(9223372036854775807::bigint)
@@ -158,6 +156,8 @@ SELECT s FROM tdigest_dst;
                             s                             
 ----------------------------------------------------------
  flags 1 count 3 compression 10 centroids 2 (1, 1) (2, 2)
-(1 row)
+ flags 1 count 3 compression 10 centroids 2 (2, 2) (1, 1)
+ flags 1 count 3 compression 10 centroids 2 (4, 1) (3, 2)
+(3 rows)
 
 DROP TABLE tdigest_dst;

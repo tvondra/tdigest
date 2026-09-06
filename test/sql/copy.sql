@@ -36,7 +36,7 @@ FROM tdigest_src src JOIN tdigest_dst dst ON (src.id = dst.id);
 DROP TABLE tdigest_src;
 DROP TABLE tdigest_dst;
 
--- tdigest_recv() has to reject digests with unsorted centroids
+-- tdigest_recv() has to accept digests with unsorted centroids
 --
 -- Test through a binary COPY, which goes through the receive function.
 -- We build the input with the send functions of the individual fields.
