@@ -906,21 +906,23 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 		/*
 		 * We should be "to the right" the first centroid, and should not
-		 * be so far ahead to exceed the next one.
+		 * be so far ahead to exceed the next one. So in printiple, this
+		 * should be true:
 		 *
-		 * XXX We can get equalities in case we hit a mean of one of the
-		 * centroids exactly, or when the centroids have very high count
-		 * (in the area where double ULP > 1.0).
+		 * Assert((distance >= 0) && (distance <= total_distance));
 		 *
-		 * XXX It's possibly this gets hit even when everything is correct,
-		 * due to the rounding. I'm leaving it here to catch such issues
-		 * and investigate that, instead of papering over it by the clamps.
+		 * But, it's tricky due to precision and rounding. We're switching
+		 * from int64 to double, and double has much lower precision close
+		 * to INT64_MAX (ULP >> 1.0). With high goal and/or count values we
+		 * can end up with distance outside the [0, total_distance] range,
+		 * or just hit the centroids exactly.
+		 *
+		 * XXX Try uncommenting the assert, there's a test triggering it.
 		 */
-		Assert((distance >= 0) && (distance <= total_distance));
 
 		/*
 		 * Clamp distance to [0, total_distance], to mitigate unexpected
-		 * rouding / precision errors in production builds without asserts.
+		 * rouding / precision errors.
 		 */
 		distance = Max(0.0, Min(total_distance, distance));
 
@@ -932,6 +934,8 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		 * XXX The "q" should not overflow/underflow or misbehave in other
 		 * ways, as distance is in [0.0, total_distance]. But clamp anyway,
 		 * to deal with unexpected rounding / precision errors.
+		 *
+		 * XXX Not sure this is needed with the clamped distance.
 		 */
 		q = Max(0.0, Min(1.0, distance / total_distance));
 

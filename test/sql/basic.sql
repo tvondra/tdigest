@@ -103,3 +103,6 @@ SELECT tdigest_percentile(v,10,0.5) FROM x;
 SELECT tdigest_count((SELECT tdigest(v, c, 10)
         FROM (VALUES (1e307::float8, 1000000::bigint),
                      (1e308::float8, 1000000::bigint)) x(v, c))::text::tdigest);
+
+-- extreme digest - overflow/rounding issue in tdigest_compute_quantiles
+SELECT tdigest_percentile('flags 1 count 204745659738676291 compression 100 centroids 3 (5360.6421513780951, 96854112897858161) (5670.4376627340216, 36597233557612361) (5670.4376627340216, 71294313283205769)'::tdigest, 0.56241841621276667);
