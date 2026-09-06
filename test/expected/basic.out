@@ -198,3 +198,10 @@ SELECT tdigest_percentile('flags 1 count 204745659738676291 compression 100 cent
   5670.437662734022
 (1 row)
 
+-- extreme digest - overflow/rounding issue in tdigest_compute_quantiles_of
+SELECT tdigest_percentile_of('flags 1 count 467525031770889061 compression 100 centroids 5 (-714.32532319527991, 372151463885287745) (-649.22210009079686, 12983637447676689) (-613.86327584091737, 82389930437924625) (-554.7460856469786, 1) (-497.74083276256061, 1)'::tdigest, -517.61603495911652);
+ tdigest_percentile_of 
+-----------------------
+    0.9999999999999999
+(1 row)
+

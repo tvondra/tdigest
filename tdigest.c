@@ -968,7 +968,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		int			j;
 		double		count;
 		double		value = state->values[i];
-		double		c, d, q, q1, q2;
+		double		c, d, q, q1, q2, r;
 
 		/* next and previous centroids */
 		centroid_t *curr = NULL;
@@ -1104,9 +1104,24 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 			q = (value / 2.0 - prev->mean / 2.0) / (curr->mean / 2.0 - prev->mean / 2.0);
 		}
 
-		result[i] = (1 - q) * q1 + q * q2;
+		/* calculate the linear interpolation */
+		r = (1 - q) * q1 + q * q2;
 
-		Assert((q1 <= result[i]) && (result[i] <= q2));
+		/*
+		 * In principle, the result should be in between the percentiles for
+		 * the two centroids (we're between them)
+		 *
+		 * Assert((q1 <= r) && (r <= q2));
+		 *
+		 * But for extreme values (close to 1.0, which can happen for values
+		 * on the right tail of a massive digest), we can end up rounding to
+		 * a value outside the [q1,q2] range. So clamp the value to defend
+		 * against that.
+		 *
+		 * XXX Try uncommenting the assert, there's a test triggering it.
+		 */
+
+		result[i] = Max(q1, Min(q2, r));
 	}
 }
 

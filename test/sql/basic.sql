@@ -106,3 +106,6 @@ SELECT tdigest_count((SELECT tdigest(v, c, 10)
 
 -- extreme digest - overflow/rounding issue in tdigest_compute_quantiles
 SELECT tdigest_percentile('flags 1 count 204745659738676291 compression 100 centroids 3 (5360.6421513780951, 96854112897858161) (5670.4376627340216, 36597233557612361) (5670.4376627340216, 71294313283205769)'::tdigest, 0.56241841621276667);
+
+-- extreme digest - overflow/rounding issue in tdigest_compute_quantiles_of
+SELECT tdigest_percentile_of('flags 1 count 467525031770889061 compression 100 centroids 5 (-714.32532319527991, 372151463885287745) (-649.22210009079686, 12983637447676689) (-613.86327584091737, 82389930437924625) (-554.7460856469786, 1) (-497.74083276256061, 1)'::tdigest, -517.61603495911652);
