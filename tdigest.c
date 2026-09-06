@@ -17,6 +17,7 @@
 #include "postgres.h"
 #include "common/int.h"
 #include "libpq/pqformat.h"
+#include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -448,6 +449,8 @@ tdigest_sort_centroids(centroid_t *centroids, int ncentroids, int64 count)
 		int	j = i;
 		int	group_size = 0;
 
+		CHECK_FOR_INTERRUPTS();
+
 		/* determine the end of the group */
 		while ((j < ncentroids) &&
 			   (centroids[i].mean == centroids[j].mean))
@@ -475,6 +478,12 @@ tdigest_sort_centroids(centroid_t *centroids, int ncentroids, int64 count)
 									next_group - median_count);
 			}
 		}
+
+		/*
+		 * We should be making forward progress. If not, we're in an infinite
+		 * loop. With properly formed digests that should not happen.
+		 */
+		Assert(i < j);
 
 		i = j;
 		count_so_far = next_group;
@@ -538,6 +547,8 @@ tdigest_compact_forced(tdigest_aggstate_t *state)
 		/* range of indexes of input centroids */
 		int		start = cur * group_size;
 		int		end = Min(start + group_size, state->ncentroids);
+
+		CHECK_FOR_INTERRUPTS();
 
 		/* stop after processing all input centroids */
 		if (start >= end)
@@ -679,6 +690,8 @@ tdigest_compact(tdigest_aggstate_t *state)
 		double	q2;
 		double	z;
 		bool	should_add;
+
+		CHECK_FOR_INTERRUPTS();
 
 		proposed_count = state->centroids[cur].count + state->centroids[i].count;
 
@@ -866,6 +879,8 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		count = 0;
 		for (j = 0; j < state->ncentroids; j++)
 		{
+			CHECK_FOR_INTERRUPTS();
+
 			c = &state->centroids[j];
 
 			/* Adding the centroid would exceeded the goal, so stop. */
@@ -1045,6 +1060,8 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		count = 0;
 		for (j = 0; j < state->ncentroids; j++)
 		{
+			CHECK_FOR_INTERRUPTS();
+
 			/* remember the previous centroid, grab the next one */
 			prev = curr;
 			curr = &state->centroids[j];
@@ -1310,6 +1327,8 @@ tdigest_update_format(tdigest_t *digest)
 	/* And now tweak the contents of the copy. */
 	for (i = 0; i < digest->ncentroids; i++)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		digest->centroids[i].mean
 			= digest->centroids[i].mean / digest->centroids[i].count;
 	}
@@ -1351,6 +1370,8 @@ tdigest_sort_digest(tdigest_t *digest)
 	/* if the centroids are already sorted, we're done */
 	for (i = 1; i < digest->ncentroids; i++)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		/*
 		 * XXX Not quite right, it needs to consider the count too, if
 		 * the centroids have the same mean (and whether we're below or
@@ -1449,6 +1470,8 @@ tdigest_aggstate_to_digest(tdigest_aggstate_t *state, bool compact)
 
 	for (i = 0; i < state->ncentroids; i++)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		digest->centroids[i].mean = state->centroids[i].mean;
 		digest->centroids[i].count = state->centroids[i].count;
 	}
@@ -1615,6 +1638,8 @@ tdigest_add_generated(tdigest_aggstate_t *state, double value, int64 count)
 		double	q0;
 		double	b, c, d;
 		double	r1, r2;
+
+		CHECK_FOR_INTERRUPTS();
 
 		/*
 		 * Solving z <= q0 * (1 - q0) is trivial.
@@ -2042,8 +2067,12 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(state);
 
@@ -2122,8 +2151,12 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(state);
 
@@ -2546,8 +2579,12 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(state);
 
@@ -2624,8 +2661,12 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(state);
 
@@ -2950,8 +2991,12 @@ tdigest_combine(PG_FUNCTION_ARGS)
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < src->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(dst, src->centroids[i].mean,
 								  src->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(dst);
 
@@ -2976,9 +3021,13 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(state,
 							 digest->centroids[i].mean,
 							 digest->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(state);
 
@@ -3149,8 +3198,12 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(state);
 
@@ -3384,6 +3437,8 @@ tdigest_in(PG_FUNCTION_ARGS)
 	{
 		double	mean;
 
+		CHECK_FOR_INTERRUPTS();
+
 		parse_str(&ptr, "(", true);
 		mean = parse_double(&ptr, "mean of a centroid");
 		parse_str(&ptr, ",", false);
@@ -3504,6 +3559,8 @@ tdigest_out(PG_FUNCTION_ARGS)
 	{
 		char *tmp = float8out_internal(digest->centroids[i].mean);
 
+		CHECK_FOR_INTERRUPTS();
+
 		appendStringInfo(&str, " (%s, " INT64_FORMAT ")",
 						 tmp, digest->centroids[i].count);
 		pfree(tmp);
@@ -3565,6 +3622,8 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	total_count = 0;
 	for (i = 0; i < digest->ncentroids; i++)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		digest->centroids[i].mean = pq_getmsgfloat8(buf);
 		digest->centroids[i].count = pq_getmsgint64(buf);
 
@@ -3630,6 +3689,8 @@ tdigest_send(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		pq_sendfloat8(&buf, digest->centroids[i].mean);
 		pq_sendint64(&buf, digest->centroids[i].count);
 	}
@@ -3787,6 +3848,8 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 		double	mean = digest->centroids[i].mean;
 		char *tmp;
 
+		CHECK_FOR_INTERRUPTS();
+
 		if (i > 0)
 			appendStringInfoString(&str, ", ");
 
@@ -3811,6 +3874,8 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		if (i > 0)
 			appendStringInfoString(&str, ", ");
 
