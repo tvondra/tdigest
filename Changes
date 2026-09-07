@@ -1,5 +1,19 @@
 Revision history for PostgreSQL extension tdigest.
 
+1.4.5
+    - Fix multiple memory-safety issues (OOB reads/writes, SIGSEGV crashes)
+    - Fix multiple issues with float precision (NaN/infinity results)
+    - Fix calculation of low/high thresholds in trimmed aggregates
+    - Fix trimmed sum/avg aggregates to sort the centroids
+    - Make sure processing does not generate digests with NaN/infinity float values
+    - Make sure various int64 values do not overflow
+    - Harden validation of function parameters to reject NULL/NaN/infinity values
+    - Use overflow-resilient and/or numerically stable formulas in multiple functions
+    - Improve test coverage by adding new regression tests
+    - Speedup regression tests by using parallel schedule
+    - Add tdigest_is_valid() to check validity of existing t-digest values
+    - Mitigate incorrect alignment of t-digest values.
+
 1.4.4
     - Add missing parts of automated release workflow.
     - Make regression tests pass on Postgres 19 branch
