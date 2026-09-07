@@ -148,6 +148,8 @@ PG_FUNCTION_INFO_V1(tdigest_out);
 PG_FUNCTION_INFO_V1(tdigest_send);
 PG_FUNCTION_INFO_V1(tdigest_recv);
 
+PG_FUNCTION_INFO_V1(tdigest_is_valid);
+
 PG_FUNCTION_INFO_V1(tdigest_count);
 PG_FUNCTION_INFO_V1(tdigest_to_json);
 PG_FUNCTION_INFO_V1(tdigest_to_array);
@@ -194,6 +196,8 @@ Datum tdigest_in(PG_FUNCTION_ARGS);
 Datum tdigest_out(PG_FUNCTION_ARGS);
 Datum tdigest_send(PG_FUNCTION_ARGS);
 Datum tdigest_recv(PG_FUNCTION_ARGS);
+
+Datum tdigest_is_valid(PG_FUNCTION_ARGS);
 
 Datum tdigest_count(PG_FUNCTION_ARGS);
 
@@ -3594,6 +3598,107 @@ tdigest_send(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
+}
+
+/*
+ * tdigest_is_valid
+ *		Check the t-digest passes the same sanity checks as the input funcs.
+ *
+ * The input functions (tdigest_in and tdigest_recv) validate the values, so
+ * it's not possible to construct an invalid digest through them. But digests
+ * stored by older versions of the extension (which did not have all those
+ * checks) are not re-validated when read back, so they may be broken in
+ * various ways - bogus flags, compression out of range, centroid counts not
+ * adding up to the total count, and so on. This function performs the same
+ * checks on an existing value, allowing users to find such digests.
+ *
+ * Returns true if the digest passes all the checks, false otherwise. Never
+ * raises an error for an invalid digest (that's the whole point).
+ *
+ * The one check the input functions don't need to do explicitly is on the
+ * length of the value - they build the digest from the parsed header, so it
+ * always matches. For an existing value we have to check the value really is
+ * long enough for the centroids the header promises, otherwise we'd read past
+ * the end of it.
+ *
+ * XXX Keep this in sync with the checks in tdigest_in and tdigest_recv.
+ */
+Datum
+tdigest_is_valid(PG_FUNCTION_ARGS)
+{
+	int			i;
+	int64		total_count;
+	Size		vlen;
+	Size		expected;
+	tdigest_t  *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+
+	vlen = VARSIZE_ANY(digest);
+
+	/*
+	 * We need at least the header, otherwise we can't even look at the fields
+	 * describing the rest of the value.
+	 */
+	if (vlen < offsetof(tdigest_t, centroids))
+		PG_RETURN_BOOL(false);
+
+	/* make sure the t-digest format is supported */
+	if ((digest->flags & ~TDIGEST_VALID_FLAGS) != 0)
+		PG_RETURN_BOOL(false);
+
+	if ((digest->compression < MIN_COMPRESSION) ||
+		(digest->compression > MAX_COMPRESSION))
+		PG_RETURN_BOOL(false);
+
+	if (digest->count <= 0)
+		PG_RETURN_BOOL(false);
+
+	if (digest->ncentroids <= 0)
+		PG_RETURN_BOOL(false);
+
+	if (digest->ncentroids > BUFFER_SIZE(digest->compression))
+		PG_RETURN_BOOL(false);
+
+	/*
+	 * The header determines how long the value has to be, so make sure it
+	 * really is that long before reading any of the centroids.
+	 *
+	 * The number of centroids is limited by the buffer size (checked above),
+	 * so this can't overflow.
+	 */
+	expected = offsetof(tdigest_t, centroids) +
+			   digest->ncentroids * sizeof(centroid_t);
+
+	if (vlen != expected)
+		PG_RETURN_BOOL(false);
+
+	total_count = 0;
+	for (i = 0; i < digest->ncentroids; i++)
+	{
+		if (!isfinite(digest->centroids[i].mean))
+			PG_RETURN_BOOL(false);
+
+		if (digest->centroids[i].count <= 0)
+			PG_RETURN_BOOL(false);
+		else if (digest->centroids[i].count > digest->count)
+			PG_RETURN_BOOL(false);
+
+		/*
+		 * track the total count so that we can check later
+		 *
+		 * Make sure the count does not overflow at any point. It could
+		 * overflow and then wrap around to the expected total, but it would
+		 * still cause an issue.
+		 */
+		if (pg_add_s64_overflow(total_count, digest->centroids[i].count,
+								&total_count))
+			PG_RETURN_BOOL(false);
+	}
+
+	/* check that the total matches */
+	if (total_count != digest->count)
+		PG_RETURN_BOOL(false);
+
+	PG_RETURN_BOOL(true);
 }
 
 Datum

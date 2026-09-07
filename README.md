@@ -907,6 +907,29 @@ SELECT tdigest_digest_sum(d, 0.25, 0.75) FROM (
 - `high` - high threshold percentile (values above are discarded, default: 1.0)
 
 
+### `tdigest_is_valid(tdigest)`
+
+Checks the t-digest is valid, i.e. that it passes the same sanity checks
+as the input functions (parsing the text or binary representation). Returns
+`true` for valid digests, `false` otherwise.
+
+Digests produced by the extension are always valid, and it's not possible
+to construct an invalid one through the input functions. But digests stored
+by older versions of the extension (which did not have all the checks) may
+be broken in various ways, and the values are not re-validated when read
+back. This function makes it possible to find such digests.
+
+#### Synopsis
+
+```
+SELECT id FROM t WHERE NOT tdigest_is_valid(t.d);
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to check
+
+
 Notes
 -----
 
