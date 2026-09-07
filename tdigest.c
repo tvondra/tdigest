@@ -2123,6 +2123,10 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 
 		check_compression(compression);
 
+		/* Percentiles are required in order to create the aggregate state. */
+		if (PG_ARGISNULL(3))
+			elog(ERROR, "percentiles must not be NULL");
+
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		percentiles = array_to_double(fcinfo,
@@ -2188,6 +2192,10 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
+
+		/* Percentiles are required in order to create the aggregate state. */
+		if (PG_ARGISNULL(4))
+			elog(ERROR, "percentiles must not be NULL");
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
@@ -2289,6 +2297,10 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 
 		check_compression(compression);
 
+		/* Values are required in order to create the aggregate state. */
+		if (PG_ARGISNULL(3))
+			elog(ERROR, "values must not be NULL");
+
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		values = array_to_double(fcinfo,
@@ -2352,6 +2364,10 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
+
+		/* Values are required in order to create the aggregate state. */
+		if (PG_ARGISNULL(4))
+			elog(ERROR, "values must not be NULL");
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
@@ -2455,6 +2471,10 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		int		npercentiles;
 		MemoryContext	oldcontext;
 
+		/* Percentiles are required in order to create the aggregate state. */
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "percentiles must not be NULL");
+
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		percentiles = array_to_double(fcinfo,
@@ -2530,6 +2550,10 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
+
+		/* Values are required in order to create the aggregate state. */
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "values must not be NULL");
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
