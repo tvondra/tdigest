@@ -1293,6 +1293,10 @@ tdigest_update_format(tdigest_t *digest)
  *
  * Expects a digest in the new format, i.e. with centroids storing means (see
  * tdigest_update_format).
+ *
+ * XXX It's a bit wasteful to do the sort over and over, even for on-disk digests
+ * that are perfectly sorted. It should be possible to have a TDIGEST_SORTED flag
+ * tracking when a digest is already sorted, and skip the sort.
  */
 static tdigest_t *
 tdigest_sort_digest(tdigest_t *digest)
