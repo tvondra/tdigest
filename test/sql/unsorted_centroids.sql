@@ -13,6 +13,8 @@
 --     tdigest_percentile_of()   (both the scalar and the array variant)
 --     tdigest_sum()
 --     tdigest_avg()
+--     tdigest_digest_sum()
+--     tdigest_digest_avg()
 --
 -- to the results for the original (sorted) digest. The results have to match
 -- exactly, not just approximately - reordering the centroids does not lose any
@@ -214,6 +216,15 @@ SELECT 'tdigest_avg', v.id, v.variant, t.id, tdigest_avg(v.d, t.low, t.high)
   FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t
  GROUP BY v.id, v.variant, t.id, t.low, t.high;
 
+-- the same two, but as plain functions operating on a single digest
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_digest_sum', v.id, v.variant, t.id, tdigest_digest_sum(v.d, t.low, t.high)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t;
+
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_digest_avg', v.id, v.variant, t.id, tdigest_digest_avg(v.d, t.low, t.high)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t;
+
 
 -- How many results did we compare, and how many of them do not match the
 -- result for the sorted digest? The number of mismatches has to be 0.
@@ -254,6 +265,32 @@ SELECT descr,
        tdigest_sum(d, 0.1, 0.9) AS "sum 0.1-0.9",
        tdigest_avg(d, 0.1, 0.9) AS "avg 0.1-0.9"
   FROM d GROUP BY descr ORDER BY descr;
+
+WITH d(descr, d) AS (
+    VALUES ('sorted',   'flags 1 count 12 compression 10000 centroids 3 (0, 3) (50, 4) (100, 5)'::tdigest),
+           ('reversed', 'flags 1 count 12 compression 10000 centroids 3 (100, 5) (50, 4) (0, 3)'::tdigest)
+)
+SELECT descr,
+       tdigest_digest_sum(d, 0.1, 0.9) AS "digest_sum 0.1-0.9",
+       tdigest_digest_avg(d, 0.1, 0.9) AS "digest_avg 0.1-0.9"
+  FROM d ORDER BY descr;
+
+-- The old on-disk format, where the centroids store sums instead of means, is
+-- accepted with the centroids unsorted too. And the sums being sorted does not
+-- mean the means are - all three digests below hold the very same centroids
+-- (means 20, 50 and 200, with counts 5, 6 and 1).
+WITH d(descr, d) AS (
+    VALUES ('sorted by mean',
+                'flags 0 count 12 compression 10000 centroids 3 (100, 5) (300, 6) (200, 1)'::tdigest),
+           ('reversed',
+                'flags 0 count 12 compression 10000 centroids 3 (200, 1) (300, 6) (100, 5)'::tdigest),
+           ('sorted by sum, not by mean',
+                'flags 0 count 12 compression 10000 centroids 3 (100, 5) (200, 1) (300, 6)'::tdigest)
+)
+SELECT descr,
+       tdigest_digest_sum(d, 0.1, 0.9) AS "digest_sum 0.1-0.9",
+       tdigest_digest_avg(d, 0.1, 0.9) AS "digest_avg 0.1-0.9"
+  FROM d ORDER BY descr;
 
 
 DROP TABLE tdigest_unsorted_results;

@@ -367,13 +367,13 @@ rebalance_centroids(centroid_t *centroids, int ncentroids,
 
 
 /*
- * Sort centroids in the digest.
+ * Sort an array of centroids, with the given total count.
  *
  * We have to sort the whole array, because we don't just simply sort the
  * centroids - we do the rebalancing of items with the same mean too.
  */
 static void
-tdigest_sort(tdigest_aggstate_t *state)
+tdigest_sort_centroids(centroid_t *centroids, int ncentroids, int64 count)
 {
 	int		i;
 	int64	count_so_far;
@@ -381,8 +381,8 @@ tdigest_sort(tdigest_aggstate_t *state)
 	int64	median_count;
 
 	/* do qsort on the non-sorted part */
-	pg_qsort(state->centroids,
-			 state->ncentroids,
+	pg_qsort(centroids,
+			 ncentroids,
 			 sizeof(centroid_t), centroid_cmp);
 
 	/*
@@ -395,23 +395,23 @@ tdigest_sort(tdigest_aggstate_t *state)
 	 */
 	count_so_far = 0;
 	next_group = 0;	/* includes count_so_far */
-	median_count = (state->count / 2);
+	median_count = (count / 2);
 
 	/*
 	 * Split the centroids into groups with the same mean, process each group
 	 * depending on whether it falls before/after median.
 	 */
 	i = 0;
-	while (i < state->ncentroids)
+	while (i < ncentroids)
 	{
 		int	j = i;
 		int	group_size = 0;
 
 		/* determine the end of the group */
-		while ((j < state->ncentroids) &&
-			   (state->centroids[i].mean == state->centroids[j].mean))
+		while ((j < ncentroids) &&
+			   (centroids[i].mean == centroids[j].mean))
 		{
-			next_group += state->centroids[j].count;
+			next_group += centroids[j].count;
 			group_size++;
 			j++;
 		}
@@ -425,11 +425,11 @@ tdigest_sort(tdigest_aggstate_t *state)
 			if (count_so_far >= median_count)
 			{
 				/* group fully above median - reverse the order */
-				reverse_centroids(&state->centroids[i], group_size);
+				reverse_centroids(&centroids[i], group_size);
 			}
 			else if (next_group >= median_count)	/* group split by median */
 			{
-				rebalance_centroids(&state->centroids[i], group_size,
+				rebalance_centroids(&centroids[i], group_size,
 									median_count - count_so_far,
 									next_group - median_count);
 			}
@@ -438,6 +438,15 @@ tdigest_sort(tdigest_aggstate_t *state)
 		i = j;
 		count_so_far = next_group;
 	}
+}
+
+/*
+ * Sort centroids in the aggregate state.
+ */
+static void
+tdigest_sort(tdigest_aggstate_t *state)
+{
+	tdigest_sort_centroids(state->centroids, state->ncentroids, state->count);
 }
 
 /*
@@ -1265,6 +1274,63 @@ tdigest_update_format(tdigest_t *digest)
 	}
 
 	digest->flags |= TDIGEST_STORES_MEAN;
+
+	return digest;
+}
+
+/*
+ * tdigest_sort_digest
+ *		Make sure the centroids of the digest are sorted by mean.
+ *
+ * Digests with the centroids in an arbitrary order are perfectly valid - the
+ * incremental API keeps the digests uncompacted (and thus unsorted), and the
+ * input functions accept such digests too. So the places walking the centroids
+ * in the order of means have to do the sort themselves.
+ *
+ * If the digest is already sorted, this is a no-op. Otherwise a sorted copy of
+ * the digest is returned - we must not sort the digest in place, it might be
+ * just a pointer to a data buffer, or something like that.
+ *
+ * Expects a digest in the new format, i.e. with centroids storing means (see
+ * tdigest_update_format).
+ */
+static tdigest_t *
+tdigest_sort_digest(tdigest_t *digest)
+{
+	int		i;
+	int		s;
+	char   *ptr;
+
+	Assert(digest->flags & TDIGEST_STORES_MEAN);
+
+	/* if the centroids are already sorted, we're done */
+	for (i = 1; i < digest->ncentroids; i++)
+	{
+		/*
+		 * XXX Not quite right, it needs to consider the count too, if
+		 * the centroids have the same mean (and whether we're below or
+		 * above the mean of the whole digest.
+		 */
+		if (digest->centroids[i - 1].mean > digest->centroids[i].mean)
+			break;
+	}
+
+	/* if the digest is already sorted, bail out */
+	if (i >= digest->ncentroids)
+		return digest;
+
+	/*
+	 * Create a fresh copy of the digest, not to break the current one (which
+	 * may even be persistent on disk.
+	 */
+	s = VARSIZE_ANY(digest);
+	ptr = palloc(s);
+	memcpy(ptr, digest, s);
+
+	digest = (tdigest_t *) ptr;
+
+	tdigest_sort_centroids(digest->centroids, digest->ncentroids,
+						   digest->count);
 
 	return digest;
 }
@@ -4207,6 +4273,9 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
 
+	/* tdigest_trimmed_agg expects the centroids sorted by mean */
+	digest = tdigest_sort_digest(digest);
+
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
 						digest->count, low, high, &mean, &sum, &count);
 
@@ -4236,6 +4305,9 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
+
+	/* tdigest_trimmed_agg expects the centroids sorted by mean */
+	digest = tdigest_sort_digest(digest);
 
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
 						digest->count, low, high, &mean, &sum, &count);
