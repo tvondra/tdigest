@@ -18,8 +18,11 @@ the fact that t-digests are much more compact when stored on disk.
 
 ## Basic usage
 
-The extension provides two functions, which you can see as a replacement of
-`percentile_cont` aggregate:
+For the basic use case the extension provides four aggregate functions. The
+`tdigest_percentile` ones can be seen as a replacement of the
+`percentile_cont` aggregate, while the `tdigest_percentile_of` ones perform
+the inverse operation (they answer what fraction of the data is below a
+given value):
 
 * `tdigest_percentile(value double precision, compression int,
                       quantile double precision)`
@@ -28,10 +31,10 @@ The extension provides two functions, which you can see as a replacement of
                       quantiles double precision[])`
 
 * `tdigest_percentile_of(value double precision, compression int,
-                         value double precision)`
+                         hypothetical_value double precision)`
 
 * `tdigest_percentile_of(value double precision, compression int,
-                         values double precision[])`
+                         hypothetical_values double precision[])`
 
 That is, instead of running
 
@@ -53,15 +56,18 @@ compression parameter.
 
 ## Accuracy
 
-All functions building the t-digest summaries accept `accuracy` parameter
-that determines how detailed the histogram approximating the CDF is. The
-value essentially limits the number of "buckets" in the t-digest, so the
-higher the value the larger the digest.
+All functions building the t-digest summaries accept an accuracy parameter
+(called `compression` in the function signatures) that determines how
+detailed the histogram approximating the CDF is. The value essentially
+limits the number of "buckets" (centroids) in the t-digest, so the higher
+the value the larger the digest. The accepted range is `[10, 10000]`, and
+values outside this range are rejected with an error.
 
-Each bucket is represented by two `double precision` values (i.e. 16B per
-bucket), so 10000 buckets means the largest possible t-digest is ~160kB.
-That is however before the transparent compression all varlena types go
-through, so the on-disk footprint may be much smaller.
+Each bucket is represented by a `double precision` mean and a 64-bit count
+(i.e. 16B per bucket), so the maximum of 10000 buckets means the largest
+possible t-digest is ~160kB. That is however before the transparent
+compression all varlena types go through, so the on-disk footprint may be
+much smaller.
 
 It's hard to say what is a good accuracy value, as it very much depends on
 the data set (how non-uniform the data distribution is, etc.), but given a
@@ -89,6 +95,8 @@ functions (with `tdigest` as the first argument).
 
 * `tdigest(value double precision, compression int)`
 
+* `tdigest(digest tdigest)`
+
 * `tdigest_percentile(digest tdigest,
                       quantile double precision)`
 
@@ -96,10 +104,13 @@ functions (with `tdigest` as the first argument).
                       quantiles double precision[])`
 
 * `tdigest_percentile_of(digest tdigest,
-                         value double precision)`
+                         hypothetical_value double precision)`
 
 * `tdigest_percentile_of(digest tdigest,
-                         values double precision[])`
+                         hypothetical_values double precision[])`
+
+The `tdigest(digest tdigest)` variant is an aggregate merging multiple
+pre-computed digests into a single digest, which can be stored again.
 
 So for example you may do this:
 
@@ -172,7 +183,9 @@ many times), it may be more efficient to partially pre-aggregate the data
 and use functions that allow specifying the number of occurrences for each
 value. This reduces the number of SQL-function calls.
 
-There are five such aggregate functions:
+There are seven such aggregate functions:
+
+* `tdigest(value double precision, count bigint, compression int)`
 
 * `tdigest_percentile(value double precision, count bigint, compression int,
                       quantile double precision)`
@@ -181,19 +194,31 @@ There are five such aggregate functions:
                       quantiles double precision[])`
 
 * `tdigest_percentile_of(value double precision, count bigint, compression int,
-                         value double precision)`
+                         hypothetical_value double precision)`
 
 * `tdigest_percentile_of(value double precision, count bigint, compression int,
-                         values double precision[])`
+                         hypothetical_values double precision[])`
 
-* `tdigest(value double precision, count bigint, compression int)`
+* `tdigest_avg(value double precision, count bigint, compression int,
+               low double precision, high double precision)`
+
+* `tdigest_sum(value double precision, count bigint, compression int,
+               low double precision, high double precision)`
+
+The `count` has to be a positive value, and it determines how many times
+the value is added to the digest. See the "trimmed aggregates" section
+for more details about `low` and `high` parameters.
 
 
 ## Incremental updates
 
 An existing t-digest may be updated incrementally, either by adding a single
-value, or by merging-in a whole t-digest. For example, it's possible to add
-1000 random values to the t-digest like this:
+value, or by merging-in a whole t-digest. The following examples use the
+table `t` with the pre-aggregated digests (in column `d`), built in the
+previous section.
+
+For example, it's possible to add 1000 random values to the t-digests like
+this:
 
 ```
 DO LANGUAGE plpgsql $$
@@ -214,10 +239,10 @@ or a t-digest.
 ```
 DO LANGUAGE plpgsql $$
 DECLARE
-  a double precision[];
+  vals double precision[];
 BEGIN
-  SELECT array_agg(random()) INTO a FROM generate_series(1,1000);
-  UPDATE t SET d = tdigest_add(d, a);
+  SELECT array_agg(random()) INTO vals FROM generate_series(1,1000);
+  UPDATE t SET d = tdigest_add(d, vals);
 END $$;
 ```
 
@@ -241,26 +266,76 @@ API allow disabling compaction by setting the `compact` parameter to `false`.
 The disadvantage is that without the compaction, the resulting digests may
 be somewhat larger (by a factor of 10). It's advisable to use either the
 multi-value functions (with compaction after each batch) if possible, or
-force compaction, e.g. by doing something like this:
+force compaction, e.g. by re-aggregating the digest using the `tdigest`
+aggregate:
 
 ```
-UPDATE t SET d = tdigest_union(NULL, d);
+UPDATE p SET d = (SELECT tdigest(x) FROM (SELECT p.d) s(x));
 ```
+
+Note that `tdigest_add` and `tdigest_union` simply return the other argument
+when one of the digests is `NULL`, so e.g. `tdigest_union(NULL, d)` does
+*not* compact the digest.
 
 
 ## Trimmed aggregates
 
-The extension provides two aggregate functions allowing to calculate trimmed
-(truncted) sum and average.
+The extension provides aggregate functions allowing to calculate trimmed
+(truncated) sum and average, either directly from the values or from a
+pre-computed digest:
+
+* `tdigest_sum(value double precision, compression int,
+               low double precision, high double precision)`
+
+* `tdigest_sum(value double precision, count bigint, compression int,
+               low double precision, high double precision)`
 
 * `tdigest_sum(digest tdigest, low double precision, high double precision)`
 
+* `tdigest_avg(value double precision, compression int,
+               low double precision, high double precision)`
+
+* `tdigest_avg(value double precision, count bigint, compression int,
+               low double precision, high double precision)`
+
 * `tdigest_avg(digest tdigest, low double precision, high double precision)`
 
-The `low` and `high` parameters specify where to truncte the data.
+The `low` and `high` parameters specify where to truncate the data. They are
+percentiles (not values), so both have to be in `[0.0, 1.0]` with
+`low <= high`, otherwise an error is raised. For example `low = 0.1` and
+`high = 0.9` means the lowest and highest 10% of the values are discarded.
+
+There are also two non-aggregate functions, calculating the trimmed sum and
+average for a single `tdigest` value:
+
+* `tdigest_digest_sum(digest tdigest, low double precision DEFAULT 0.0,
+                      high double precision DEFAULT 1.0)`
+
+* `tdigest_digest_avg(digest tdigest, low double precision DEFAULT 0.0,
+                      high double precision DEFAULT 1.0)`
+
+The difference between `tdigest_sum(digest, low, high)` and
+`tdigest_digest_sum(digest, low, high)` is that the former is an aggregate
+(combining all the digests in a group first), while the latter is a plain
+function processing a single digest value (and thus may be combined with
+other columns without a `GROUP BY` clause).
 
 
 ## Functions
+
+The following list covers the complete SQL API. The `accuracy` parameter is
+the compression used when building the t-digest, as described in the
+[Accuracy](#accuracy) section.
+
+The `tdigest`, `tdigest_percentile`, `tdigest_percentile_of`, `tdigest_avg`
+and `tdigest_sum` functions are aggregates (all of them parallel safe), while
+`tdigest_count`, `tdigest_add`, `tdigest_union`, `tdigest_json`,
+`tdigest_double_array`, `tdigest_digest_sum` and `tdigest_digest_avg` are
+plain functions operating on a single `tdigest` value.
+
+The examples use a table `t` with the values in column `c`, and - for the
+variants with a `count` parameter - the number of occurrences of each value
+in column `a`. The counts have to be positive, otherwise an error is raised.
 
 ### `tdigest_percentile(value, accuracy, percentile)`
 
@@ -444,17 +519,40 @@ SELECT tdigest(t.c, t.a, 100) FROM t
 - `accuracy` - accuracy of the t-digest
 
 
+### `tdigest(digest)`
+
+Merges pre-computed t-digests into a single t-digest. This is also the way
+to force compaction of a digest built with `compact = false`.
+
+#### Synopsis
+
+```
+SELECT tdigest(d) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t GROUP BY t.a
+) foo
+```
+
+#### Parameters
+
+- `digest` - t-digests to merge
+
+
 ### `tdigest_count(tdigest)`
 
-Returns number of items represented by the t-digest.
+Returns number of items represented by the t-digest. This is a plain
+function, not an aggregate.
 
 #### Synopsis
 
 ```
 SELECT tdigest_count(d) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
 ```
+
+#### Parameters
+
+- `tdigest` - t-digest to inspect
 
 
 ### `tdigest_percentile(tdigest, percentile)`
@@ -465,7 +563,7 @@ Computes requested percentile from the pre-computed t-digests.
 
 ```
 SELECT tdigest_percentile(d, 0.99) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
 ```
 
@@ -483,7 +581,7 @@ Computes requested percentiles from the pre-computed t-digests.
 
 ```
 SELECT tdigest_percentile(d, ARRAY[0.95, 0.99]) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
 ```
 
@@ -501,7 +599,7 @@ Computes relative rank of a hypothetical value, using a pre-computed t-digest.
 
 ```
 SELECT tdigest_percentile_of(d, 349834.1) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
 ```
 
@@ -519,7 +617,7 @@ Computes relative ranks of hypothetical values, using a pre-computed t-digest.
 
 ```
 SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
-    SELECT tdigest(t.c, 100) FROM t
+    SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
 ```
 
@@ -541,9 +639,10 @@ UPDATE t SET d = tdigest_add(d, random());
 
 #### Parameters
 
-- `tdigest` - t-digest to update
+- `tdigest` - t-digest to update (may be `NULL`)
 - `element` - value to add to the digest
-- `compression` - compression t (used when t-digest is `NULL`)
+- `compression` - compression to use (required when the t-digest is `NULL`,
+  ignored otherwise; default: `NULL`)
 - `compact` - force compaction (default: true)
 
 
@@ -559,28 +658,30 @@ UPDATE t SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
 
 #### Parameters
 
-- `tdigest` - t-digest to update
+- `tdigest` - t-digest to update (may be `NULL`)
 - `elements` - array of values to add to the digest
-- `compression` - compression t (used when t-digest is `NULL`)
+- `compression` - compression to use (required when the t-digest is `NULL`,
+  ignored otherwise; default: `NULL`)
 - `compact` - force compaction (default: true)
 
 
 ### `tdigest_union(tdigest, tdigest)`
 
 Performs incremental update of the t-digest by merging-in another digest.
+When either of the digests is `NULL`, the other one is returned unchanged
+(without compaction).
 
 #### Synopsis
 
 ```
 WITH x AS (SELECT tdigest(random(), 100) AS d FROM generate_series(1,1000))
-UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
+UPDATE t SET d = tdigest_union(p.d, x.d) FROM x;
 ```
 
 #### Parameters
 
-- `tdigest` - t-digest to update
-- `tdigest_add` - t-digest to merge into `tdigest`
-- `compression` - compression t (used when t-digest is `NULL`)
+- `digest1` - t-digest to update
+- `digest2` - t-digest to merge into `digest1`
 - `compact` - force compaction (default: true)
 
 
@@ -609,7 +710,9 @@ SELECT CAST(d AS json) FROM (
 ### `tdigest_double_array(tdigest)`
 
 Returns the t-digest as a `double precision[]` array. The function is also
-exposed as a cast from `tdigest` to `double precision[]`.
+exposed as a cast from `tdigest` to `double precision[]`. The array contains
+the flags, the total number of items, the compression and the number of
+centroids, followed by a `(mean, count)` pair for each centroid.
 
 #### Synopsis
 
@@ -628,17 +731,40 @@ SELECT CAST(d AS double precision[]) FROM (
 - `tdigest` - t-digest to cast to a `double precision[]` value
 
 
-### `tdigest_avg(value, count, accuracy, low, high)`
+### `tdigest_avg(value, accuracy, low, high)`
 
 Computes trimmed mean of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
+The `low` and `high` values are percentiles in [0, 1] (with `low <= high`)
+specifying which part of the sample should be included in the mean, so e.g.
+`low = 0.1` and `high = 0.9` means 10% low and high values will be
+discarded.
 
 #### Synopsis
 
 ```
-SELECT tdigest_avg(t.v, t.c, 100, 0.1, 0.9) FROM t
+SELECT tdigest_avg(t.c, 100, 0.1, 0.9) FROM t
+```
+
+#### Parameters
+
+- `value` - values to aggregate
+- `accuracy` - accuracy of the t-digest
+- `low` - low threshold percentile (values below are discarded)
+- `high` - high threshold percentile (values above are discarded)
+
+
+### `tdigest_avg(value, count, accuracy, low, high)`
+
+Computes trimmed mean of values, discarding values at the low and high end.
+The `low` and `high` values are percentiles in [0, 1] (with `low <= high`)
+specifying which part of the sample should be included in the mean, so e.g.
+`low = 0.1` and `high = 0.9` means 10% low and high values will be
+discarded.
+
+#### Synopsis
+
+```
+SELECT tdigest_avg(t.c, t.a, 100, 0.1, 0.9) FROM t
 ```
 
 #### Parameters
@@ -647,15 +773,16 @@ SELECT tdigest_avg(t.v, t.c, 100, 0.1, 0.9) FROM t
 - `count` - number of occurrences of the value
 - `accuracy` - accuracy of the t-digest
 - `low` - low threshold percentile (values below are discarded)
-- `high` - high threshold percentile (values above are discarded)v
+- `high` - high threshold percentile (values above are discarded)
 
 
 ### `tdigest_avg(tdigest, low, high)`
 
 Computes trimmed mean of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the mean, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
+The `low` and `high` values are percentiles in [0, 1] (with `low <= high`)
+specifying which part of the sample should be included in the mean, so e.g.
+`low = 0.1` and `high = 0.9` means 10% low and high values will be
+discarded.
 
 #### Synopsis
 
@@ -675,14 +802,15 @@ SELECT tdigest_avg(d, 0.05, 0.95) FROM (
 ### `tdigest_sum(value, accuracy, low, high)`
 
 Computes trimmed sum of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
+The `low` and `high` values are percentiles in [0, 1] (with `low <= high`)
+specifying which part of the sample should be included in the sum, so e.g.
+`low = 0.1` and `high = 0.9` means 10% low and high values will be
+discarded.
 
 #### Synopsis
 
 ```
-SELECT tdigest_sum(t.v, 100, 0.1, 0.9) FROM t
+SELECT tdigest_sum(t.c, 100, 0.1, 0.9) FROM t
 ```
 
 #### Parameters
@@ -696,14 +824,15 @@ SELECT tdigest_sum(t.v, 100, 0.1, 0.9) FROM t
 ### `tdigest_sum(value, count, accuracy, low, high)`
 
 Computes trimmed sum of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
+The `low` and `high` values are percentiles in [0, 1] (with `low <= high`)
+specifying which part of the sample should be included in the sum, so e.g.
+`low = 0.1` and `high = 0.9` means 10% low and high values will be
+discarded.
 
 #### Synopsis
 
 ```
-SELECT tdigest_sum(t.v, t.c, 100, 0.1, 0.9) FROM t
+SELECT tdigest_sum(t.c, t.a, 100, 0.1, 0.9) FROM t
 ```
 
 #### Parameters
@@ -718,9 +847,10 @@ SELECT tdigest_sum(t.v, t.c, 100, 0.1, 0.9) FROM t
 ### `tdigest_sum(tdigest, low, high)`
 
 Computes trimmed sum of values, discarding values at the low and high end.
-The `low` and `high` values specify which part of the sample should be
-included in the sum, so e.g. `low = 0.1` and `high = 0.9` means 10% low
-and high values will be discarded.
+The `low` and `high` values are percentiles in [0, 1] (with `low <= high`)
+specifying which part of the sample should be included in the sum, so e.g.
+`low = 0.1` and `high = 0.9` means 10% low and high values will be
+discarded.
 
 #### Synopsis
 
@@ -737,38 +867,44 @@ SELECT tdigest_sum(d, 0.05, 0.95) FROM (
 - `high` - high threshold percentile (values above are discarded)
 
 
-### `tdigest_avg(tdigest, double precision, double precision)`
+### `tdigest_digest_avg(tdigest, low, high)`
 
-Calculates average of values between the low and high threshold.
-
-#### Synopsis
-
-```
-SELECT tdigest_avg(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
-```
-
-#### Parameters
-
-- `tdigest` - t-digest to calculate average for
-- `low` - low threshold (truncate values below)
-- `high` - high threshold (truncate values above)
-
-
-### `tdigest_sum(tdigest, double precision, double precision)`
-
-Calculates sum of values between the low and high threshold.
+Calculates trimmed mean for a single t-digest value. Unlike `tdigest_avg`,
+this is a plain function, not an aggregate.
 
 #### Synopsis
 
 ```
-SELECT tdigest_sum(tdigest(v, 100), 0.25, 0.75) FROM generate_series(1,10000)
+SELECT tdigest_digest_avg(d, 0.25, 0.75) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
 ```
 
 #### Parameters
 
-- `tdigest` - t-digest to calculate sum for
-- `low` - low threshold (truncate values below)
-- `high` - high threshold (truncate values above)
+- `tdigest` - t-digest to calculate the mean for
+- `low` - low threshold percentile (values below are discarded, default: 0.0)
+- `high` - high threshold percentile (values above are discarded, default: 1.0)
+
+
+### `tdigest_digest_sum(tdigest, low, high)`
+
+Calculates trimmed sum for a single t-digest value. Unlike `tdigest_sum`,
+this is a plain function, not an aggregate.
+
+#### Synopsis
+
+```
+SELECT tdigest_digest_sum(d, 0.25, 0.75) FROM (
+    SELECT tdigest(t.c, 100) AS d FROM t
+) foo;
+```
+
+#### Parameters
+
+- `tdigest` - t-digest to calculate the sum for
+- `low` - low threshold percentile (values below are discarded, default: 0.0)
+- `high` - high threshold percentile (values above are discarded, default: 1.0)
 
 
 Notes
