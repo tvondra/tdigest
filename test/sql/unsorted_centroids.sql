@@ -1,0 +1,268 @@
+-- The centroids of a t-digest are expected to be sorted by mean, but a digest
+-- with the centroids in an arbitrary order is a perfectly valid value - the
+-- incremental API keeps the digests uncompacted (and thus unsorted), and such
+-- digests may get stored on disk, dumped, replicated, etc. The input functions
+-- therefore accept unsorted digests, and all the places that need the sorted
+-- order are expected to do the sort themselves.
+--
+-- This checks that really is the case - for each digest we build a couple of
+-- variants with the centroids reordered (reversed, and then shuffled in a
+-- deterministic but arbitrary way), and then compare the results of
+--
+--     tdigest_percentile()      (both the scalar and the array variant)
+--     tdigest_percentile_of()   (both the scalar and the array variant)
+--     tdigest_sum()
+--     tdigest_avg()
+--
+-- to the results for the original (sorted) digest. The results have to match
+-- exactly, not just approximately - reordering the centroids does not lose any
+-- information, so the sort has to reconstruct exactly the same digest.
+
+\set VERBOSITY terse
+
+SET extra_float_digits = 0;
+
+-- Decompose a digest into individual centroids. The digest has no API to do
+-- this directly, so we go through the text representation. The functions set
+-- extra_float_digits, so that the means survive the round trip exactly.
+CREATE FUNCTION tdigest_unsorted_centroids(d tdigest)
+RETURNS TABLE (ord bigint, mean double precision, cnt bigint)
+LANGUAGE sql SET extra_float_digits = 3 AS $$
+    SELECT o,
+           split_part(btrim(m[1], ' ()'), ',', 1)::double precision,
+           split_part(btrim(m[1], ' ()'), ',', 2)::bigint
+      FROM regexp_matches(d::text, ' \([^)]*\)', 'g') WITH ORDINALITY AS x(m, o);
+$$;
+
+-- Rebuild the digest with the centroids in a different order. Seed 0 simply
+-- reverses the centroids (so that the means are in a descending order), any
+-- other seed shuffles them - the order is arbitrary, but it's derived from
+-- md5() so it's stable and does not depend on the PRNG of the server.
+CREATE FUNCTION tdigest_unsorted_reorder(d tdigest, seed int)
+RETURNS tdigest
+LANGUAGE sql SET extra_float_digits = 3 AS $$
+    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+            coalesce(string_agg(m[1], ''
+                                ORDER BY CASE WHEN seed = 0 THEN -o ELSE 0 END,
+                                         md5(seed::text || ':' || o::text)), ''))::tdigest
+      FROM regexp_matches(d::text, ' \([^)]*\)', 'g') WITH ORDINALITY AS x(m, o);
+$$;
+
+-- Are the centroids of the digest sorted by mean?
+CREATE FUNCTION tdigest_unsorted_is_sorted(d tdigest)
+RETURNS boolean
+LANGUAGE sql AS $$
+    SELECT coalesce(bool_and(mean >= prev_mean), true)
+      FROM (SELECT mean, lag(mean) OVER (ORDER BY ord) AS prev_mean
+              FROM tdigest_unsorted_centroids(d)) x
+     WHERE prev_mean IS NOT NULL;
+$$;
+
+
+-- The digests to check. A couple of hand-written ones first, so that we know
+-- exactly what centroids they consist of.
+CREATE TABLE tdigest_unsorted_digests (id int, descr text, d tdigest);
+
+INSERT INTO tdigest_unsorted_digests VALUES
+    (1, 'two centroids',
+        'flags 1 count 10 compression 10000 centroids 2 (0, 7) (100, 3)'),
+    (2, 'three centroids, mixed counts',
+        'flags 1 count 12 compression 10000 centroids 3 (0, 3) (50, 4) (100, 5)'),
+    (3, 'negative and positive means',
+        'flags 1 count 8 compression 10000 centroids 4 (-100, 2) (-1, 2) (1, 2) (100, 2)'),
+    (4, 'repeated means (the sort has to rebalance those)',
+        'flags 1 count 12 compression 10000 centroids 5 (0, 1) (50, 3) (50, 4) (50, 3) (100, 1)'),
+    (5, 'a large centroid in the middle',
+        'flags 1 count 22 compression 10000 centroids 3 (0, 1) (10, 20) (20, 1)'),
+    (6, 'a single centroid',
+        'flags 1 count 10 compression 10000 centroids 1 (50, 10)');
+
+-- And then digests built by the aggregate from actual data. The first one is
+-- small enough not to be compacted at all (so each centroid holds a single
+-- item), the others are compacted with different compression values.
+INSERT INTO tdigest_unsorted_digests
+SELECT 7, 'built from 1000 distinct values, no compaction',
+       tdigest(i::double precision, 10000)
+  FROM generate_series(1, 1000) s(i);
+
+INSERT INTO tdigest_unsorted_digests
+SELECT 8, 'built from 10000 rows, compression 100',
+       tdigest((i % 1000)::double precision, 100)
+  FROM generate_series(1, 10000) s(i);
+
+INSERT INTO tdigest_unsorted_digests
+SELECT 9, 'built from 10000 rows, compression 10',
+       tdigest((i % 1000)::double precision, 10)
+  FROM generate_series(1, 10000) s(i);
+
+INSERT INTO tdigest_unsorted_digests
+SELECT 10, 'built from 10000 random values, compression 100',
+       tdigest(1000 * v, 100)
+  FROM prng(10000) s(v);
+
+INSERT INTO tdigest_unsorted_digests
+SELECT 11, 'built from 10000 values with duplicities, compression 50',
+       tdigest((10 * v)::int::double precision, 50)
+  FROM prng(10000) s(v);
+
+-- All of them have to be sorted, otherwise the whole test is pointless.
+SELECT id, descr FROM tdigest_unsorted_digests
+ WHERE NOT tdigest_unsorted_is_sorted(d) ORDER BY id;
+
+
+-- Build the variants. Variant 0 is the original (sorted) digest, variant 1 has
+-- the centroids in the reverse order, and variants 2-6 have them shuffled.
+CREATE TABLE tdigest_unsorted_variants (id int, variant int, d tdigest);
+
+INSERT INTO tdigest_unsorted_variants
+SELECT id, 0, d FROM tdigest_unsorted_digests;
+
+INSERT INTO tdigest_unsorted_variants
+SELECT id, k + 1, tdigest_unsorted_reorder(d, k)
+  FROM tdigest_unsorted_digests, generate_series(0, 5) s(k);
+
+-- The reordering must not change the contents of the digest in any way - the
+-- header has to be the same, and the centroids have to be the very same
+-- multiset, just in a different order. So both the "differs" columns have to
+-- be 0. The last column says how many of the variants really ended up with
+-- the centroids out of order - it's less than the number of variants for the
+-- digests with very few centroids (and it's 0 for the single centroid digest,
+-- which can't be unsorted at all).
+SELECT v.id, g.descr,
+       count(*) AS variants,
+       count(*) FILTER (WHERE substring(v.d::text FROM '^[^(]*')
+                           IS DISTINCT FROM substring(g.d::text FROM '^[^(]*')) AS header_differs,
+       count(*) FILTER (WHERE EXISTS (SELECT mean, cnt FROM tdigest_unsorted_centroids(v.d)
+                                      EXCEPT ALL
+                                      SELECT mean, cnt FROM tdigest_unsorted_centroids(g.d))
+                           OR EXISTS (SELECT mean, cnt FROM tdigest_unsorted_centroids(g.d)
+                                      EXCEPT ALL
+                                      SELECT mean, cnt FROM tdigest_unsorted_centroids(v.d))) AS centroids_differ,
+       count(*) FILTER (WHERE NOT tdigest_unsorted_is_sorted(v.d)) AS actually_unsorted
+  FROM tdigest_unsorted_variants v JOIN tdigest_unsorted_digests g ON (g.id = v.id)
+ WHERE v.variant > 0
+ GROUP BY v.id, g.descr ORDER BY v.id;
+
+
+-- The percentiles / values / trim ranges to probe the digests with. The digests
+-- cover fairly different ranges of values, but that does not matter - we only
+-- compare the results to each other, not to some expected value.
+CREATE TABLE tdigest_unsorted_percentiles (id int, p double precision);
+
+INSERT INTO tdigest_unsorted_percentiles
+SELECT i, i / 20.0 FROM generate_series(0, 20) s(i);
+
+CREATE TABLE tdigest_unsorted_values (id int, v double precision);
+
+INSERT INTO tdigest_unsorted_values (id, v)
+SELECT row_number() OVER (ORDER BY v), v
+  FROM unnest(ARRAY[-1000, -100.5, -100, -50, -1, -0.5, 0, 0.5, 1, 10, 20, 49.5,
+                    50, 99.5, 100, 250, 500, 750, 999, 1000, 5000]::double precision[]) AS v;
+
+CREATE TABLE tdigest_unsorted_trims (id int, low double precision, high double precision);
+
+INSERT INTO tdigest_unsorted_trims VALUES
+    (1, 0.0, 1.0),
+    (2, 0.1, 0.9),
+    (3, 0.0, 0.5),
+    (4, 0.5, 1.0),
+    (5, 0.25, 0.75),
+    (6, 0.05, 0.15),
+    (7, 0.9, 0.95),
+    (8, 0.33, 0.34);
+
+
+-- Evaluate all the functions for all the digests / variants / probes.
+CREATE TABLE tdigest_unsorted_results (func text, id int, variant int,
+                                       probe int, res double precision);
+
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_percentile', v.id, v.variant, p.id, tdigest_percentile(v.d, p.p)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_percentiles p
+ GROUP BY v.id, v.variant, p.id, p.p;
+
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_percentile (array)', r.id, r.variant, o::int, x
+  FROM (SELECT v.id, v.variant, tdigest_percentile(v.d, p.arr) AS res
+          FROM tdigest_unsorted_variants v,
+               (SELECT array_agg(p ORDER BY id) AS arr
+                  FROM tdigest_unsorted_percentiles) p
+         GROUP BY v.id, v.variant, p.arr) r,
+       unnest(r.res) WITH ORDINALITY AS u(x, o);
+
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_percentile_of', v.id, v.variant, p.id, tdigest_percentile_of(v.d, p.v)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_values p
+ GROUP BY v.id, v.variant, p.id, p.v;
+
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_percentile_of (array)', r.id, r.variant, o::int, x
+  FROM (SELECT v.id, v.variant, tdigest_percentile_of(v.d, p.arr) AS res
+          FROM tdigest_unsorted_variants v,
+               (SELECT array_agg(v ORDER BY id) AS arr
+                  FROM tdigest_unsorted_values) p
+         GROUP BY v.id, v.variant, p.arr) r,
+       unnest(r.res) WITH ORDINALITY AS u(x, o);
+
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_sum', v.id, v.variant, t.id, tdigest_sum(v.d, t.low, t.high)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t
+ GROUP BY v.id, v.variant, t.id, t.low, t.high;
+
+INSERT INTO tdigest_unsorted_results
+SELECT 'tdigest_avg', v.id, v.variant, t.id, tdigest_avg(v.d, t.low, t.high)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t
+ GROUP BY v.id, v.variant, t.id, t.low, t.high;
+
+
+-- How many results did we compare, and how many of them do not match the
+-- result for the sorted digest? The number of mismatches has to be 0.
+SELECT r.func, count(*) AS comparisons,
+       count(*) FILTER (WHERE r.res IS DISTINCT FROM s.res) AS mismatches
+  FROM tdigest_unsorted_results r
+  JOIN tdigest_unsorted_results s ON (s.func = r.func AND s.id = r.id AND
+                                      s.probe = r.probe AND s.variant = 0)
+ WHERE r.variant > 0
+ GROUP BY r.func ORDER BY r.func;
+
+-- And the details of the mismatches, so that a failure is readable. This has
+-- to produce no rows at all.
+SELECT r.func, r.id, g.descr, r.variant, r.probe,
+       s.res AS sorted, r.res AS unsorted
+  FROM tdigest_unsorted_results r
+  JOIN tdigest_unsorted_results s ON (s.func = r.func AND s.id = r.id AND
+                                      s.probe = r.probe AND s.variant = 0)
+  JOIN tdigest_unsorted_digests g ON (g.id = r.id)
+ WHERE r.variant > 0 AND r.res IS DISTINCT FROM s.res
+ ORDER BY r.func, r.id, r.variant, r.probe;
+
+
+-- Finally a couple of explicit checks on a small digest with the centroids in
+-- the reverse order, spelled out - just to make sure the comparison above is
+-- not comparing something trivially identical.
+SELECT tdigest_unsorted_reorder('flags 1 count 12 compression 10000 centroids 3 (0, 3) (50, 4) (100, 5)'::tdigest, 0);
+
+WITH d(descr, d) AS (
+    VALUES ('sorted',   'flags 1 count 12 compression 10000 centroids 3 (0, 3) (50, 4) (100, 5)'::tdigest),
+           ('reversed', 'flags 1 count 12 compression 10000 centroids 3 (100, 5) (50, 4) (0, 3)'::tdigest)
+)
+SELECT descr,
+       tdigest_percentile(d, 0.25) AS "percentile 0.25",
+       tdigest_percentile(d, 0.75) AS "percentile 0.75",
+       tdigest_percentile_of(d, 25.0) AS "percentile of 25",
+       tdigest_percentile_of(d, 75.0) AS "percentile of 75",
+       tdigest_sum(d, 0.1, 0.9) AS "sum 0.1-0.9",
+       tdigest_avg(d, 0.1, 0.9) AS "avg 0.1-0.9"
+  FROM d GROUP BY descr ORDER BY descr;
+
+
+DROP TABLE tdigest_unsorted_results;
+DROP TABLE tdigest_unsorted_trims;
+DROP TABLE tdigest_unsorted_values;
+DROP TABLE tdigest_unsorted_percentiles;
+DROP TABLE tdigest_unsorted_variants;
+DROP TABLE tdigest_unsorted_digests;
+
+DROP FUNCTION tdigest_unsorted_is_sorted(tdigest);
+DROP FUNCTION tdigest_unsorted_reorder(tdigest, int);
+DROP FUNCTION tdigest_unsorted_centroids(tdigest);
