@@ -8,13 +8,13 @@
 \set VERBOSITY terse
 
 -- zero count
-SELECT tdigest_avg(v, 0::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
-SELECT tdigest_sum(v, 0::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_avg(tdigest(v, 0::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_sum(tdigest(v, 0::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
 
 -- negative count
-SELECT tdigest_avg(v, -1::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
-SELECT tdigest_sum(v, -1::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_avg(tdigest(v, -1::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_sum(tdigest(v, -1::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
 
 -- the smallest valid count has to work
-SELECT tdigest_avg(v, 1::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
-SELECT tdigest_sum(v, 1::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_avg(tdigest(v, 1::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_sum(tdigest(v, 1::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0)) AS t(v);

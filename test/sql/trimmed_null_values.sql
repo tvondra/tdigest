@@ -8,13 +8,13 @@
 -- transition function returns the existing state unmodified).
 
 -- tdigest_add_double_trimmed
-SELECT tdigest_avg(v, 100, 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
-SELECT tdigest_avg(v, 100, 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);
-SELECT tdigest_sum(v, 100, 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
-SELECT tdigest_sum(v, 100, 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);
+SELECT tdigest_avg(tdigest(v, 100), 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
+SELECT tdigest_avg(tdigest(v, 100), 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);
+SELECT tdigest_sum(tdigest(v, 100), 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
+SELECT tdigest_sum(tdigest(v, 100), 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);
 
 -- tdigest_add_double_count_trimmed
-SELECT tdigest_avg(v, 1::bigint, 100, 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
-SELECT tdigest_avg(v, 1::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);
-SELECT tdigest_sum(v, 1::bigint, 100, 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
-SELECT tdigest_sum(v, 1::bigint, 100, 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);
+SELECT tdigest_avg(tdigest(v, 1::bigint, 100), 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
+SELECT tdigest_avg(tdigest(v, 1::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);
+SELECT tdigest_sum(tdigest(v, 1::bigint, 100), 0.0, 1.0) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
+SELECT tdigest_sum(tdigest(v, 1::bigint, 100), 0.0, 1.0) FROM (VALUES (1.0), (NULL)) AS t(v);

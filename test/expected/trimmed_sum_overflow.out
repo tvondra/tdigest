@@ -21,104 +21,104 @@
 -- instead of silently returning infinity.
 --
 --     query                                    before        after
---     tdigest_digest_avg((1e307, 100))         Infinity      1e+307
---     tdigest_digest_sum((1e307, 100))         Infinity      ERROR
---     tdigest_digest_avg((-1e308,2) (1e308,2)) NaN           0
---     tdigest_digest_sum((-1e308,2) (1e308,2)) NaN           0
+--     tdigest_avg((1e307, 100))         Infinity      1e+307
+--     tdigest_sum((1e307, 100))         Infinity      ERROR
+--     tdigest_avg((-1e308,2) (1e308,2)) NaN           0
+--     tdigest_sum((-1e308,2) (1e308,2)) NaN           0
 --
--- This affects tdigest_digest_sum() and tdigest_digest_avg() as well as the
+-- This affects tdigest_sum() and tdigest_avg() as well as the
 -- tdigest_sum() and tdigest_avg() aggregates, i.e. anything going through
 -- tdigest_trimmed_agg().
 -- The average is representable, the sum is not. The average has to be
 -- 1e307, the sum has to be reported as an overflow.
-SELECT tdigest_digest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
- tdigest_digest_avg 
---------------------
-             1e+307
+SELECT tdigest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
+ tdigest_avg 
+-------------
+      1e+307
 (1 row)
 
-SELECT tdigest_digest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
+SELECT tdigest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
 ERROR:  value out of range: overflow
 -- Trimming does not change that, as long as enough items remain.
-SELECT tdigest_digest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
- tdigest_digest_avg 
---------------------
-             1e+307
+SELECT tdigest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
+ tdigest_avg 
+-------------
+      1e+307
 (1 row)
 
-SELECT tdigest_digest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
+SELECT tdigest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
 ERROR:  value out of range: overflow
 -- Trim it down to a single item, and even the sum fits again.
-SELECT tdigest_digest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
- tdigest_digest_avg 
---------------------
-             1e+307
+SELECT tdigest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
+ tdigest_avg 
+-------------
+      1e+307
 (1 row)
 
-SELECT tdigest_digest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
- tdigest_digest_sum 
---------------------
-             1e+307
+SELECT tdigest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
+ tdigest_sum 
+-------------
+      1e+307
 (1 row)
 
 -- Large values of both signs, cancelling out exactly. Both the average and
 -- the sum are 0, the accumulator used to end up as NaN.
-SELECT tdigest_digest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
- tdigest_digest_avg 
---------------------
-                  0
-(1 row)
-
-SELECT tdigest_digest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
- tdigest_digest_sum 
---------------------
-                  0
-(1 row)
-
--- The same, but with the values cancelling only partially.
-SELECT tdigest_digest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
- tdigest_digest_avg 
---------------------
-             5e+307
-(1 row)
-
-SELECT tdigest_digest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
-ERROR:  value out of range: overflow
--- Trim the negative values away, and only the overflowing part remains.
-SELECT tdigest_digest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
- tdigest_digest_avg 
---------------------
-             1e+308
-(1 row)
-
-SELECT tdigest_digest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
-ERROR:  value out of range: overflow
--- The trimmed aggregates on the value/count API go through a different code
--- path (the aggregate final functions), so check those too.
-SELECT tdigest_avg(1e307::float8, 200::bigint, 10, 0.0, 1.0);
-      tdigest_avg       
-------------------------
- 9.999999999999999e+306
-(1 row)
-
-SELECT tdigest_sum(1e307::float8, 200::bigint, 10, 0.0, 1.0);
-ERROR:  value out of range: overflow
--- And the plain value API.
-SELECT tdigest_avg(v, 10, 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
- tdigest_avg 
--------------
-      1e+308
-(1 row)
-
-SELECT tdigest_sum(v, 10, 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
-ERROR:  value out of range: overflow
-SELECT tdigest_avg(v, 10, 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
+SELECT tdigest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
  tdigest_avg 
 -------------
            0
 (1 row)
 
-SELECT tdigest_sum(v, 10, 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
+SELECT tdigest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
+ tdigest_sum 
+-------------
+           0
+(1 row)
+
+-- The same, but with the values cancelling only partially.
+SELECT tdigest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
+ tdigest_avg 
+-------------
+      5e+307
+(1 row)
+
+SELECT tdigest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
+ERROR:  value out of range: overflow
+-- Trim the negative values away, and only the overflowing part remains.
+SELECT tdigest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
+ tdigest_avg 
+-------------
+      1e+308
+(1 row)
+
+SELECT tdigest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
+ERROR:  value out of range: overflow
+-- The trimmed aggregates on the value/count API go through a different code
+-- path (the aggregate final functions), so check those too.
+SELECT tdigest_avg(tdigest(1e307::float8, 200::bigint, 10), 0.0, 1.0);
+      tdigest_avg       
+------------------------
+ 9.999999999999999e+306
+(1 row)
+
+SELECT tdigest_sum(tdigest(1e307::float8, 200::bigint, 10), 0.0, 1.0);
+ERROR:  value out of range: overflow
+-- And the plain value API.
+SELECT tdigest_avg(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
+ tdigest_avg 
+-------------
+      1e+308
+(1 row)
+
+SELECT tdigest_sum(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
+ERROR:  value out of range: overflow
+SELECT tdigest_avg(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
+ tdigest_avg 
+-------------
+           0
+(1 row)
+
+SELECT tdigest_sum(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
  tdigest_sum 
 -------------
            0
@@ -126,27 +126,27 @@ SELECT tdigest_sum(v, 10, 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float
 
 -- Ordinary values are not affected in any way, and an empty range still
 -- returns NULL.
-SELECT tdigest_digest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
- tdigest_digest_avg 
+SELECT tdigest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
+    tdigest_avg     
 --------------------
  22.083333333333336
 (1 row)
 
-SELECT tdigest_digest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
- tdigest_digest_sum 
---------------------
-                530
+SELECT tdigest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
+ tdigest_sum 
+-------------
+         530
 (1 row)
 
-SELECT tdigest_digest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);
- tdigest_digest_avg 
---------------------
-                   
+SELECT tdigest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);
+ tdigest_avg 
+-------------
+            
 (1 row)
 
-SELECT tdigest_digest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);
- tdigest_digest_sum 
---------------------
-                   
+SELECT tdigest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);
+ tdigest_sum 
+-------------
+            
 (1 row)
 

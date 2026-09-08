@@ -68,12 +68,12 @@ SELECT i / 100.0 FROM generate_series(1, 99) s(i);
 -- Report one row per digest that fails the round trip, so that a failure
 -- stays readable.
 WITH v AS (
-    SELECT g.id, g.descr, p.p, tdigest_percentile(g.d, p.p) AS value
+    SELECT g.id, g.descr, p.p, tdigest_percentile(tdigest(g.d), p.p) AS value
       FROM tdigest_roundtrip_digests g, tdigest_roundtrip_percentiles p
      WHERE p.p >= g.p_low AND p.p <= g.p_high
      GROUP BY g.id, g.descr, p.p
 ), rt AS (
-    SELECT v.id, v.descr, v.p, v.value, tdigest_percentile_of(g.d, v.value) AS back
+    SELECT v.id, v.descr, v.p, v.value, tdigest_percentile_of(tdigest(g.d), v.value) AS back
       FROM v, tdigest_roundtrip_digests g
      WHERE g.id = v.id
      GROUP BY v.id, v.descr, v.p, v.value
@@ -95,20 +95,20 @@ SELECT p, value,
 -- The same identity has to hold for the aggregates building the digest from
 -- data. Ten items, so the interpolated range is [0.05, 0.95].
 WITH v AS (
-    SELECT p, tdigest_percentile(i::double precision, 10000, p) AS value
+    SELECT p, tdigest_percentile(tdigest(i::double precision, 10000), p) AS value
       FROM generate_series(1, 10) s(i), unnest(ARRAY[0.1, 0.5, 0.9]::double precision[]) AS p
      GROUP BY p
 )
-SELECT v.p, v.value, tdigest_percentile_of(i::double precision, 10000, v.value) AS round_trip
+SELECT v.p, v.value, tdigest_percentile_of(tdigest(i::double precision, 10000), v.value) AS round_trip
   FROM v, generate_series(1, 10) s(i)
  GROUP BY v.p, v.value ORDER BY v.p;
 
 WITH v AS (
-    SELECT p, tdigest_percentile(i::double precision, 2::bigint, 10000, p) AS value
+    SELECT p, tdigest_percentile(tdigest(i::double precision, 2::bigint, 10000), p) AS value
       FROM generate_series(1, 5) s(i), unnest(ARRAY[0.2, 0.5, 0.8]::double precision[]) AS p
      GROUP BY p
 )
-SELECT v.p, v.value, tdigest_percentile_of(i::double precision, 2::bigint, 10000, v.value) AS round_trip
+SELECT v.p, v.value, tdigest_percentile_of(tdigest(i::double precision, 2::bigint, 10000), v.value) AS round_trip
   FROM v, generate_series(1, 5) s(i)
  GROUP BY v.p, v.value ORDER BY v.p;
 

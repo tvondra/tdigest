@@ -90,7 +90,7 @@ SELECT DISTINCT v FROM (
 -- The CDF must never decrease. Report one row per digest that breaks it, so
 -- that a failure stays readable.
 WITH q AS (
-    SELECT g.id, g.descr, p.arr, tdigest_percentile_of(g.d, p.arr) AS res
+    SELECT g.id, g.descr, p.arr, tdigest_percentile_of(tdigest(g.d), p.arr) AS res
       FROM tdigest_monotonic_digests g,
            (SELECT array_agg(v ORDER BY v) AS arr FROM tdigest_monotonic_probes) p
      GROUP BY g.id, g.descr, p.arr
@@ -107,7 +107,7 @@ SELECT id, descr, count(*) AS decreasing_steps, max(prev_r - r) AS max_drop
 
 -- And the result must always be a probability.
 WITH q AS (
-    SELECT g.id, g.descr, p.arr, tdigest_percentile_of(g.d, p.arr) AS res
+    SELECT g.id, g.descr, p.arr, tdigest_percentile_of(tdigest(g.d), p.arr) AS res
       FROM tdigest_monotonic_digests g,
            (SELECT array_agg(v ORDER BY v) AS arr FROM tdigest_monotonic_probes) p
      GROUP BY g.id, g.descr, p.arr
@@ -133,7 +133,7 @@ SELECT r[1] <= r[2] AS "0 -> 0.0001",
        r[2] <= r[3] AS "0.0001 -> 50",
        r[3] <= r[4] AS "50 -> 99.9999",
        r[4] <= r[5] AS "99.9999 -> 100"
-  FROM (SELECT tdigest_percentile_of(v, 10000, ARRAY[0.0, 0.0001, 50.0, 99.9999, 100.0]::double precision[]) AS r
+  FROM (SELECT tdigest_percentile_of(tdigest(v, 10000), ARRAY[0.0, 0.0001, 50.0, 99.9999, 100.0]::double precision[]) AS r
           FROM (VALUES (0.0::double precision), (0.0::double precision),
                        (0.0::double precision), (100.0::double precision)) t(v)) x;
 
@@ -141,7 +141,7 @@ SELECT r[1] <= r[2] AS "0 -> 0.0001",
        r[2] <= r[3] AS "0.0001 -> 50",
        r[3] <= r[4] AS "50 -> 99.9999",
        r[4] <= r[5] AS "99.9999 -> 100"
-  FROM (SELECT tdigest_percentile_of(v, c, 10000, ARRAY[0.0, 0.0001, 50.0, 99.9999, 100.0]::double precision[]) AS r
+  FROM (SELECT tdigest_percentile_of(tdigest(v, c, 10000), ARRAY[0.0, 0.0001, 50.0, 99.9999, 100.0]::double precision[]) AS r
           FROM (VALUES (0.0::double precision, 3::bigint),
                        (100.0::double precision, 1::bigint)) t(v, c)) x;
 

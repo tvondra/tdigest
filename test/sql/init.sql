@@ -13,6 +13,7 @@ SET client_min_messages = 'WARNING';
 \i tdigest--1.4.3--1.4.4.sql
 \i tdigest--1.4.4--1.4.5.sql
 \i tdigest--1.4.5--1.4.6.sql
+\i tdigest--1.4.6--2.0.0.sql
 SET client_min_messages = 'NOTICE';
 SET extra_float_digits = 0;
 

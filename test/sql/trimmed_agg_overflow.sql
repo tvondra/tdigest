@@ -34,24 +34,24 @@
 -- tdigest_trimmed_agg().
 
 -- the last value that still produces the right answer
-SELECT tdigest_digest_sum('flags 1 count 9223372036854775295 compression 10 centroids 1 (2, 9223372036854775295)'::tdigest);
-SELECT tdigest_digest_avg('flags 1 count 9223372036854775295 compression 10 centroids 1 (2, 9223372036854775295)'::tdigest);
+SELECT tdigest_sum('flags 1 count 9223372036854775295 compression 10 centroids 1 (2, 9223372036854775295)'::tdigest);
+SELECT tdigest_avg('flags 1 count 9223372036854775295 compression 10 centroids 1 (2, 9223372036854775295)'::tdigest);
 
 -- one more, and the result silently becomes NULL
-SELECT tdigest_digest_sum('flags 1 count 9223372036854775296 compression 10 centroids 1 (2, 9223372036854775296)'::tdigest);
-SELECT tdigest_digest_avg('flags 1 count 9223372036854775296 compression 10 centroids 1 (2, 9223372036854775296)'::tdigest);
+SELECT tdigest_sum('flags 1 count 9223372036854775296 compression 10 centroids 1 (2, 9223372036854775296)'::tdigest);
+SELECT tdigest_avg('flags 1 count 9223372036854775296 compression 10 centroids 1 (2, 9223372036854775296)'::tdigest);
 
 -- INT64_MAX, same thing
-SELECT tdigest_digest_sum('flags 1 count 9223372036854775807 compression 10 centroids 1 (2, 9223372036854775807)'::tdigest);
-SELECT tdigest_digest_avg('flags 1 count 9223372036854775807 compression 10 centroids 1 (2, 9223372036854775807)'::tdigest);
+SELECT tdigest_sum('flags 1 count 9223372036854775807 compression 10 centroids 1 (2, 9223372036854775807)'::tdigest);
+SELECT tdigest_avg('flags 1 count 9223372036854775807 compression 10 centroids 1 (2, 9223372036854775807)'::tdigest);
 
 -- side by side, so the discontinuity is easy to see
-SELECT n AS total_count, tdigest_digest_sum(('flags 1 count ' || n || ' compression 10 centroids 1 (2, ' || n || ')')::tdigest) AS sum
+SELECT n AS total_count, tdigest_sum(('flags 1 count ' || n || ' compression 10 centroids 1 (2, ' || n || ')')::tdigest) AS sum
   FROM (VALUES (9223372036854775295::bigint),
                (9223372036854775296::bigint),
                (9223372036854775807::bigint)) v(n);
 
-SELECT n AS total_count, tdigest_digest_avg(('flags 1 count ' || n || ' compression 10 centroids 1 (2, ' || n || ')')::tdigest) AS avg
+SELECT n AS total_count, tdigest_avg(('flags 1 count ' || n || ' compression 10 centroids 1 (2, ' || n || ')')::tdigest) AS avg
   FROM (VALUES (9223372036854775295::bigint),
                (9223372036854775296::bigint),
                (9223372036854775807::bigint)) v(n);

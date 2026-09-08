@@ -51,7 +51,7 @@ INSERT INTO tdigest_extreme_digests VALUES
 -- (the difference of the means overflowed) or Infinity (the slope underflowed
 -- to zero).
 WITH q AS (
-    SELECT id, descr, probes, tdigest_percentile_of(d, probes) AS res
+    SELECT id, descr, probes, tdigest_percentile_of(tdigest(d), probes) AS res
       FROM tdigest_extreme_digests
      GROUP BY id, descr, probes
 )
@@ -65,7 +65,7 @@ SELECT id, descr, v AS value, r AS percentile_of
 
 -- And the result still has to be a non-decreasing function of the value.
 WITH q AS (
-    SELECT id, descr, probes, tdigest_percentile_of(d, probes) AS res
+    SELECT id, descr, probes, tdigest_percentile_of(tdigest(d), probes) AS res
       FROM tdigest_extreme_digests
      GROUP BY id, descr, probes
 ), u AS (
@@ -86,7 +86,7 @@ SELECT id, descr, count(*) AS decreasing_steps
 -- values are enough to build a digest whose centroid means are far enough
 -- apart.
 WITH q AS (
-    SELECT tdigest_percentile_of(v, 10000, ARRAY[-1e307, 0.0, 1e307]::double precision[]) AS res
+    SELECT tdigest_percentile_of(tdigest(v, 10000), ARRAY[-1e307, 0.0, 1e307]::double precision[]) AS res
       FROM (VALUES (-1.7e308::double precision), (1.7e308::double precision)) t(v)
 )
 SELECT bool_and(r BETWEEN 0 AND 1) AS all_probabilities
@@ -97,7 +97,7 @@ SELECT bool_and(r BETWEEN 0 AND 1) AS all_probabilities
 (1 row)
 
 WITH q AS (
-    SELECT tdigest_percentile_of(v, c, 10000, ARRAY[-1e307, 0.0, 1e307]::double precision[]) AS res
+    SELECT tdigest_percentile_of(tdigest(v, c, 10000), ARRAY[-1e307, 0.0, 1e307]::double precision[]) AS res
       FROM (VALUES (-1.7e308::double precision, 7::bigint),
                    (1.7e308::double precision, 3::bigint)) t(v, c)
 )
@@ -117,7 +117,7 @@ SELECT bool_and(r BETWEEN 0 AND 1) AS all_probabilities
 WITH s(k) AS (
     VALUES (1::double precision), (2::double precision ^ 1022)
 ), r AS (
-    SELECT s.k, tdigest_percentile_of(t.v * s.k, t.c, 10000,
+    SELECT s.k, tdigest_percentile_of(tdigest(t.v * s.k, t.c, 10000),
                                       ARRAY[-3*s.k, -2*s.k, -1*s.k, 0*s.k, 1*s.k]) AS q
       FROM s, (VALUES (-3.0::double precision, 3::bigint),
                       (1.0::double precision, 1::bigint)) t(v, c)

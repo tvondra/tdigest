@@ -22,56 +22,56 @@
 -- instead of silently returning infinity.
 --
 --     query                                    before        after
---     tdigest_digest_avg((1e307, 100))         Infinity      1e+307
---     tdigest_digest_sum((1e307, 100))         Infinity      ERROR
---     tdigest_digest_avg((-1e308,2) (1e308,2)) NaN           0
---     tdigest_digest_sum((-1e308,2) (1e308,2)) NaN           0
+--     tdigest_avg((1e307, 100))         Infinity      1e+307
+--     tdigest_sum((1e307, 100))         Infinity      ERROR
+--     tdigest_avg((-1e308,2) (1e308,2)) NaN           0
+--     tdigest_sum((-1e308,2) (1e308,2)) NaN           0
 --
--- This affects tdigest_digest_sum() and tdigest_digest_avg() as well as the
+-- This affects tdigest_sum() and tdigest_avg() as well as the
 -- tdigest_sum() and tdigest_avg() aggregates, i.e. anything going through
 -- tdigest_trimmed_agg().
 
 -- The average is representable, the sum is not. The average has to be
 -- 1e307, the sum has to be reported as an overflow.
-SELECT tdigest_digest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
-SELECT tdigest_digest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
+SELECT tdigest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
+SELECT tdigest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest);
 
 -- Trimming does not change that, as long as enough items remain.
-SELECT tdigest_digest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
-SELECT tdigest_digest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
+SELECT tdigest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
+SELECT tdigest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.25, 0.75);
 
 -- Trim it down to a single item, and even the sum fits again.
-SELECT tdigest_digest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
-SELECT tdigest_digest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
+SELECT tdigest_avg('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
+SELECT tdigest_sum('flags 1 count 100 compression 10 centroids 1 (1e307, 100)'::tdigest, 0.5, 0.51);
 
 -- Large values of both signs, cancelling out exactly. Both the average and
 -- the sum are 0, the accumulator used to end up as NaN.
-SELECT tdigest_digest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
-SELECT tdigest_digest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
+SELECT tdigest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
+SELECT tdigest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest);
 
 -- The same, but with the values cancelling only partially.
-SELECT tdigest_digest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
-SELECT tdigest_digest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
+SELECT tdigest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
+SELECT tdigest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 1) (1e308, 3)'::tdigest);
 
 -- Trim the negative values away, and only the overflowing part remains.
-SELECT tdigest_digest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
-SELECT tdigest_digest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
+SELECT tdigest_avg('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
+SELECT tdigest_sum('flags 1 count 4 compression 10 centroids 2 (-1e308, 2) (1e308, 2)'::tdigest, 0.5, 1.0);
 
 -- The trimmed aggregates on the value/count API go through a different code
 -- path (the aggregate final functions), so check those too.
-SELECT tdigest_avg(1e307::float8, 200::bigint, 10, 0.0, 1.0);
-SELECT tdigest_sum(1e307::float8, 200::bigint, 10, 0.0, 1.0);
+SELECT tdigest_avg(tdigest(1e307::float8, 200::bigint, 10), 0.0, 1.0);
+SELECT tdigest_sum(tdigest(1e307::float8, 200::bigint, 10), 0.0, 1.0);
 
 -- And the plain value API.
-SELECT tdigest_avg(v, 10, 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
-SELECT tdigest_sum(v, 10, 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
+SELECT tdigest_avg(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
+SELECT tdigest_sum(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (1e308::float8), (1e308::float8)) t(v);
 
-SELECT tdigest_avg(v, 10, 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
-SELECT tdigest_sum(v, 10, 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
+SELECT tdigest_avg(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
+SELECT tdigest_sum(tdigest(v, 10), 0.0, 1.0) FROM (VALUES (-1e308::float8), (1e308::float8)) t(v);
 
 -- Ordinary values are not affected in any way, and an empty range still
 -- returns NULL.
-SELECT tdigest_digest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
-SELECT tdigest_digest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
-SELECT tdigest_digest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);
-SELECT tdigest_digest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);
+SELECT tdigest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
+SELECT tdigest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.1, 0.9);
+SELECT tdigest_avg('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);
+SELECT tdigest_sum('flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest, 0.5, 0.5);

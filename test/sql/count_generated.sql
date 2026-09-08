@@ -8,15 +8,15 @@
 
 -- a single distinct value, so the result is exact on both sides of the
 -- BUFFER_SIZE threshold
-SELECT tdigest_percentile_of(v, 100::bigint, 10, ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
-SELECT tdigest_percentile_of(v, 101::bigint, 10, ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
-SELECT tdigest_percentile_of(v, 1000000::bigint, 10, ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_percentile_of(tdigest(v, 100::bigint, 10), ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_percentile_of(tdigest(v, 101::bigint, 10), ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
+SELECT tdigest_percentile_of(tdigest(v, 1000000::bigint, 10), ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v);
 
 -- two distinct values, with the counts just below and just above the
 -- threshold
-SELECT tdigest_percentile_of(v, 100::bigint, 10, ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
-SELECT tdigest_percentile_of(v, 101::bigint, 10, ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+SELECT tdigest_percentile_of(tdigest(v, 100::bigint, 10), ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+SELECT tdigest_percentile_of(tdigest(v, 101::bigint, 10), ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
 
 -- a larger compression means a larger buffer, so the very same count now
 -- goes through the one-by-one path
-SELECT tdigest_percentile_of(v, 101::bigint, 100, ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
+SELECT tdigest_percentile_of(tdigest(v, 101::bigint, 100), ARRAY[1.0, 2.0]) FROM (VALUES (1.0), (2.0)) AS t(v);
