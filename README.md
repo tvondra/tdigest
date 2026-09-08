@@ -944,6 +944,42 @@ workers generally see different subsets of data for each run (and build
 different digests, which are then combined together).
 
 
+Known issues
+------------
+
+## incorrect alignment
+
+The SQL data type is defined without specifying the `ALIGNMENT` parameter,
+so it's left set to 4, the default value. This means the on-disk data may
+be misaligned, as it contains `double` fields and so the correct alignment
+would be 8. On amd64/arm64 this is mostly harmless (except for some minor
+performance penalty), but on on platforms with strict alignment it may
+cause `SIGBUS` crashes.
+
+It's not clear how to best fix this. One option would be to change the
+`CREATE TYPE`, and only use the correct alignment for new installations.
+But maybe that'd be a problem with binary upgrades? The other option is
+to simply copy the data into the correct alignment before accessing the
+double/int64 fields (on platforms with strict alignment).
+
+In fact, detoasted values are already aligned properly, because that
+allocates a new buffer - which is guaranteed to be aligned. But values
+with 4B header, while stored inline, still have the issue. This makes
+the price for extra copy much lower, we're already paying it anyway.
+
+
+## FINALFUNC_MODIFY = READ_ONLY
+
+The final functions are mutating the state (by sorting and compacting it),
+which means the `FINALFUNC_MODIFY` should not be `READ_ONLY`. This means
+the aggregates will give incorrect results when used as window functions.
+
+OTOH the mutation is sorting and compaction of the aggregate state, which
+can introduce some differences, but it's within the bounds of what we
+expect from an estimate. In fact, most final functions probably should not
+do compaction at all, just sort. Which would eliminate the differences.
+
+
 License
 -------
 This software is distributed under the terms of PostgreSQL license.
