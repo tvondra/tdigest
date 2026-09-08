@@ -85,14 +85,7 @@ typedef struct tdigest_aggstate_t {
 	int			compression;	/* compression algorithm */
 	int			ncentroids;		/* number of centroids */
 	int			ncompacted;		/* compacted part */
-	/* array of requested percentiles and values */
-	int			npercentiles;	/* number of percentiles */
-	int			nvalues;		/* number of values */
-	double		trim_low;		/* low threshold (for trimmed aggs) */
-	double		trim_high;		/* high threshold (for trimmed aggs) */
-	double	   *percentiles;	/* array of percentiles (if any) */
-	double	   *values;			/* array of values (if any) */
-	centroid_t *centroids;		/* centroids for the digest */
+	centroid_t	centroids[FLEXIBLE_ARRAY_MEMBER];	/* centroids for the digest */
 } tdigest_aggstate_t;
 
 static int  centroid_cmp(const void *a, const void *b);
@@ -327,15 +320,6 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 #ifdef USE_ASSERT_CHECKING
 	int	i;
 	int64	cnt;
-
-	Assert(state->npercentiles >= 0);
-
-	Assert(((state->npercentiles == 0) && (state->percentiles == NULL)) ||
-		   ((state->npercentiles > 0) && (state->percentiles != NULL)));
-
-	for (i = 0; i < state->npercentiles; i++)
-		Assert((state->percentiles[i] >= 0.0) &&
-			   (state->percentiles[i] <= 1.0));
 
 	Assert((state->compression >= MIN_COMPRESSION) &&
 		   (state->compression <= MAX_COMPRESSION));
@@ -1466,49 +1450,20 @@ tdigest_sort_digest(tdigest_t *digest)
  * and value(s) requested when calling the aggregate function
  */
 static tdigest_aggstate_t *
-tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression)
+tdigest_aggstate_allocate(int compression)
 {
 	Size				len;
 	tdigest_aggstate_t *state;
-	char			   *ptr;
-
-	/* at least one of those values is 0 */
-	Assert(nvalues == 0 || npercentiles == 0);
 
 	/*
-	 * We allocate a single chunk for the struct including percentiles and
-	 * centroids (including extra buffer for new data).
+	 * We allocate a single chunk for the struct with all centroids (including
+	 * extra buffer for new data).
 	 */
-	len = MAXALIGN(sizeof(tdigest_aggstate_t)) +
-		  MAXALIGN(sizeof(double) * npercentiles) +
-		  MAXALIGN(sizeof(double) * nvalues) +
-		  (BUFFER_SIZE(compression) * sizeof(centroid_t));
+	len = MAXALIGN(offsetof(tdigest_aggstate_t, centroids) +
+		  (BUFFER_SIZE(compression) * sizeof(centroid_t)));
 
-	ptr = palloc0(len);
-
-	state = (tdigest_aggstate_t *) ptr;
-	ptr += MAXALIGN(sizeof(tdigest_aggstate_t));
-
-	state->nvalues = nvalues;
-	state->npercentiles = npercentiles;
+	state = (tdigest_aggstate_t *) palloc0(len);
 	state->compression = compression;
-
-	if (npercentiles > 0)
-	{
-		state->percentiles = (double *) ptr;
-		ptr += MAXALIGN(sizeof(double) * npercentiles);
-	}
-
-	if (nvalues > 0)
-	{
-		state->values = (double *) ptr;
-		ptr += MAXALIGN(sizeof(double) * nvalues);
-	}
-
-	state->centroids = (centroid_t *) ptr;
-	ptr += (BUFFER_SIZE(compression) * sizeof(centroid_t));
-
-	Assert(ptr == (char *) state + len);
 
 	return state;
 }
@@ -1608,34 +1563,13 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int		compression = PG_GETARG_INT32(2);
-		double *percentiles = NULL;
-		int		npercentiles = 0;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		if (PG_NARGS() >= 4)
-		{
-			/* the percentile is required to create the aggregate state */
-			if (PG_ARGISNULL(3))
-				elog(ERROR, "percentile must not be NULL");
-
-			percentiles = (double *) palloc(sizeof(double));
-			percentiles[0] = PG_GETARG_FLOAT8(3);
-			npercentiles = 1;
-
-			check_percentiles(percentiles, npercentiles);
-		}
-
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
-
-		if (percentiles)
-		{
-			memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
-			pfree(percentiles);
-		}
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -1818,33 +1752,13 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int		compression = PG_GETARG_INT32(3);
-		double *percentiles = NULL;
-		int		npercentiles = 0;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		if (PG_NARGS() >= 5)
-		{
-			/* the percentile is required to create the aggregate state */
-			if (PG_ARGISNULL(4))
-				elog(ERROR, "percentile must not be NULL");
-
-			percentiles = (double *) palloc(sizeof(double));
-			percentiles[0] = PG_GETARG_FLOAT8(4);
-			npercentiles = 1;
-			check_percentiles(percentiles, npercentiles);
-		}
-
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
-
-		if (percentiles)
-		{
-			memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
-			pfree(percentiles);
-		}
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -1923,32 +1837,13 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int		compression = PG_GETARG_INT32(2);
-		double *values = NULL;
-		int		nvalues = 0;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		if (PG_NARGS() >= 4)
-		{
-			/* the value is required to create the aggregate state */
-			if (PG_ARGISNULL(3))
-				elog(ERROR, "value must not be NULL");
-
-			values = (double *) palloc(sizeof(double));
-			values[0] = PG_GETARG_FLOAT8(3);
-			nvalues = 1;
-		}
-
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
-
-		if (values)
-		{
-			memcpy(state->values, values, sizeof(double) * nvalues);
-			pfree(values);
-		}
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -1996,32 +1891,13 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int		compression = PG_GETARG_INT32(3);
-		double *values = NULL;
-		int		nvalues = 0;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		if (PG_NARGS() >= 5)
-		{
-			/* the value is required to create the aggregate state */
-			if (PG_ARGISNULL(4))
-				elog(ERROR, "value must not be NULL");
-
-			values = (double *) palloc(sizeof(double));
-			values[0] = PG_GETARG_FLOAT8(4);
-			nvalues = 1;
-		}
-
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
-
-		if (values)
-		{
-			memcpy(state->values, values, sizeof(double) * nvalues);
-			pfree(values);
-		}
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2106,33 +1982,11 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		double *percentiles = NULL;
-		int		npercentiles = 0;
-
 		MemoryContext	oldcontext;
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		if (PG_NARGS() >= 3)
-		{
-			/* the percentile is required to create the aggregate state */
-			if (PG_ARGISNULL(2))
-				elog(ERROR, "percentile must not be NULL");
-
-			percentiles = (double *) palloc(sizeof(double));
-			percentiles[0] = PG_GETARG_FLOAT8(2);
-			npercentiles = 1;
-
-			check_percentiles(percentiles, npercentiles);
-		}
-
-		state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression);
-
-		if (percentiles)
-		{
-			memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
-			pfree(percentiles);
-		}
+		state = tdigest_aggstate_allocate(digest->compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2197,31 +2051,11 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		double *values = NULL;
-		int		nvalues = 0;
-
 		MemoryContext	oldcontext;
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		if (PG_NARGS() >= 3)
-		{
-			/* the value is required to create the aggregate state */
-			if (PG_ARGISNULL(2))
-				elog(ERROR, "value must not be NULL");
-
-			values = (double *) palloc(sizeof(double));
-			values[0] = PG_GETARG_FLOAT8(2);
-			nvalues = 1;
-		}
-
-		state = tdigest_aggstate_allocate(0, nvalues, digest->compression);
-
-		if (values)
-		{
-			memcpy(state->values, values, sizeof(double) * nvalues);
-			pfree(values);
-		}
+		state = tdigest_aggstate_allocate(digest->compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2279,29 +2113,13 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression = PG_GETARG_INT32(2);
-		double *percentiles;
-		int		npercentiles;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
-		/* Percentiles are required in order to create the aggregate state. */
-		if (PG_ARGISNULL(3))
-			elog(ERROR, "percentiles must not be NULL");
-
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		percentiles = array_to_double(fcinfo,
-									  PG_GETARG_ARRAYTYPE_P(3),
-									  &npercentiles);
-
-		check_percentiles(percentiles, npercentiles);
-
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
-
-		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
-
-		pfree(percentiles);
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2349,29 +2167,13 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression = PG_GETARG_INT32(3);
-		double *percentiles;
-		int		npercentiles;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
-		/* Percentiles are required in order to create the aggregate state. */
-		if (PG_ARGISNULL(4))
-			elog(ERROR, "percentiles must not be NULL");
-
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		percentiles = array_to_double(fcinfo,
-									  PG_GETARG_ARRAYTYPE_P(4),
-									  &npercentiles);
-
-		check_percentiles(percentiles, npercentiles);
-
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
-
-		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
-
-		pfree(percentiles);
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2453,27 +2255,13 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression = PG_GETARG_INT32(2);
-		double *values;
-		int		nvalues;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
-		/* Values are required in order to create the aggregate state. */
-		if (PG_ARGISNULL(3))
-			elog(ERROR, "values must not be NULL");
-
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		values = array_to_double(fcinfo,
-								 PG_GETARG_ARRAYTYPE_P(3),
-								 &nvalues);
-
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
-
-		memcpy(state->values, values, sizeof(double) * nvalues);
-
-		pfree(values);
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2521,27 +2309,13 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression = PG_GETARG_INT32(3);
-		double *values;
-		int		nvalues;
 		MemoryContext	oldcontext;
 
 		check_compression(compression);
 
-		/* Values are required in order to create the aggregate state. */
-		if (PG_ARGISNULL(4))
-			elog(ERROR, "values must not be NULL");
-
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		values = array_to_double(fcinfo,
-								 PG_GETARG_ARRAYTYPE_P(4),
-								 &nvalues);
-
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
-
-		memcpy(state->values, values, sizeof(double) * nvalues);
-
-		pfree(values);
+		state = tdigest_aggstate_allocate(compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2629,27 +2403,11 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		double *percentiles;
-		int		npercentiles;
 		MemoryContext	oldcontext;
-
-		/* Percentiles are required in order to create the aggregate state. */
-		if (PG_ARGISNULL(2))
-			elog(ERROR, "percentiles must not be NULL");
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		percentiles = array_to_double(fcinfo,
-									  PG_GETARG_ARRAYTYPE_P(2),
-									  &npercentiles);
-
-		check_percentiles(percentiles, npercentiles);
-
-		state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression);
-
-		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
-
-		pfree(percentiles);
+		state = tdigest_aggstate_allocate(digest->compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2713,25 +2471,11 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		double *values;
-		int		nvalues;
 		MemoryContext	oldcontext;
-
-		/* Values are required in order to create the aggregate state. */
-		if (PG_ARGISNULL(2))
-			elog(ERROR, "values must not be NULL");
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		values = array_to_double(fcinfo,
-								 PG_GETARG_ARRAYTYPE_P(2),
-								 &nvalues);
-
-		state = tdigest_aggstate_allocate(0, nvalues, digest->compression);
-
-		memcpy(state->values, values, sizeof(double) * nvalues);
-
-		pfree(values);
+		state = tdigest_aggstate_allocate(digest->compression);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -2820,9 +2564,9 @@ tdigest_serial(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	len = offsetof(tdigest_aggstate_t, percentiles) +
-		  state->npercentiles * sizeof(double) +
-		  state->nvalues * sizeof(double) +
+	Assert(state->count > 0);
+
+	len = offsetof(tdigest_aggstate_t, centroids) +
 		  state->ncentroids * sizeof(centroid_t);
 
 	v = palloc(len + VARHDRSZ);
@@ -2830,20 +2574,8 @@ tdigest_serial(PG_FUNCTION_ARGS)
 	SET_VARSIZE(v, len + VARHDRSZ);
 	ptr = VARDATA(v);
 
-	memcpy(ptr, state, offsetof(tdigest_aggstate_t, percentiles));
-	ptr += offsetof(tdigest_aggstate_t, percentiles);
-
-	if (state->npercentiles > 0)
-	{
-		memcpy(ptr, state->percentiles, sizeof(double) * state->npercentiles);
-		ptr += sizeof(double) * state->npercentiles;
-	}
-
-	if (state->nvalues > 0)
-	{
-		memcpy(ptr, state->values, sizeof(double) * state->nvalues);
-		ptr += sizeof(double) * state->nvalues;
-	}
+	memcpy(ptr, state, offsetof(tdigest_aggstate_t, centroids));
+	ptr += offsetof(tdigest_aggstate_t, centroids);
 
 	/* FIXME maybe don't serialize full centroids, but just sum/count */
 	memcpy(ptr, state->centroids,
@@ -2869,52 +2601,23 @@ tdigest_deserial(PG_FUNCTION_ARGS)
 	char   *ptr = VARDATA_ANY(v);
 	tdigest_aggstate_t	tmp;
 	tdigest_aggstate_t *state;
-	double			   *percentiles = NULL;
-	double			   *values = NULL;
 
 	/* copy aggstate header into a local variable */
-	memcpy(&tmp, ptr, offsetof(tdigest_aggstate_t, percentiles));
-	ptr += offsetof(tdigest_aggstate_t, percentiles);
+	memcpy(&tmp, ptr, offsetof(tdigest_aggstate_t, centroids));
+	ptr += offsetof(tdigest_aggstate_t, centroids);
 
-	/* allocate and copy percentiles */
-	if (tmp.npercentiles > 0)
-	{
-		percentiles = palloc(tmp.npercentiles * sizeof(double));
-		memcpy(percentiles, ptr, tmp.npercentiles * sizeof(double));
-		ptr += tmp.npercentiles * sizeof(double);
-	}
+	Assert(tmp.count > 0);
 
-	/* allocate and copy values */
-	if (tmp.nvalues > 0)
-	{
-		values = palloc(tmp.nvalues * sizeof(double));
-		memcpy(values, ptr, tmp.nvalues * sizeof(double));
-		ptr += tmp.nvalues * sizeof(double);
-	}
+	state = tdigest_aggstate_allocate(tmp.compression);
 
-	state = tdigest_aggstate_allocate(tmp.npercentiles, tmp.nvalues,
-									  tmp.compression);
-
-	if (tmp.npercentiles > 0)
-	{
-		memcpy(state->percentiles, percentiles, tmp.npercentiles * sizeof(double));
-		pfree(percentiles);
-	}
-
-	if (tmp.nvalues > 0)
-	{
-		memcpy(state->values, values, tmp.nvalues * sizeof(double));
-		pfree(values);
-	}
-
-	/* copy the data into the newly-allocated state */
-	memcpy(state, &tmp, offsetof(tdigest_aggstate_t, percentiles));
-	/* we don't need to move the pointer */
+	memcpy(state, &tmp, offsetof(tdigest_aggstate_t, centroids));
 
 	/* copy the centroids back */
 	memcpy(state->centroids, ptr,
 		   sizeof(centroid_t) * state->ncentroids);
 	ptr += sizeof(centroid_t) * state->ncentroids;
+
+	Assert(state->count > 0);
 
 	PG_RETURN_POINTER(state);
 }
@@ -2924,18 +2627,9 @@ tdigest_copy(tdigest_aggstate_t *state)
 {
 	tdigest_aggstate_t *copy;
 
-	copy = tdigest_aggstate_allocate(state->npercentiles, state->nvalues,
-									 state->compression);
+	copy = tdigest_aggstate_allocate(state->compression);
 
-	memcpy(copy, state, offsetof(tdigest_aggstate_t, percentiles));
-
-	if (state->nvalues > 0)
-		memcpy(copy->values, state->values,
-			   sizeof(double) * state->nvalues);
-
-	if (state->npercentiles > 0)
-		memcpy(copy->percentiles, state->percentiles,
-			   sizeof(double) * state->npercentiles);
+	memcpy(copy, state, offsetof(tdigest_aggstate_t, centroids));
 
 	memcpy(copy->centroids, state->centroids,
 		   state->ncentroids * sizeof(centroid_t));
@@ -3021,7 +2715,7 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
 
-	state = tdigest_aggstate_allocate(0, 0, digest->compression);
+	state = tdigest_aggstate_allocate(digest->compression);
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
@@ -3091,7 +2785,7 @@ tdigest_add_double_increment(PG_FUNCTION_ARGS)
 
 		check_compression(compression);
 
-		state = tdigest_aggstate_allocate(0, 0, compression);
+		state = tdigest_aggstate_allocate(compression);
 	}
 	else
 		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
@@ -3158,7 +2852,7 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 
 		check_compression(compression);
 
-		state = tdigest_aggstate_allocate(0, 0, compression);
+		state = tdigest_aggstate_allocate(compression);
 	}
 	else
 		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
@@ -4358,6 +4052,8 @@ tdigest_percentile(PG_FUNCTION_ARGS)
 
 	check_percentiles(&percentile, 1);
 
+	check_percentiles(&percentile, 1);
+
 	ret = tdigest_compute_quantiles(digest, 1, &percentile);
 
 	PG_RETURN_FLOAT8(*ret);
@@ -4384,6 +4080,8 @@ tdigest_percentile_array(PG_FUNCTION_ARGS)
 	percentiles = array_to_double(fcinfo,
 								  PG_GETARG_ARRAYTYPE_P(1),
 								  &npercentiles);
+
+	check_percentiles(percentiles, npercentiles);
 
 	check_percentiles(percentiles, npercentiles);
 
