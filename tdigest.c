@@ -96,7 +96,44 @@ typedef struct tdigest_aggstate_t {
 
 static int  centroid_cmp(const void *a, const void *b);
 
-#define PG_GETARG_TDIGEST(x)	(tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(x))
+/*
+ * Detoast a tdigest, making sure the result is properly aligned.
+ *
+ * The tdigest type is int4-aligned - that's the default for CREATE TYPE, and
+ * changing it now would break on-disk compatibility, as typalign determines
+ * where the value is placed in a tuple. But tdigest_t contains int64 and
+ * double fields, so it really needs 8B alignment. Reading digest->count or
+ * digest->centroids[i].mean from a value that is merely 4B aligned is
+ * undefined behavior - it happens to work on x86-64, but it's a crash on
+ * platforms not allowing unaligned access, and UBSan complains about it.
+ *
+ * Detoasting hides this most of the time, because toasted, compressed and
+ * short-header values get expanded into a freshly palloc-ed (and thus
+ * properly aligned) copy. But a value large enough to keep the 4B varlena
+ * header (more than ~130B, i.e. about 7 centroids) and stored inline is used
+ * where it sits in the tuple, so we have to make the aligned copy ourselves.
+ */
+static tdigest_t *
+tdigest_detoast(Datum datum)
+{
+	tdigest_t  *digest = (tdigest_t *) PG_DETOAST_DATUM(datum);
+
+	/*
+	 * Detoasting always produces a 4B header, so VARSIZE is fine here, and
+	 * reading it only needs the 4B alignment the type already guarantees.
+	 */
+	if (!PointerIsAligned(digest, int64))
+	{
+		tdigest_t  *aligned = (tdigest_t *) palloc(VARSIZE(digest));
+
+		memcpy(aligned, digest, VARSIZE(digest));
+		digest = aligned;
+	}
+
+	return digest;
+}
+
+#define PG_GETARG_TDIGEST(x)	tdigest_detoast(PG_GETARG_DATUM(x))
 
 /*
  * Size of buffer for incoming data, as a multiple of the compression value.
@@ -1960,7 +1997,7 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+	digest = PG_GETARG_TDIGEST(1);
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
@@ -2043,7 +2080,7 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+	digest = PG_GETARG_TDIGEST(1);
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
@@ -2467,7 +2504,7 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+	digest = PG_GETARG_TDIGEST(1);
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
@@ -2547,7 +2584,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+	digest = PG_GETARG_TDIGEST(1);
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
@@ -3447,7 +3484,7 @@ Datum
 tdigest_out(PG_FUNCTION_ARGS)
 {
 	int			i;
-	tdigest_t  *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
 	StringInfoData	str;
 
 	AssertCheckTDigest(digest);
@@ -3580,7 +3617,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 Datum
 tdigest_send(PG_FUNCTION_ARGS)
 {
-	tdigest_t  *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
 	StringInfoData buf;
 	int			i;
 
@@ -3630,7 +3667,7 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 	int64		total_count;
 	Size		vlen;
 	Size		expected;
-	tdigest_t  *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
 
 	vlen = VARSIZE_ANY(digest);
 
@@ -3704,7 +3741,7 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 Datum
 tdigest_count(PG_FUNCTION_ARGS)
 {
-	tdigest_t  *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
 
 	PG_RETURN_INT64(digest->count);
 }
@@ -3729,7 +3766,7 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 {
 	int				i;
 	StringInfoData	str;
-	tdigest_t	   *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	tdigest_t	   *digest = PG_GETARG_TDIGEST(0);
 	int32			flags = digest->flags;
 
 	initStringInfo(&str);
@@ -3808,7 +3845,7 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 {
 	int				i,
 					idx;
-	tdigest_t	   *digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+	tdigest_t	   *digest = PG_GETARG_TDIGEST(0);
 	int32			flags = digest->flags;
 	double		   *values;
 	int				nvalues;
@@ -4018,7 +4055,7 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = (tdigest_t *) PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+	digest = PG_GETARG_TDIGEST(1);
 
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
