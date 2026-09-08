@@ -52,8 +52,8 @@ BEGIN
 
     END LOOP;
 
-    SELECT tdigest_percentile(v, 10000, percentiles),
-           tdigest_percentile(v, 1::bigint, 10000, percentiles)
+    SELECT tdigest_percentile(tdigest(v, 10000), percentiles),
+           tdigest_percentile(tdigest(v, 1::bigint, 10000), percentiles)
       INTO raw_results, weighted_results
       FROM (VALUES (1::double precision),
                    (1.000000000000001::double precision),
@@ -105,10 +105,10 @@ $$;
 
 -- At p = 0.75 - 2^-53, q = 1 - 2^-52 and the result rounds to -5.
 -- Subtracting nearly equal magnitudes used to return -4 instead.
-SELECT tdigest_percentile(v, 10000, 0.7499999999999999::double precision) AS raw_scalar,
-       tdigest_percentile(v, 10000, ARRAY[0.7499999999999999]::double precision[]) AS raw_array,
-       tdigest_percentile(v, 1::bigint, 10000, 0.7499999999999999::double precision) AS weighted_scalar,
-       tdigest_percentile(v, 1::bigint, 10000,
+SELECT tdigest_percentile(tdigest(v, 10000), 0.7499999999999999::double precision) AS raw_scalar,
+       tdigest_percentile(tdigest(v, 10000), ARRAY[0.7499999999999999]::double precision[]) AS raw_array,
+       tdigest_percentile(tdigest(v, 1::bigint, 10000), 0.7499999999999999::double precision) AS weighted_scalar,
+       tdigest_percentile(tdigest(v, 1::bigint, 10000),
                           ARRAY[0.7499999999999999]::double precision[]) AS weighted_array
 FROM (VALUES (-18014398509481984::double precision),
              (-1::double precision)) AS input(v);
@@ -126,8 +126,8 @@ WITH inputs(label, d, p) AS (
         0.9999999999997077::double precision
     )
 )
-SELECT label, tdigest_percentile(d, p) AS scalar_result,
-       tdigest_percentile(d, ARRAY[p]) AS array_result
+SELECT label, tdigest_percentile(tdigest(d), p) AS scalar_result,
+       tdigest_percentile(tdigest(d), ARRAY[p]) AS array_result
 FROM inputs
-GROUP BY label
+GROUP BY label, p
 ORDER BY label;

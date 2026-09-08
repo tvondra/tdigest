@@ -6,16 +6,16 @@
 -- clause filtering out all the rows.
 
 -- tdigest_percentiles
-SELECT tdigest_percentile(v, 100, 0.5) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
+SELECT tdigest_percentile(tdigest(v, 100), 0.5) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
 
 -- tdigest_percentiles_of
-SELECT tdigest_percentile_of(v, 100, 1.0) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
+SELECT tdigest_percentile_of(tdigest(v, 100), 1.0) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
 
 -- tdigest_digest
 SELECT tdigest(v, 100) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
 
 -- tdigest_array_percentiles
-SELECT tdigest_percentile(v, 100, ARRAY[0.5]) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
+SELECT tdigest_percentile(tdigest(v, 100), ARRAY[0.5]) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
 
 -- tdigest_array_percentiles_of
-SELECT tdigest_percentile_of(v, 100, ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;
+SELECT tdigest_percentile_of(tdigest(v, 100), ARRAY[1.0]) FROM (VALUES (1.0)) AS t(v) WHERE v > 2.0;

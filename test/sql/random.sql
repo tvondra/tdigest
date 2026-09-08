@@ -39,7 +39,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -55,7 +55,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -68,7 +68,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -84,7 +84,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -97,7 +97,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -113,7 +113,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -130,7 +130,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -146,7 +146,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -159,7 +159,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -175,7 +175,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -188,7 +188,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -204,7 +204,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -221,7 +221,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -237,7 +237,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -250,7 +250,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -266,7 +266,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -279,7 +279,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -295,7 +295,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -312,7 +312,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -328,7 +328,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -341,7 +341,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -357,7 +357,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -370,7 +370,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -386,7 +386,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -403,7 +403,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -419,7 +419,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -432,7 +432,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -448,7 +448,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -461,7 +461,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -477,7 +477,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -494,7 +494,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -510,7 +510,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -523,7 +523,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -539,7 +539,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -552,7 +552,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -568,7 +568,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -585,7 +585,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -601,7 +601,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -614,7 +614,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -630,7 +630,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -643,7 +643,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -659,7 +659,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -677,7 +677,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -693,7 +693,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -706,7 +706,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -722,7 +722,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -735,7 +735,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -751,7 +751,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -768,7 +768,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -784,7 +784,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 10, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 10), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -797,7 +797,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 100, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 100), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -813,7 +813,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 100, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 100), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -826,7 +826,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 1000, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 1000), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -842,7 +842,7 @@ SELECT * FROM (
     FROM (
         SELECT
             unnest((SELECT p FROM perc)) AS p,
-            unnest(tdigest_percentile(x, 1000, (SELECT p FROM perc))) AS a
+            unnest(tdigest_percentile(tdigest(x, 1000), (SELECT p FROM perc))) AS a
         FROM data
     ) foo ) bar WHERE a <= b;
 
@@ -877,7 +877,7 @@ FROM data
 GROUP BY i % 10;
 
 WITH data AS (SELECT pow(z, 4) AS x FROM random_normal(10000) s(z)),
-     intermediate AS (SELECT tdigest_percentile(summary, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS a FROM intermediate_tdigest),
+     intermediate AS (SELECT tdigest_percentile(tdigest(summary), ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS a FROM intermediate_tdigest),
      pg_percentile AS (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) AS b FROM data)
 SELECT
     p,
@@ -903,7 +903,7 @@ SELECT
 FROM (
     SELECT
         unnest(ARRAY[0.01, 0.99]) AS p,
-        unnest(tdigest_percentile(x, 10, ARRAY[0.01, 0.99])) AS a,
+        unnest(tdigest_percentile(tdigest(x, 10), ARRAY[0.01, 0.99])) AS a,
         unnest(percentile_cont(ARRAY[0.01, 0.99]) WITHIN GROUP (ORDER BY x)) AS b
     FROM data
 ) foo;
@@ -919,7 +919,7 @@ SELECT * FROM (
     SELECT p, v AS v1, lag(v, 1) OVER (ORDER BY p) v2 FROM (
         SELECT
             unnest(perc.percentiles) p,
-            unnest(tdigest_percentile(input_data.val, 100, perc.percentiles)) v
+            unnest(tdigest_percentile(tdigest(input_data.val, 100), perc.percentiles)) v
         FROM perc, input_data
         GROUP BY perc.percentiles
     ) foo
