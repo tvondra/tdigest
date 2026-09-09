@@ -1007,6 +1007,16 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		q = Max(0.0, Min(1.0, distance / total_distance));
 
 		result[i] = (1 - q) * prev->mean + q * next->mean;
+
+		/*
+		 * Clamping "q" is not sufficient to keep the result in the bracket.
+		 * Both products are rounded before they are added, and the sum is
+		 * rounded again, so the convex combination can land an ULP outside
+		 * [prev->mean, next->mean] even for a perfectly clamped "q". Clamp
+		 * the result too - the centroids are sorted, so we know the bracket
+		 * is well ordered.
+		 */
+		result[i] = Max(prev->mean, Min(next->mean, result[i]));
 	}
 }
 

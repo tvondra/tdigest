@@ -121,3 +121,8 @@ SELECT bool_and(abs(u - s) <= 1e-15) AS scale_invariant
   FROM z, unnest(z.unscaled, z.scaled) AS x(u, s);
 
 DROP TABLE tdigest_extreme_digests;
+
+-- The calculated percentile has to be between the means, and not outside
+-- due to rounding, etc. All the centroids have mean 123.456, so all quantiles
+-- can be just 123.456 too (without the clamping we'd get 123.45600000000002).
+SELECT tdigest_percentile('flags 1 count 1152921504606846978 compression 100 centroids 3 (123.456, 1) (123.456, 1152921504606846976) (123.456, 1)'::tdigest, 0.1);
