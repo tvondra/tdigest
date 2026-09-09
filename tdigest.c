@@ -267,9 +267,11 @@ static int64 double_to_int64(double value, int64 maxvalue);
  *
  * XXX Backward compatibility
  */
-#if SIZEOF_LONG == 8
+#ifdef HAVE_LONG_INT_64
+/* int64 is "long int", so strtol() returns exactly the right width */
 #define strtoi64(str, endptr, base) ((int64) strtol(str, endptr, base))
-#elif SIZEOF_LONG_LONG == 8
+#else
+/* int64 is "long long int" (C99 guarantees it is at least 64 bits) */
 #define strtoi64(str, endptr, base) ((int64) strtoll(str, endptr, base))
 #endif
 
