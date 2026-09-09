@@ -453,6 +453,17 @@ tdigest_sort_centroids(centroid_t *centroids, int ncentroids, int64 count)
 
 		CHECK_FOR_INTERRUPTS();
 
+		/*
+		 * Consume the first centroid of the group unconditionally. It is what
+		 * defines the group, so comparing it against itself decides nothing,
+		 * and for a NaN mean the comparison would be false, leaving "j" at "i"
+		 * and the outer loop without any way to advance. This way guarantees
+		 * forward progress.
+		 */
+		next_group += centroids[j].count;
+		group_size++;
+		j++;
+
 		/* determine the end of the group */
 		while ((j < ncentroids) &&
 			   (centroids[i].mean == centroids[j].mean))
