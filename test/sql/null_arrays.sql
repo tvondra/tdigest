@@ -7,26 +7,52 @@
 -- The array is only read while the aggregate state is still NULL, i.e. on the
 -- first row with a non-NULL value, so a single row is enough.
 
+-- tdigest_add_double_array(internal, double precision, int, double precision)
+SELECT tdigest_percentile(v, 100, NULL::double precision)
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
 -- tdigest_add_double_array(internal, double precision, int, double precision[])
 SELECT tdigest_percentile(v, 100, NULL::double precision[])
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
+-- tdigest_add_double_array_count(internal, double precision, bigint, int, double precision)
+SELECT tdigest_percentile(v, 2, 100, NULL::double precision)
   FROM (VALUES (1.0::double precision), (2.0)) s(v);
 
 -- tdigest_add_double_array_count(internal, double precision, bigint, int, double precision[])
 SELECT tdigest_percentile(v, 2, 100, NULL::double precision[])
   FROM (VALUES (1.0::double precision), (2.0)) s(v);
 
+-- tdigest_add_digest_array(internal, tdigest, double precision)
+SELECT tdigest_percentile(d, NULL::double precision)
+  FROM (SELECT tdigest(v, 100) AS d
+          FROM (VALUES (1.0::double precision), (2.0)) s(v)) t;
+
 -- tdigest_add_digest_array(internal, tdigest, double precision[])
 SELECT tdigest_percentile(d, NULL::double precision[])
   FROM (SELECT tdigest(v, 100) AS d
           FROM (VALUES (1.0::double precision), (2.0)) s(v)) t;
 
+-- tdigest_add_double_array_values(internal, double precision, int, double precision)
+SELECT tdigest_percentile_of(v, 100, NULL::double precision)
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
 -- tdigest_add_double_array_values(internal, double precision, int, double precision[])
 SELECT tdigest_percentile_of(v, 100, NULL::double precision[])
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
+-- tdigest_add_double_array_values_count(internal, double precision, bigint, int, double precision)
+SELECT tdigest_percentile_of(v, 2, 100, NULL::double precision)
   FROM (VALUES (1.0::double precision), (2.0)) s(v);
 
 -- tdigest_add_double_array_values_count(internal, double precision, bigint, int, double precision[])
 SELECT tdigest_percentile_of(v, 2, 100, NULL::double precision[])
   FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
+-- tdigest_add_digest_array_values(internal, tdigest, double precision)
+SELECT tdigest_percentile_of(d, NULL::double precision)
+  FROM (SELECT tdigest(v, 100) AS d
+          FROM (VALUES (1.0::double precision), (2.0)) s(v)) t;
 
 -- tdigest_add_digest_array_values(internal, tdigest, double precision[])
 SELECT tdigest_percentile_of(d, NULL::double precision[])

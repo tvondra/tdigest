@@ -1560,6 +1560,10 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 
 		if (PG_NARGS() >= 4)
 		{
+			/* the percentile is required to create the aggregate state */
+			if (PG_ARGISNULL(3))
+				elog(ERROR, "percentile must not be NULL");
+
 			percentiles = (double *) palloc(sizeof(double));
 			percentiles[0] = PG_GETARG_FLOAT8(3);
 			npercentiles = 1;
@@ -1766,6 +1770,10 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 
 		if (PG_NARGS() >= 5)
 		{
+			/* the percentile is required to create the aggregate state */
+			if (PG_ARGISNULL(4))
+				elog(ERROR, "percentile must not be NULL");
+
 			percentiles = (double *) palloc(sizeof(double));
 			percentiles[0] = PG_GETARG_FLOAT8(4);
 			npercentiles = 1;
@@ -1867,6 +1875,10 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 
 		if (PG_NARGS() >= 4)
 		{
+			/* the value is required to create the aggregate state */
+			if (PG_ARGISNULL(3))
+				elog(ERROR, "value must not be NULL");
+
 			values = (double *) palloc(sizeof(double));
 			values[0] = PG_GETARG_FLOAT8(3);
 			nvalues = 1;
@@ -1936,6 +1948,10 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 
 		if (PG_NARGS() >= 5)
 		{
+			/* the value is required to create the aggregate state */
+			if (PG_ARGISNULL(4))
+				elog(ERROR, "value must not be NULL");
+
 			values = (double *) palloc(sizeof(double));
 			values[0] = PG_GETARG_FLOAT8(4);
 			nvalues = 1;
@@ -2041,6 +2057,10 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 
 		if (PG_NARGS() >= 3)
 		{
+			/* the percentile is required to create the aggregate state */
+			if (PG_ARGISNULL(2))
+				elog(ERROR, "percentile must not be NULL");
+
 			percentiles = (double *) palloc(sizeof(double));
 			percentiles[0] = PG_GETARG_FLOAT8(2);
 			npercentiles = 1;
@@ -2128,6 +2148,10 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 
 		if (PG_NARGS() >= 3)
 		{
+			/* the value is required to create the aggregate state */
+			if (PG_ARGISNULL(2))
+				elog(ERROR, "value must not be NULL");
+
 			values = (double *) palloc(sizeof(double));
 			values[0] = PG_GETARG_FLOAT8(2);
 			nvalues = 1;
@@ -3980,8 +4004,15 @@ tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
 	{
 		MemoryContext oldcontext;
 		int		compression = PG_GETARG_INT32(2);
-		double	low = PG_GETARG_FLOAT8(3);
-		double	high = PG_GETARG_FLOAT8(4);
+		double	low,
+				high;
+
+		/* the trim thresholds are required to create the aggregate state */
+		if (PG_ARGISNULL(3) || PG_ARGISNULL(4))
+			elog(ERROR, "trim thresholds must not be NULL");
+
+		low = PG_GETARG_FLOAT8(3);
+		high = PG_GETARG_FLOAT8(4);
 
 		check_compression(compression);
 
@@ -4036,8 +4067,15 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 	{
 		MemoryContext oldcontext;
 		int		compression = PG_GETARG_INT32(3);
-		double	low = PG_GETARG_FLOAT8(4);
-		double	high = PG_GETARG_FLOAT8(5);
+		double	low,
+				high;
+
+		/* the trim thresholds are required to create the aggregate state */
+		if (PG_ARGISNULL(4) || PG_ARGISNULL(5))
+			elog(ERROR, "trim thresholds must not be NULL");
+
+		low = PG_GETARG_FLOAT8(4);
+		high = PG_GETARG_FLOAT8(5);
 
 		check_compression(compression);
 
@@ -4131,8 +4169,15 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		MemoryContext oldcontext;
-		double	low = PG_GETARG_FLOAT8(2);
-		double	high = PG_GETARG_FLOAT8(3);
+		double	low,
+				high;
+
+		/* the trim thresholds are required to create the aggregate state */
+		if (PG_ARGISNULL(2) || PG_ARGISNULL(3))
+			elog(ERROR, "trim thresholds must not be NULL");
+
+		low = PG_GETARG_FLOAT8(2);
+		high = PG_GETARG_FLOAT8(3);
 
 		check_trim_values(low, high);
 

@@ -376,6 +376,19 @@ SELECT tdigest_sum(1.0, 100, 'NaN'::double precision, 'NaN'::double precision);
 ERROR:  invalid low percentile value nan, should be in [0.0, 1.0]
 SELECT tdigest_avg(1.0, 100, 'NaN'::double precision, 'NaN'::double precision);
 ERROR:  invalid low percentile value nan, should be in [0.0, 1.0]
+-- NULL in thresholds
+SELECT tdigest_sum(1.0, 100, NULL::double precision, 1.0);
+ERROR:  trim thresholds must not be NULL
+SELECT tdigest_avg(1.0, 100, NULL::double precision, 1.0);
+ERROR:  trim thresholds must not be NULL
+SELECT tdigest_sum(1.0, 100, 0.0, NULL::double precision);
+ERROR:  trim thresholds must not be NULL
+SELECT tdigest_avg(1.0, 100, 0.0, NULL::double precision);
+ERROR:  trim thresholds must not be NULL
+SELECT tdigest_sum(1.0, 100, NULL::double precision, NULL::double precision);
+ERROR:  trim thresholds must not be NULL
+SELECT tdigest_avg(1.0, 100, NULL::double precision, NULL::double precision);
+ERROR:  trim thresholds must not be NULL
 -- check tdigest_trimmed_agg() calculates and aggregates the right range
 -- of centroids to process, especially when [count_low, count_high) falls
 -- into a single centroid
