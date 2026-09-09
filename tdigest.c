@@ -3837,6 +3837,8 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 	total_count = 0;
 	for (i = 0; i < digest->ncentroids; i++)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		if (!isfinite(digest->centroids[i].mean))
 			PG_RETURN_BOOL(false);
 
@@ -3995,6 +3997,8 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		double	mean = digest->centroids[i].mean;
+
+		CHECK_FOR_INTERRUPTS();
 
 		/*
 		 * When the TDIGEST_STORES_MEAN flags is not set, the value is
@@ -4237,8 +4241,12 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
+	{
+		CHECK_FOR_INTERRUPTS();
+
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
+	}
 
 	AssertCheckTDigestAggState(state);
 
@@ -4406,6 +4414,8 @@ tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
 		int64	count_add = tdigest_trimmed_count(&centroids[i], count_done,
 												  count_low, count_high);
 
+		CHECK_FOR_INTERRUPTS();
+
 		if (count_add > 0)
 		{
 			/* remember where the range starts, including the item offset */
@@ -4438,6 +4448,8 @@ tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
 	{
 		int64	count_add = tdigest_trimmed_count(&centroids[i], count_done,
 												  count_low, count_high);
+
+		CHECK_FOR_INTERRUPTS();
 
 		/* consider the whole centroid processed */
 		count_done += centroids[i].count;
