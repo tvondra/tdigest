@@ -980,6 +980,34 @@ expect from an estimate. In fact, most final functions probably should not
 do compaction at all, just sort. Which would eliminate the differences.
 
 
+## fused multiply-add (FMA)
+
+Various places in the code use expressions of the form `a * b + c` (e.g.
+when calculating the mean of two merged centroids, or when interpolating
+between two centroid means). Compilers are allowed to contract such
+expressions into a single fused multiply-add (FMA) instruction, which
+rounds only once, and so produces slightly different results than a
+separate multiplication and addition.
+
+Whether that happens depends on the platform and on the compiler flags.
+FMA is part of the baseline instruction set on aarch64, so `gcc` contracts
+by default there (at `-O2` and higher - the contraction happens in a pass
+enabled only by `-O2`), while on x86-64 it does not, because FMA requires
+`-mfma` or a sufficiently recent `-march`. The results then differ in the
+last couple of digits, and the regression tests - which compare the exact
+float8 output - fail.
+
+For now, the `Makefile` builds with `-ffp-contract=off`, if the compiler
+understands the option, so that the results do not depend on which
+instructions happen to be available. Compilers spelling the option
+differently (or not having it at all) may still produce digests that
+differ in the last digit or two.
+
+This is merely a workaround to make the tests pass. Ideally, we want to
+allow FMA, because it's expected to be faster and give more precise
+results (thanks to a single rounding).
+
+
 License
 -------
 This software is distributed under the terms of PostgreSQL license.
