@@ -1105,6 +1105,17 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 
 			result[i] = (count + (count_at_value / 2.0)) / state->count;
 
+			/*
+			 * The accumulated "count" is a double, so for digests with more
+			 * than 2^53 items it can round up past the exact sum while the
+			 * (double) state->count divisor rounds down. That would yield a
+			 * quantile slightly above 1.0, so clamp it.
+			 *
+			 * XXX All the values are positive, so we probably can't get below
+			 * 0.0, but clamp it anyway for symmetry.
+			 */
+			result[i] = Max(0.0, Min(1.0, result[i]));
+
 			/* the next centroid has a higher mean, so we're done */
 			continue;
 		}
@@ -1160,9 +1171,16 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		c = (curr->count / 2.0 + prev->count / 2.0);
 		d = (curr->mean - prev->mean);
 
-		/* quantiles for the prev/next mean */
-		q1 = count / (double) state->count;
-		q2 = (count + c) / (double) state->count;
+		/*
+		 * Quantiles for the prev/next mean.
+		 *
+		 * These are also the bounds of the clamp applied to the interpolated
+		 * result below, so they have to be valid quantiles themselves. The
+		 * "count" accumulator is a double, and above 2^53 it can round up
+		 * past the exact sum while the divisor rounds down, so clamp both.
+		 */
+		q1 = Max(0.0, Min(1.0, count / (double) state->count));
+		q2 = Max(0.0, Min(1.0, (count + c) / (double) state->count));
 
 		Assert(q1 <= q2);
 

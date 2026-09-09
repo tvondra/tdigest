@@ -126,3 +126,8 @@ DROP TABLE tdigest_extreme_digests;
 -- due to rounding, etc. All the centroids have mean 123.456, so all quantiles
 -- can be just 123.456 too (without the clamping we'd get 123.45600000000002).
 SELECT tdigest_percentile('flags 1 count 1152921504606846978 compression 100 centroids 3 (123.456, 1) (123.456, 1152921504606846976) (123.456, 1)'::tdigest, 0.1);
+
+-- Similar issue in the other direction - rounding errors can yield values
+-- outside the valid [0.0, 1.0] range close to the 1.0 boundary, and need to
+-- be correctly clamped. For example, this might return 1.0000000000000002.
+SELECT tdigest_percentile_of('flags 1 count 6381118572735248714 compression 10 centroids 3 (0.0, 5752940093788208662) (1.0, 628178478947040051) (2.0, 1)'::tdigest, 2.0);
