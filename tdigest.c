@@ -4655,21 +4655,18 @@ array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int *len)
 	dims = ARR_DIMS(v);
 	nitems = ArrayGetNItems(ndims, dims);
 
+	/*
+	 * Reject empty arrays explicitly. An empty array has ndims = 0, so
+	 * without this it would be caught by the single-dimension check below
+	 * and reported as a dimensionality problem, which is misleading - the
+	 * array is well-formed, it just has nothing in it.
+	 */
+	if (nitems == 0)
+		elog(ERROR, "the array must not be empty");
+
 	/* this is a special-purpose function for single-dimensional arrays */
 	if (ndims != 1)
 		elog(ERROR, "expected a single-dimensional array (dims = %d)", ndims);
-
-	/*
-	 * if there are no elements, set the length to 0 and return NULL
-	 *
-	 * XXX Can this actually happen? for empty arrays we seem to error out
-	 * on the preceding check, i.e. ndims = 0.
-	 */
-	if (nitems == 0)
-	{
-		(*len) = 0;
-		return NULL;
-	}
 
 	element_type = ARR_ELEMTYPE(v);
 
@@ -4709,6 +4706,14 @@ double_to_array(FunctionCallInfo fcinfo, double *d, int len)
 {
 	ArrayBuildState *astate = NULL;
 	int		 i;
+
+	/*
+	 * makeArrayResult() dereferences the build state, so it must not be
+	 * called when nothing was accumulated. Handle that here instead of
+	 * relying on the callers to never ask for an empty array.
+	 */
+	if (len == 0)
+		PG_RETURN_ARRAYTYPE_P(construct_empty_array(FLOAT8OID));
 
 	for (i = 0; i < len; i++)
 	{
