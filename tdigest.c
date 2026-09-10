@@ -3115,7 +3115,13 @@ Datum
 tdigest_add_double_increment(PG_FUNCTION_ARGS)
 {
 	tdigest_aggstate_t *state;
-	bool				compact = PG_GETARG_BOOL(3);
+	bool				compact;
+
+	/* the flag determines whether the result gets compacted */
+	if (PG_ARGISNULL(3))
+		elog(ERROR, "compact flag must not be NULL");
+
+	compact = PG_GETARG_BOOL(3);
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -3173,10 +3179,16 @@ Datum
 tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 {
 	tdigest_aggstate_t *state;
-	bool				compact = PG_GETARG_BOOL(3);
+	bool				compact;
 	double			   *values;
 	int					nvalues;
 	int					i;
+
+	/* the flag determines whether the result gets compacted */
+	if (PG_ARGISNULL(3))
+		elog(ERROR, "compact flag must not be NULL");
+
+	compact = PG_GETARG_BOOL(3);
 
 	/*
 	 * We want to skip NULL values altogether - we return either the existing
@@ -3238,7 +3250,13 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 	int					i;
 	tdigest_aggstate_t *state;
 	tdigest_t		   *digest;
-	bool				compact = PG_GETARG_BOOL(2);
+	bool				compact;
+
+	/* the flag determines whether the result gets compacted */
+	if (PG_ARGISNULL(2))
+		elog(ERROR, "compact flag must not be NULL");
+
+	compact = PG_GETARG_BOOL(2);
 
 	if (PG_ARGISNULL(0) && PG_ARGISNULL(1))
 		PG_RETURN_NULL();

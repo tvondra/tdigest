@@ -60,3 +60,18 @@ SELECT tdigest_union(NULL::tdigest, 'flags 1 count 1 compression 100 centroids 1
  flags 1 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 
+-- The compact flag is used on every code path that builds a result, so unlike
+-- the value/digest arguments it is not something that can be skipped. Passing
+-- NULL explicitly has to be rejected rather than silently taken as false.
+SELECT tdigest_add(NULL::tdigest, 1.0::double precision, 100, NULL);
+ERROR:  compact flag must not be NULL
+SELECT tdigest_add('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest, 1.0::double precision, NULL, NULL);
+ERROR:  compact flag must not be NULL
+SELECT tdigest_add(NULL::tdigest, ARRAY[1.0]::double precision[], 100, NULL);
+ERROR:  compact flag must not be NULL
+SELECT tdigest_add('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest, ARRAY[1.0]::double precision[], NULL, NULL);
+ERROR:  compact flag must not be NULL
+SELECT tdigest_union(NULL::tdigest, NULL::tdigest, NULL);
+ERROR:  compact flag must not be NULL
+SELECT tdigest_union('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest, NULL::tdigest, NULL);
+ERROR:  compact flag must not be NULL
