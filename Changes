@@ -1,5 +1,13 @@
 Revision history for PostgreSQL extension tdigest.
 
+1.4.6
+    - Disable FP contraction to make tests pass on arm64
+    - Fix builds on 32-bit systems by defining strtoi64
+    - Fix validation of NULL / empty in several functions
+    - Clamp results to valid range to handle rounding errors
+    - Make possibly-long loops interruptible
+    - Make centroid sort more resilient to invalid data
+
 1.4.5
     - Fix multiple memory-safety issues (OOB reads/writes, SIGSEGV crashes)
     - Fix multiple issues with float precision (NaN/infinity results)

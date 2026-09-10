@@ -1,13 +1,7 @@
-Changes for v1.4.5:
-- Fix multiple memory-safety issues (OOB reads/writes, SIGSEGV crashes)
-- Fix multiple issues with float precision (NaN/infinity results)
-- Fix calculation of low/high thresholds in trimmed aggregates
-- Fix trimmed sum/avg aggregates to sort the centroids
-- Make sure processing does not generate digests with NaN/infinity float values
-- Make sure various int64 values do not overflow
-- Harden validation of function parameters to reject NULL/NaN/infinity values
-- Use overflow-resilient and/or numerically stable formulas in multiple functions
-- Improve test coverage by adding new regression tests
-- Speedup regression tests by using parallel schedule
-- Add tdigest_is_valid() to check validity of existing t-digest values
-- Mitigate incorrect alignment of t-digest values.
+Changes for v1.4.6:
+- Disable FP contraction to make tests pass on arm64
+- Fix builds on 32-bit systems by defining strtoi64
+- Fix validation of NULL / empty in several functions
+- Clamp results to valid range to handle rounding errors
+- Make possibly-long loops interruptible
+- Make centroid sort more resilient to invalid data
