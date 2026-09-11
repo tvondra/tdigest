@@ -210,7 +210,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile(v, c, 100, 0.95) AS b
+    tdigest_percentile(tdigest(v, c, 100), 0.95) AS b
   FROM test_value_count) foo;
  ?column? | ?column? 
 ----------+----------
@@ -227,7 +227,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile_of(v, c, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, c, 100), 950) AS b
   FROM test_value_count) foo;
                                         QUERY PLAN                                        
 ------------------------------------------------------------------------------------------
@@ -255,7 +255,7 @@ SELECT
 FROM (
   SELECT
     (SELECT p FROM x) AS a,
-    tdigest_percentile_of(v, c, 100, 950) AS b
+    tdigest_percentile_of(tdigest(v, c, 100), 950) AS b
   FROM test_value_count) foo;
  ?column? | ?column? 
 ----------+----------
@@ -274,7 +274,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, c, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM test_value_count) foo;
                                         QUERY PLAN                                        
 ------------------------------------------------------------------------------------------
@@ -304,7 +304,7 @@ FROM (
   SELECT
     unnest(ARRAY[0.0, 0.95, 0.99, 1.0]) p,
     unnest((SELECT p FROM x)) AS a,
-    unnest(tdigest_percentile(v, c, 100, ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
+    unnest(tdigest_percentile(tdigest(v, c, 100), ARRAY[0.0, 0.95, 0.99, 1.0])) AS b
   FROM test_value_count) foo;
   p   | ?column? 
 ------+----------
@@ -325,7 +325,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((select x.p from x)) AS a,
-    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, c, 100), ARRAY[950, 990])) AS b
   FROM test_value_count) foo;
                                             QUERY PLAN                                            
 --------------------------------------------------------------------------------------------------
@@ -358,7 +358,7 @@ FROM (
   SELECT
     unnest(ARRAY[950, 990]) AS p,
     unnest((select x.p from x)) AS a,
-    unnest(tdigest_percentile_of(v, c, 100, ARRAY[950, 990])) AS b
+    unnest(tdigest_percentile_of(tdigest(v, c, 100), ARRAY[950, 990])) AS b
   FROM test_value_count) foo;
   p  | ?column? 
 -----+----------
