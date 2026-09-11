@@ -1,0 +1,75 @@
+-- Regression test for the stubs left behind by the 2.0.0 API rework.
+--
+-- The shared library and the SQL definitions are upgraded independently, so
+-- there is a window where the new .so is loaded while the database still has
+-- the 1.4.7 SQL objects pointing at symbols the rework removed. The stubs
+-- keep those symbols resolvable and report how to close the window.
+--
+-- Each symbol is bound to a throwaway SQL function and called. The stubs
+-- raise before touching their arguments, so the declared signature does not
+-- have to match the one the removed function had.
+\set VERBOSITY terse
+DO $$
+DECLARE
+    stub    text;
+    stubs   text[] := ARRAY[
+                'tdigest_add_double_values',
+                'tdigest_add_double_values_count',
+                'tdigest_add_double_trimmed',
+                'tdigest_add_double_count_trimmed',
+                'tdigest_add_digest_values',
+                'tdigest_add_digest_trimmed',
+                'tdigest_add_double_array',
+                'tdigest_add_double_array_count',
+                'tdigest_add_double_array_values',
+                'tdigest_add_double_array_values_count',
+                'tdigest_add_digest_array',
+                'tdigest_add_digest_array_values',
+                'tdigest_percentiles',
+                'tdigest_percentiles_of',
+                'tdigest_array_percentiles',
+                'tdigest_array_percentiles_of',
+                'tdigest_trimmed_sum',
+                'tdigest_trimmed_avg'];
+    missing text[] := '{}';
+    wrong   text[] := '{}';
+BEGIN
+    FOREACH stub IN ARRAY stubs LOOP
+
+        -- binding the symbol fails if the stub was removed from the library
+        BEGIN
+            EXECUTE format('CREATE FUNCTION stub_probe() RETURNS void'
+                           ' AS ''tdigest'', %L LANGUAGE C', stub);
+        EXCEPTION WHEN OTHERS THEN
+            missing := missing || stub;
+            CONTINUE;
+        END;
+
+        BEGIN
+            EXECUTE 'SELECT stub_probe()';
+            wrong := wrong || stub;
+        EXCEPTION
+            WHEN feature_not_supported THEN
+                NULL;   -- what the stub is supposed to do
+            WHEN OTHERS THEN
+                wrong := wrong || stub;
+        END;
+
+        DROP FUNCTION stub_probe();
+    END LOOP;
+
+    RAISE NOTICE 'stubs checked: %', array_length(stubs, 1);
+    RAISE NOTICE 'symbols missing from the library: %', missing;
+    RAISE NOTICE 'stubs not reporting feature_not_supported: %', wrong;
+END $$;
+NOTICE:  stubs checked: 18
+NOTICE:  symbols missing from the library: {}
+NOTICE:  stubs not reporting feature_not_supported: {}
+-- and the message has to tell the user what to do about it
+\set VERBOSITY default
+CREATE FUNCTION stub_probe() RETURNS void
+    AS 'tdigest', 'tdigest_percentiles' LANGUAGE C;
+SELECT stub_probe();
+ERROR:  function is no longer supported by the tdigest extension
+HINT:  The shared library has been upgraded but the SQL definitions have not. Run "ALTER EXTENSION tdigest UPDATE".
+DROP FUNCTION stub_probe();
