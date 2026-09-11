@@ -68,9 +68,9 @@ DROP FUNCTION tdigest_digest_avg(tdigest, double precision, double precision);
 CREATE OR REPLACE FUNCTION tdigest_sum(p_digest tdigest, p_low double precision = 0.0, p_high double precision = 1.0)
     RETURNS double precision
     AS 'tdigest', 'tdigest_digest_sum'
-    LANGUAGE C IMMUTABLE STRICT;
+    LANGUAGE C IMMUTABLE;
 
 CREATE OR REPLACE FUNCTION tdigest_avg(p_digest tdigest, p_low double precision = 0.0, p_high double precision = 1.0)
     RETURNS double precision
     AS 'tdigest', 'tdigest_digest_avg'
-    LANGUAGE C IMMUTABLE STRICT;
+    LANGUAGE C IMMUTABLE;

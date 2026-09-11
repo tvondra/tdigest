@@ -203,14 +203,14 @@ SELECT tdigest_sum(tdigest(1.0, 100), 'NaN'::double precision, 'NaN'::double pre
 SELECT tdigest_avg(tdigest(1.0, 100), 'NaN'::double precision, 'NaN'::double precision);
 
 -- NULL in thresholds
-SELECT tdigest_sum(1.0, 100, NULL::double precision, 1.0);
-SELECT tdigest_avg(1.0, 100, NULL::double precision, 1.0);
+SELECT tdigest_sum(tdigest(1.0, 100), NULL::double precision, 1.0);
+SELECT tdigest_avg(tdigest(1.0, 100), NULL::double precision, 1.0);
 
-SELECT tdigest_sum(1.0, 100, 0.0, NULL::double precision);
-SELECT tdigest_avg(1.0, 100, 0.0, NULL::double precision);
+SELECT tdigest_sum(tdigest(1.0, 100), 0.0, NULL::double precision);
+SELECT tdigest_avg(tdigest(1.0, 100), 0.0, NULL::double precision);
 
-SELECT tdigest_sum(1.0, 100, NULL::double precision, NULL::double precision);
-SELECT tdigest_avg(1.0, 100, NULL::double precision, NULL::double precision);
+SELECT tdigest_sum(tdigest(1.0, 100), NULL::double precision, NULL::double precision);
+SELECT tdigest_avg(tdigest(1.0, 100), NULL::double precision, NULL::double precision);
 
 -- check tdigest_trimmed_agg() calculates and aggregates the right range
 -- of centroids to process, especially when [count_low, count_high) falls

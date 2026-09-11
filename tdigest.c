@@ -3405,13 +3405,25 @@ tdigest_trimmed_sum(PG_FUNCTION_ARGS)
 Datum
 tdigest_digest_sum(PG_FUNCTION_ARGS)
 {
-	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
-	double		low = PG_GETARG_FLOAT8(1);
-	double		high = PG_GETARG_FLOAT8(2);
+	tdigest_t  *digest;
+	double		low;
+	double		high;
 
 	double		mean;
 	double		sum;
 	int64		count;
+
+	/* NULL digest - NULL result */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	/* the trim thresholds are required to create the aggregate state */
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
+		elog(ERROR, "trim thresholds must not be NULL");
+
+	digest = PG_GETARG_TDIGEST(0);
+	low = PG_GETARG_FLOAT8(1);
+	high = PG_GETARG_FLOAT8(2);
 
 	AssertCheckTDigest(digest);
 
@@ -3438,13 +3450,25 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 Datum
 tdigest_digest_avg(PG_FUNCTION_ARGS)
 {
-	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
-	double		low = PG_GETARG_FLOAT8(1);
-	double		high = PG_GETARG_FLOAT8(2);
+	tdigest_t  *digest;
+	double		low;
+	double		high;
 
 	double		mean;
 	double		sum;
 	int64		count;
+
+	/* NULL digest - NULL result */
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
+
+	/* the trim thresholds are required to create the aggregate state */
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
+		elog(ERROR, "trim thresholds must not be NULL");
+
+	digest = PG_GETARG_TDIGEST(0);
+	low = PG_GETARG_FLOAT8(1);
+	high = PG_GETARG_FLOAT8(2);
 
 	AssertCheckTDigest(digest);
 
