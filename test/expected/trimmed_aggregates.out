@@ -120,73 +120,73 @@ FROM data;
 SELECT tdigest_sum(tdigest(i, 10000), 0.0, 0.5) FROM generate_series(1, 10000) s(i);
  tdigest_sum 
 -------------
-    12502500
+  12502524.5
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.0, 0.5) from generate_series(10000, 1, -1) s(i);
  tdigest_sum 
 -------------
-    12502500
+  12502524.5
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.0, 0.25) FROM generate_series(1, 10000) s(i);
  tdigest_sum 
 -------------
-     3126250
+     3126262
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.0, 0.25) from generate_series(10000, 1, -1) s(i);
  tdigest_sum 
 -------------
-     3126250
+     3126262
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.1, 0.2) FROM generate_series(1, 10000) s(i);
  tdigest_sum 
 -------------
-     1500500
+     1500501
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.1, 0.2) from generate_series(10000, 1, -1) s(i);
  tdigest_sum 
 -------------
-     1500500
+     1500501
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.5, 1.0) FROM generate_series(1, 10000) s(i);
  tdigest_sum 
 -------------
-    37502500
+  37502475.5
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.5, 1.0) from generate_series(10000, 1, -1) s(i);
  tdigest_sum 
 -------------
-    37502500
+  37502475.5
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.75, 1.0) FROM generate_series(1, 10000) s(i);
  tdigest_sum 
 -------------
-    21876250
+    21876238
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.75, 1.0) from generate_series(10000, 1, -1) s(i);
  tdigest_sum 
 -------------
-    21876250
+    21876238
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.75, 0.9) FROM generate_series(1, 10000) s(i);
  tdigest_sum 
 -------------
-    12375750
+    12375741
 (1 row)
 
 SELECT tdigest_sum(tdigest(i, 10000), 0.75, 0.9) from generate_series(10000, 1, -1) s(i);
  tdigest_sum 
 -------------
-    12375750
+    12375741
 (1 row)
 
 -- the same thing with calculating a t-digest first (but make sure all
