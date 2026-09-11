@@ -48,10 +48,10 @@ FROM data;
 -- we compare the result to a range, to deal with the randomness
 WITH data AS (SELECT tdigest(random(), 50) AS d FROM generate_series(1,10000) AS x)
 SELECT
-    tdigest_avg(tdigest(data.d), 0.1, 0.9) between 0.45 and 0.55 AS mean_10_90,
-    tdigest_avg(tdigest(data.d), 0.25, 0.75) between 0.45 and 0.55 AS mean_25_75,
-    tdigest_avg(tdigest(data.d), 0.0, 0.5) between 0.2 and 0.3 AS mean_0_50,
-    tdigest_avg(tdigest(data.d), 0.5, 1.0) between 0.7 and 0.8 AS mean_50_100
+    tdigest_avg(data.d, 0.1, 0.9) between 0.45 and 0.55 AS mean_10_90,
+    tdigest_avg(data.d, 0.25, 0.75) between 0.45 and 0.55 AS mean_25_75,
+    tdigest_avg(data.d, 0.0, 0.5) between 0.2 and 0.3 AS mean_0_50,
+    tdigest_avg(data.d, 0.5, 1.0) between 0.7 and 0.8 AS mean_50_100
 FROM data;
 
 -- check trimmed sum (from raw data)
@@ -76,16 +76,10 @@ FROM data;
 -- we compare the result to a range, to deal with the randomness
 WITH data AS (SELECT tdigest(random(), 50) AS d FROM generate_series(1,10000) AS x)
 SELECT
-    tdigest_sum(tdigest(data.d), 0.1, 0.9) between 8000 * 0.45 and 8000 * 0.55 AS sum_10_90,
-    tdigest_sum(tdigest(data.d), 0.25, 0.75) between 5000 * 0.45 and 5000 * 0.55 AS sum_25_75,
-    tdigest_sum(tdigest(data.d), 0.0, 0.5) between 5000 * 0.2 and 5000 * 0.3 AS sum_0_50,
-    tdigest_sum(tdigest(data.d), 0.5, 1.0) between 5000 * 0.7 and 5000 * 0.8 AS sum_50_100
-FROM data;
-
-WITH data AS (SELECT tdigest(random(), 50) AS d FROM generate_series(1,10000) AS x)
-SELECT
-    tdigest_sum(tdigest(data.d), 0.05, 0.95) between 9000 * 0.45 and 9000 * 0.55 AS sum_05_95,
-    tdigest_avg(tdigest(data.d), 0.05, 0.95) between 0.45 and 0.55 AS mean_05_95
+    tdigest_sum(data.d, 0.1, 0.9) between 8000 * 0.45 and 8000 * 0.55 AS sum_10_90,
+    tdigest_sum(data.d, 0.25, 0.75) between 5000 * 0.45 and 5000 * 0.55 AS sum_25_75,
+    tdigest_sum(data.d, 0.0, 0.5) between 5000 * 0.2 and 5000 * 0.3 AS sum_0_50,
+    tdigest_sum(data.d, 0.5, 1.0) between 5000 * 0.7 and 5000 * 0.8 AS sum_50_100
 FROM data;
 
 -- With no compaction while accumulating input, final compaction starts from
@@ -112,34 +106,34 @@ SELECT tdigest_sum(tdigest(i, 10000), 0.75, 0.9) from generate_series(10000, 1, 
 -- the same thing with calculating a t-digest first (but make sure all
 -- centroids have count 1, to make it exactly the same)
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
-SELECT tdigest_sum(tdigest(d), 0.0, 0.5) from tmp;
+SELECT tdigest_sum(d, 0.0, 0.5) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
-SELECT tdigest_sum(tdigest(d), 0.0, 0.5) from tmp;
+SELECT tdigest_sum(d, 0.0, 0.5) from tmp;
 
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
-SELECT tdigest_sum(tdigest(d), 0.0, 0.25) from tmp;
+SELECT tdigest_sum(d, 0.0, 0.25) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
-SELECT tdigest_sum(tdigest(d), 0.0, 0.25) from tmp;
+SELECT tdigest_sum(d, 0.0, 0.25) from tmp;
 
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
-SELECT tdigest_sum(tdigest(d), 0.1, 0.2) from tmp;
+SELECT tdigest_sum(d, 0.1, 0.2) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
-SELECT tdigest_sum(tdigest(d), 0.1, 0.2) from tmp;
+SELECT tdigest_sum(d, 0.1, 0.2) from tmp;
 
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
-SELECT tdigest_sum(tdigest(d), 0.5, 1.0) from tmp;
+SELECT tdigest_sum(d, 0.5, 1.0) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
-SELECT tdigest_sum(tdigest(d), 0.5, 1.0) from tmp;
+SELECT tdigest_sum(d, 0.5, 1.0) from tmp;
 
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
-SELECT tdigest_sum(tdigest(d), 0.75, 1.0) from tmp;
+SELECT tdigest_sum(d, 0.75, 1.0) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
-SELECT tdigest_sum(tdigest(d), 0.75, 1.0) from tmp;
+SELECT tdigest_sum(d, 0.75, 1.0) from tmp;
 
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1, 1500) s(i))
-SELECT tdigest_sum(tdigest(d), 0.75, 0.9) from tmp;
+SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
 WITH tmp AS (SELECT tdigest(i, 10000) AS d FROM generate_series(1500, 1, -1) s(i))
-SELECT tdigest_sum(tdigest(d), 0.75, 0.9) from tmp;
+SELECT tdigest_sum(d, 0.75, 0.9) from tmp;
 
 -- simple sanity checks of high/low thresholds
 
@@ -222,9 +216,9 @@ SELECT tdigest_avg(tdigest(1.0, 100), NULL::double precision, NULL::double preci
 --
 -- count_low = floor(100 * lo) and count_high = ceil(100 * hi).
 SELECT lo, hi,
-       tdigest_sum(tdigest(d), lo, hi) AS trimmed_sum,
+       tdigest_sum(d, lo, hi) AS trimmed_sum,
        10 * (ceil(100::double precision * hi) - floor(100::double precision * lo)) AS expected_sum,
-       tdigest_avg(tdigest(d), lo, hi) AS trimmed_avg
+       tdigest_avg(d, lo, hi) AS trimmed_avg
   FROM (SELECT 'flags 1 count 100 compression 10 centroids 1 (10, 100)'::tdigest) t(d),
        (VALUES (0.0::double precision,  1.0::double precision),
                (0.0::double precision,  0.5::double precision),
@@ -232,7 +226,7 @@ SELECT lo, hi,
                (0.4::double precision,  0.5::double precision),
                (0.1::double precision,  0.2::double precision),
                (0.25::double precision, 0.75::double precision)) v(lo, hi)
- GROUP BY lo, hi ORDER BY lo, hi;
+ ORDER BY lo, hi;
 
 -- The same through the aggregates, to cover tdigest_trimmed_sum() and
 -- tdigest_trimmed_avg() too. All the input values are the same, so the digest
@@ -248,8 +242,8 @@ SELECT tdigest_sum(tdigest(10.0::double precision, 10), 0.4, 0.5) AS agg_sum,
 -- inside the middle centroid, a range straddling a centroid boundary, a
 -- range inside the last centroid, and the untrimmed case.
 SELECT lo, hi,
-       tdigest_sum(tdigest(d), lo, hi) AS trimmed_sum,
-       tdigest_avg(tdigest(d), lo, hi) AS trimmed_avg
+       tdigest_sum(d, lo, hi) AS trimmed_sum,
+       tdigest_avg(d, lo, hi) AS trimmed_avg
   FROM (SELECT 'flags 1 count 30 compression 10 centroids 3 (10, 10) (20, 5) (30, 15)'::tdigest) t(d),
        (VALUES (0.4::float8,  0.5::float8),
                (0.35::float8, 0.45::float8),
@@ -257,7 +251,7 @@ SELECT lo, hi,
                (0.3::float8,  0.6::float8),
                (0.6::float8,  0.9::float8),
                (0.0::float8,  1.0::float8)) v(lo, hi)
- GROUP BY lo, hi ORDER BY lo, hi;
+ ORDER BY lo, hi;
 
 -- Exhaustive cross-check of every trimmed range against a brute-force
 -- expansion of the same digest into individual items. Expected to return no
@@ -280,13 +274,12 @@ ranges(lo, hi) AS (
    WHERE a < b
 )
 SELECT r.lo, r.hi,
-       tdigest_sum(tdigest(digest.d), r.lo, r.hi) AS trimmed_sum,
+       tdigest_sum(digest.d, r.lo, r.hi) AS trimmed_sum,
        (SELECT sum(i.val) FROM items i
          WHERE i.idx >= floor(30::float8 * r.lo)
            AND i.idx <  ceil(30::float8 * r.hi)) AS expected_sum
   FROM ranges r, digest
- GROUP BY r.lo, r.hi
- HAVING tdigest_sum(tdigest(digest.d), r.lo, r.hi)
+ WHERE tdigest_sum(digest.d, r.lo, r.hi)
        IS DISTINCT FROM
        (SELECT sum(i.val) FROM items i
          WHERE i.idx >= floor(30::float8 * r.lo)
