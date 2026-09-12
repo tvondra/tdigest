@@ -673,6 +673,23 @@ tdigest_compact(tdigest_aggstate_t *state)
 	if (state->ncompacted == state->ncentroids)
 		return;
 
+	/*
+	 * If there's just a single centroid, there's nothing to compact (or
+	 * sort). And we'd also end up with a division by zero below, because
+	 * log(1) = 0. It'd work out in the end, because 1/0 = infinity, and
+	 * so we'd merge nothing. But it's sloppy.
+	 *
+	 * XXX We're checking ncentroids, while the log() is on total_count.
+	 * But that's fine. Compaction/sort is pointless no matter how large
+	 * the single centroid is. And with 2+ centroids, the total_count has
+	 * to be 2+ too.
+	 */
+	if (state->ncentroids == 1)
+	{
+		state->ncompacted = state->ncentroids;
+		return;
+	}
+
 	tdigest_sort(state);
 
 	state->ncompactions++;
