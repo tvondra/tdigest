@@ -26,6 +26,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- the user-facing functions must all be parallel safe, otherwise queries
+-- using them lose parallelism (the aggregate support functions take or
+-- return "internal" and cannot be called from SQL, so they are exempt)
+SELECT p.proname, p.proparallel
+  FROM pg_proc p JOIN pg_depend d ON (d.objid = p.oid AND d.deptype = 'e')
+       JOIN pg_extension e ON (e.oid = d.refobjid)
+ WHERE e.extname = 'tdigest'
+   AND p.proargtypes::oid[] && ARRAY['internal'::regtype]::oid[] IS NOT TRUE
+   AND p.prorettype <> 'internal'::regtype
+   AND p.proparallel <> 's'
+ ORDER BY 1;
+
 -- test parallel query
 CREATE TABLE test_parallel (v double precision, c int, d int);
 INSERT INTO test_parallel SELECT 1000 * random(), 1 + mod(i,7), mod(i,113) FROM generate_series(1,100000) s(i);
