@@ -379,6 +379,8 @@ rebalance_centroids(centroid_t *centroids, int ncentroids,
 
 	centroid_t *scratch = palloc(sizeof(centroid_t) * ncentroids);
 
+	Assert(weight_after > 0);
+
 	i = 0;
 	while (i < ncentroids)
 	{
@@ -484,7 +486,7 @@ tdigest_sort_centroids(centroid_t *centroids, int ncentroids, int64 count)
 				/* group fully above median - reverse the order */
 				reverse_centroids(&centroids[i], group_size);
 			}
-			else if (next_group >= median_count)	/* group split by median */
+			else if (next_group > median_count)	/* group split by median */
 			{
 				rebalance_centroids(&centroids[i], group_size,
 									median_count - count_so_far,
