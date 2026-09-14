@@ -205,3 +205,22 @@ SELECT tdigest_percentile_of('flags 1 count 467525031770889061 compression 100 c
     0.9999999999999999
 (1 row)
 
+-- most user-facing scalar functions should be strict, except for functions 
+-- that need to accept NULL as initial digest value (e.g. for the incremental
+-- API, or when combining digests)
+SELECT p.proname, p.proisstrict
+  FROM pg_proc p JOIN pg_depend d ON (d.objid = p.oid AND d.deptype = 'e')
+       JOIN pg_extension e ON (e.oid = d.refobjid)
+ WHERE e.extname = 'tdigest'
+   AND p.proargtypes::oid[] && ARRAY['internal'::regtype]::oid[] IS NOT TRUE
+   AND p.prorettype <> 'internal'::regtype
+   AND p.proisstrict <> true
+   AND NOT EXISTS (SELECT 1 FROM pg_aggregate WHERE aggfnoid = p.oid)
+ ORDER BY 1;
+    proname    | proisstrict 
+---------------+-------------
+ tdigest_add   | f
+ tdigest_add   | f
+ tdigest_union | f
+(3 rows)
+

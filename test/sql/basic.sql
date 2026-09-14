@@ -109,3 +109,16 @@ SELECT tdigest_percentile('flags 1 count 204745659738676291 compression 100 cent
 
 -- extreme digest - overflow/rounding issue in tdigest_compute_quantiles_of
 SELECT tdigest_percentile_of('flags 1 count 467525031770889061 compression 100 centroids 5 (-714.32532319527991, 372151463885287745) (-649.22210009079686, 12983637447676689) (-613.86327584091737, 82389930437924625) (-554.7460856469786, 1) (-497.74083276256061, 1)'::tdigest, -517.61603495911652);
+
+-- most user-facing scalar functions should be strict, except for functions 
+-- that need to accept NULL as initial digest value (e.g. for the incremental
+-- API, or when combining digests)
+SELECT p.proname, p.proisstrict
+  FROM pg_proc p JOIN pg_depend d ON (d.objid = p.oid AND d.deptype = 'e')
+       JOIN pg_extension e ON (e.oid = d.refobjid)
+ WHERE e.extname = 'tdigest'
+   AND p.proargtypes::oid[] && ARRAY['internal'::regtype]::oid[] IS NOT TRUE
+   AND p.prorettype <> 'internal'::regtype
+   AND p.proisstrict <> true
+   AND NOT EXISTS (SELECT 1 FROM pg_aggregate WHERE aggfnoid = p.oid)
+ ORDER BY 1;
