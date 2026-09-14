@@ -20,3 +20,7 @@ ALTER FUNCTION tdigest_in(cstring) PARALLEL SAFE;
 ALTER FUNCTION tdigest_out(tdigest) PARALLEL SAFE;
 ALTER FUNCTION tdigest_recv(internal) PARALLEL SAFE;
 ALTER FUNCTION tdigest_send(tdigest) PARALLEL SAFE;
+
+-- Mark the last two scalar functions as parallel safe.
+ALTER FUNCTION tdigest_digest_avg(tdigest, double precision, double precision) PARALLEL SAFE;
+ALTER FUNCTION tdigest_digest_sum(tdigest, double precision, double precision) PARALLEL SAFE;

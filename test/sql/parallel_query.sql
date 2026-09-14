@@ -273,6 +273,50 @@ FROM (
     tdigest_avg(d, 0.0, 1.0) AS b
   FROM test_parallel_2) foo;
 
+-- trimmed aggregates (on tdigest)
+EXPLAIN (COSTS OFF)
+SELECT tdigest_digest_sum(tdigest(v, 100), 0.05, 0.95) FROM test_parallel;
+
+-- trimming nothing has to reproduce the exact sum
+SELECT abs(a - b) / a < 0.01
+FROM (
+  SELECT
+    (SELECT sum(v) FROM test_parallel) AS a,
+    tdigest_digest_sum(tdigest(v, 100), 0.0, 1.0) AS b
+  FROM test_parallel) foo;
+
+
+EXPLAIN (COSTS OFF)
+SELECT tdigest_digest_avg(tdigest(v, 100), 0.05, 0.95) FROM test_parallel;
+
+SELECT abs(a - b) / a < 0.01
+FROM (
+  SELECT
+    (SELECT avg(v) FROM test_parallel) AS a,
+    tdigest_digest_avg(tdigest(v, 100), 0.0, 1.0) AS b
+  FROM test_parallel) foo;
+
+
+EXPLAIN (COSTS OFF)
+SELECT tdigest_digest_sum(tdigest(d), 0.05, 0.95) FROM test_parallel_2;
+
+SELECT abs(a - b) / a < 0.01
+FROM (
+  SELECT
+    (SELECT sum(v) FROM test_parallel) AS a,
+    tdigest_digest_sum(tdigest(d), 0.0, 1.0) AS b
+  FROM test_parallel_2) foo;
+
+
+EXPLAIN (COSTS OFF)
+SELECT tdigest_digest_avg(tdigest(d), 0.05, 0.95) FROM test_parallel_2;
+
+SELECT abs(a - b) / a < 0.01
+FROM (
+  SELECT
+    (SELECT avg(v) FROM test_parallel) AS a,
+    tdigest_digest_avg(tdigest(d), 0.0, 1.0) AS b
+  FROM test_parallel_2) foo;
 
 -- casting a digest to text must not force a serial plan
 EXPLAIN (COSTS OFF)
