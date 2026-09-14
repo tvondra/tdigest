@@ -882,7 +882,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 				total_distance,
 				q;
 
-		/* first centroid for percentile 1.0 */
+		/* first centroid for percentile 0.0 */
 		if (state->percentiles[i] == 0.0)
 		{
 			c = &state->centroids[0];
@@ -1051,7 +1051,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 }
 
 /*
- * Estimate inverse of quantile given a value from the t-digest agg state.
+ * Estimate inverse quantiles for values using a t-digest agg state.
  *
  * Essentially an inverse to tdigest_compute_quantiles.
  */
@@ -2925,7 +2925,6 @@ tdigest_serial(PG_FUNCTION_ARGS)
 		ptr += sizeof(double) * state->nvalues;
 	}
 
-	/* FIXME maybe don't serialize full centroids, but just sum/count */
 	memcpy(ptr, state->centroids,
 		   sizeof(centroid_t) * state->ncentroids);
 	ptr += sizeof(centroid_t) * state->ncentroids;
