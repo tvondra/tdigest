@@ -1,5 +1,10 @@
 Revision history for PostgreSQL extension tdigest.
 
+1.4.7
+    - Prevent divisions by zero in double arithmetics (benign with IEEE-754).
+    - Mark scalar functions operating on a tdigest value as parallel safe, to
+      allow parallel queries in more cases).
+
 1.4.6
     - Disable FP contraction to make tests pass on arm64
     - Fix builds on 32-bit systems by defining strtoi64
