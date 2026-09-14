@@ -675,7 +675,7 @@ When either of the digests is `NULL`, the other one is returned unchanged
 
 ```
 WITH x AS (SELECT tdigest(random(), 100) AS d FROM generate_series(1,1000))
-UPDATE t SET d = tdigest_union(p.d, x.d) FROM x;
+UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
 ```
 
 #### Parameters
