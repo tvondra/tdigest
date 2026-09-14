@@ -2,18 +2,8 @@
 
 -- disable the notices for the create script (shell types etc.)
 SET client_min_messages = 'WARNING';
-\i tdigest--1.0.0.sql
-\i tdigest--1.0.0--1.0.1.sql
-\i tdigest--1.0.1--1.2.0.sql
-\i tdigest--1.2.0--1.3.0.sql
-\i tdigest--1.3.0--1.4.0.sql
-\i tdigest--1.4.0--1.4.1.sql
-\i tdigest--1.4.1--1.4.2.sql
-\i tdigest--1.4.2--1.4.3.sql
-\i tdigest--1.4.3--1.4.4.sql
-\i tdigest--1.4.4--1.4.5.sql
-\i tdigest--1.4.5--1.4.6.sql
-\i tdigest--1.4.6--1.4.7.sql
+CREATE EXTENSION tdigest VERSION '1.0.0';
+ALTER EXTENSION tdigest UPDATE TO '1.4.7';
 SET client_min_messages = 'NOTICE';
 SET extra_float_digits = 0;
 
