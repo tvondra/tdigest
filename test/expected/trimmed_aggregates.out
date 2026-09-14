@@ -115,8 +115,8 @@ FROM data;
  t         | t
 (1 row)
 
--- results should not depend on ordering of input data (with compression
--- large enough to not compact anything)
+-- With no compaction while accumulating input, final compaction starts from
+-- the same sorted centroids for both ascending and descending input.
 SELECT tdigest_sum(i, 10000, 0.0, 0.5) FROM generate_series(1, 10000) s(i);
  tdigest_sum 
 -------------

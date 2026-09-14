@@ -79,11 +79,11 @@ INSERT INTO tdigest_unsorted_digests VALUES
     (6, 'a single centroid',
         'flags 1 count 10 compression 10000 centroids 1 (50, 10)');
 
--- And then digests built by the aggregate from actual data. The first one is
--- small enough not to be compacted at all (so each centroid holds a single
--- item), the others are compacted with different compression values.
+-- And then digests built by the aggregate from actual data. The first one
+-- retains singleton centroids after final compaction; the others merge input
+-- values with different compression settings.
 INSERT INTO tdigest_unsorted_digests
-SELECT 7, 'built from 1000 distinct values, no compaction',
+SELECT 7, 'built from 1000 distinct values, no centroid merging',
        tdigest(i::double precision, 10000)
   FROM generate_series(1, 1000) s(i);
 

@@ -50,10 +50,10 @@ INSERT INTO tdigest_roundtrip_digests VALUES
         'flags 1 count 8 compression 10000 centroids 4 (-100, 2) (-1, 2) (1, 2) (100, 2)',
         0.125, 0.875);
 
--- And digests built by the aggregate from actual data. The first one is not
--- compacted at all (every centroid holds a single item), the second one is.
+-- And digests built by the aggregate from actual data. The first one retains
+-- singleton centroids after final compaction, while the second merges values.
 INSERT INTO tdigest_roundtrip_digests
-SELECT 6, 'built from 1000 distinct values, no compaction', tdigest(i::double precision, 10000), 0.005, 0.995
+SELECT 6, 'built from 1000 distinct values, no centroid merging', tdigest(i::double precision, 10000), 0.005, 0.995
   FROM generate_series(1, 1000) s(i);
 
 INSERT INTO tdigest_roundtrip_digests

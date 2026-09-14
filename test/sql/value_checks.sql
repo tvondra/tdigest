@@ -4,7 +4,7 @@
 
 \set VERBOSITY terse
 
--- values are not checked anywhere, instead we just return NaN/-infinity/infinity
+-- hypothetical values map to NaN, 0, and 1, respectively
 
 SELECT tdigest_percentile_of(1.0::double precision, 10, 'NaN'::double precision);
 SELECT tdigest_percentile_of(1.0::double precision, 10, '-infinity'::double precision);

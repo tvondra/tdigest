@@ -88,8 +88,8 @@ SELECT
     tdigest_digest_avg(data.d, 0.05, 0.95) between 0.45 and 0.55 AS mean_05_95
 FROM data;
 
--- results should not depend on ordering of input data (with compression
--- large enough to not compact anything)
+-- With no compaction while accumulating input, final compaction starts from
+-- the same sorted centroids for both ascending and descending input.
 
 SELECT tdigest_sum(i, 10000, 0.0, 0.5) FROM generate_series(1, 10000) s(i);
 SELECT tdigest_sum(i, 10000, 0.0, 0.5) from generate_series(10000, 1, -1) s(i);

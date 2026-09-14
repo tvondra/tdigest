@@ -53,10 +53,10 @@ INSERT INTO tdigest_monotonic_digests VALUES
     (9, 'repeated means',
         'flags 1 count 6 compression 10000 centroids 4 (0, 1) (50, 2) (50, 2) (100, 1)');
 -- And a couple of digests built by the aggregate from actual data. The first
--- one is small enough not to be compacted at all (so every centroid holds a
--- single item), the other two are compacted.
+-- one retains singleton centroids after final compaction, while the other two
+-- merge input values.
 INSERT INTO tdigest_monotonic_digests
-SELECT 10, 'built from 51 distinct values, no compaction', tdigest((2 * i)::double precision, 10000)
+SELECT 10, 'built from 51 distinct values, no centroid merging', tdigest((2 * i)::double precision, 10000)
   FROM generate_series(0, 50) s(i);
 INSERT INTO tdigest_monotonic_digests
 SELECT 11, 'built from 10000 rows, compression 10', tdigest((i % 101)::double precision, 10)

@@ -70,11 +70,11 @@ INSERT INTO tdigest_unsorted_digests VALUES
         'flags 1 count 22 compression 10000 centroids 3 (0, 1) (10, 20) (20, 1)'),
     (6, 'a single centroid',
         'flags 1 count 10 compression 10000 centroids 1 (50, 10)');
--- And then digests built by the aggregate from actual data. The first one is
--- small enough not to be compacted at all (so each centroid holds a single
--- item), the others are compacted with different compression values.
+-- And then digests built by the aggregate from actual data. The first one
+-- retains singleton centroids after final compaction; the others merge input
+-- values with different compression settings.
 INSERT INTO tdigest_unsorted_digests
-SELECT 7, 'built from 1000 distinct values, no compaction',
+SELECT 7, 'built from 1000 distinct values, no centroid merging',
        tdigest(i::double precision, 10000)
   FROM generate_series(1, 1000) s(i);
 INSERT INTO tdigest_unsorted_digests
@@ -137,7 +137,7 @@ SELECT v.id, g.descr,
   4 | repeated means (the sort has to rebalance those)         |        6 |              0 |                0 |                 6
   5 | a large centroid in the middle                           |        6 |              0 |                0 |                 5
   6 | a single centroid                                        |        6 |              0 |                0 |                 0
-  7 | built from 1000 distinct values, no compaction           |        6 |              0 |                0 |                 6
+  7 | built from 1000 distinct values, no centroid merging     |        6 |              0 |                0 |                 6
   8 | built from 10000 rows, compression 100                   |        6 |              0 |                0 |                 6
   9 | built from 10000 rows, compression 10                    |        6 |              0 |                0 |                 6
  10 | built from 10000 random values, compression 100          |        6 |              0 |                0 |                 6

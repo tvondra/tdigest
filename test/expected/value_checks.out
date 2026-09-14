@@ -2,7 +2,7 @@
 -- the tdigest_percentile_of() functions are not validated and instead return
 -- hard-coded values for NaN/infinity
 \set VERBOSITY terse
--- values are not checked anywhere, instead we just return NaN/-infinity/infinity
+-- hypothetical values map to NaN, 0, and 1, respectively
 SELECT tdigest_percentile_of(1.0::double precision, 10, 'NaN'::double precision);
  tdigest_percentile_of 
 -----------------------
