@@ -30,6 +30,20 @@ FP_CONTRACT := $(shell $(CC) -ffp-contract=off -xc -E /dev/null > /dev/null 2>&1
                        && echo -ffp-contract=off)
 override CFLAGS += $(FP_CONTRACT)
 
+# The PGXS "uninstall" target only removes the files currently listed in DATA,
+# so scripts installed by an older build (e.g. upgrade scripts that were since
+# renamed or removed) would be left behind. Delete everything matching the
+# extension name, to get rid of those stale files too.
+#
+# A recipe can't be appended to the PGXS "uninstall" rule, so this is hooked in
+# as a prerequisite (which means it runs before the PGXS part - that's fine,
+# the two steps are independent).
+uninstall: uninstall-stale
+
+.PHONY: uninstall-stale
+uninstall-stale:
+	rm -f '$(DESTDIR)$(datadir)/extension'/$(EXTENSION)*
+
 dist:
 	git archive --format zip --prefix=$(EXTENSION)-$(DISTVERSION)/ -o $(EXTENSION)-$(DISTVERSION).zip HEAD
 
