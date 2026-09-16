@@ -230,8 +230,78 @@ tracked dependencies, as described above. Function bodies and dynamic SQL
 stored as text still need to be searched and rewritten, even when PostgreSQL
 does not record a dependency on the old name.
 
-The API rework does not change the on-disk digest format, so existing valid
-digest columns do not need to be rebuilt.
+The API rework does not change the on-disk digest format, so the new SQL API
+reads existing digest columns exactly as they are.
+
+They do need attention for the storage change, though. Up to 1.4.7 the
+`tdigest` type used `external` storage, which pushes large values out to
+TOAST without attempting compression. On PostgreSQL 13 and later, the upgrade
+switches the type's default to `extended`:
+
+```
+ALTER TYPE tdigest SET (STORAGE = extended);
+```
+
+`extended` permits PostgreSQL to try compression before moving a large value
+out of line. Compression is not guaranteed: a value that does not compress
+well enough can still be stored out of line uncompressed.
+
+PostgreSQL 11 and 12 do not support changing type storage this way, so the
+upgrade leaves their type default as `external`. The per-column `ALTER TABLE`
+command below works on those versions too; use it for existing columns and
+for new columns that should allow compression.
+
+The `ALTER TYPE` statement changes the default recorded for the type, which
+is what new columns pick up. Columns that already exist keep the storage
+they were created with; an `external` column does not start requesting
+compression automatically. Check for those with
+
+```sql
+SELECT c.relname, a.attname, a.attstorage
+  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+ WHERE a.atttypid = 'tdigest'::regtype
+   AND a.attnum > 0 AND NOT a.attisdropped
+   AND c.relkind IN ('r', 'm', 'p')
+   AND a.attstorage <> 'x';
+```
+
+and switch the ones worth converting:
+
+```sql
+ALTER TABLE p ALTER COLUMN d SET STORAGE EXTENDED;
+```
+
+`SET STORAGE` does not rewrite existing values. A table rewrite with
+`VACUUM FULL` or `CLUSTER` can apply the new policy to them, but requires an
+`ACCESS EXCLUSIVE` table lock. A no-op update such as `UPDATE p SET d = d`
+can reuse the old TOAST value without compressing it. To reconstruct the
+values without compacting their centroids, use a text round trip with
+sufficient floating-point output precision:
+
+```sql
+BEGIN;
+SET LOCAL extra_float_digits = 3;
+UPDATE p SET d = d::text::tdigest;
+COMMIT;
+```
+
+This also converts digests in the old sum-based format to the mean-based
+format, just as the input functions normally do.
+
+`ALTER TABLE ... SET STORAGE` has no version restriction, so it is also the
+way to get compressed digests on PostgreSQL 11 and 12, where the type keeps
+its `external` default. The query above lists every `tdigest` column there,
+including ones created after the upgrade.
+
+The change is optional. Nothing breaks if a column is left on `external`
+storage - both representations are readable, and a table can hold a mix of
+them. A digest is 24B of header plus 16B per centroid, and how many centroids
+a compaction leaves behind is not bounded by `compression` - it depends on
+the data, and ranges from a fraction of `compression` to somewhat above it
+(compression 10 typically gives about 17 centroids). A digest built with
+compression 100 is around 1kB and stays in the tuple, while compression 500
+and above produces digests of several kB, which do reach TOAST. The storage
+change matters for those.
 
 
 ## Basic usage
@@ -285,6 +355,16 @@ There is no general `1/N` error guarantee for a digest with `N` centroids, and
 compression 100 does not promise 1% error relative to the range of data values.
 Values such as 100, used in the examples, are starting points to evaluate
 against exact results on representative data.
+
+Each bucket is represented by a `double precision` mean and a 64-bit count
+(i.e. 16B per bucket), and the buffer holds `10 * compression` buckets, so
+the maximum of 10000 for the compression means the largest possible t-digest
+has 100000 buckets and is ~1.5MB. For columns using `extended` storage,
+PostgreSQL attempts compression before moving large values out of line, so
+the on-disk footprint may be much smaller. Version 2.0.0 changes the type's
+default to `extended` on PostgreSQL 13 and later only. See
+[Upgrading to 2.0.0](#upgrading-to-200) for older servers and columns created
+by an earlier version.
 
 The algorithm allows smaller centroid weights near quantiles 0.0 and 1.0
 than near the median. This concentrates resolution in the tails, but does

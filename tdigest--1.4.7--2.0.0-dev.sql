@@ -91,3 +91,13 @@ ALTER FUNCTION tdigest_digest_sum(tdigest, double precision, double precision)
     RENAME TO tdigest_sum;
 ALTER FUNCTION tdigest_digest_avg(tdigest, double precision, double precision)
     RENAME TO tdigest_avg;
+
+-- switch the storage to extended, to allow TOAST with compression
+-- Older servers cannot alter type storage; keep the statement unparsed there.
+DO $$
+BEGIN
+    IF current_setting('server_version_num')::integer >= 130000 THEN
+        EXECUTE 'ALTER TYPE tdigest SET (STORAGE = extended)';
+    END IF;
+END;
+$$;
