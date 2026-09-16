@@ -927,7 +927,7 @@ back. This function makes it possible to find such digests.
 #### Synopsis
 
 ```
-SELECT id FROM t WHERE NOT tdigest_is_valid(t.d);
+SELECT a, b FROM p WHERE NOT tdigest_is_valid(p.d);
 ```
 
 #### Parameters
