@@ -846,8 +846,10 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 	/*
 	 * Trigger a compaction, which also sorts the data.
 	 *
-	 * XXX maybe just do a sort here, which should give us a bit more accurate
-	 * results, probably.
+	 * XXX It might seem we can just do a sort here, and maybe get a bit more
+	 * accurate results. However, sorting single-item centroids in between much
+	 * larger centroids seems to interfere with the interpolation, making the
+	 * errors much larger.
 	 */
 	tdigest_compact(state);
 
@@ -1066,8 +1068,10 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 	/*
 	 * Trigger a compaction, which also sorts the data.
 	 *
-	 * XXX maybe just do a sort here, which should give us a bit more accurate
-	 * results, probably.
+	 * XXX It might seem we can just do a sort here, and maybe get a bit more
+	 * accurate results. However, sorting single-item centroids in between much
+	 * larger centroids seems to interfere with the interpolation, making the
+	 * errors much larger.
 	 */
 	tdigest_compact(state);
 
