@@ -94,3 +94,13 @@ SELECT tdigest_percentile_of(v, 2, 100, '{}'::double precision[])
 SELECT tdigest_percentile_of(d, '{}'::double precision[])
   FROM (SELECT tdigest(v, 100) AS d
           FROM (VALUES (1.0::double precision), (2.0)) s(v)) t;
+
+-- a NULL element inside an array is rejected too, and the message has to name
+-- the argument the array was passed as, not always a percentile
+SELECT tdigest_percentile(v, 100, ARRAY[0.5, NULL]::double precision[])
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
+SELECT tdigest_percentile_of(v, 100, ARRAY[1.0, NULL]::double precision[])
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
+SELECT tdigest_count(tdigest_add(NULL::tdigest, ARRAY[1.0, NULL]::double precision[], 100));

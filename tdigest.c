@@ -256,7 +256,8 @@ Datum tdigest_digest_sum(PG_FUNCTION_ARGS);
 Datum tdigest_digest_avg(PG_FUNCTION_ARGS);
 
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
-static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
+static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v,
+							   const char *what, int * len);
 static int64 double_to_int64(double value, int64 maxvalue);
 static tdigest_aggstate_t *tdigest_copy(tdigest_aggstate_t *state);
 
@@ -2298,7 +2299,7 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 
 		percentiles = array_to_double(fcinfo,
 									  PG_GETARG_ARRAYTYPE_P(3),
-									  &npercentiles);
+									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
 
@@ -2368,7 +2369,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 
 		percentiles = array_to_double(fcinfo,
 									  PG_GETARG_ARRAYTYPE_P(4),
-									  &npercentiles);
+									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
 
@@ -2472,7 +2473,7 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 
 		values = array_to_double(fcinfo,
 								 PG_GETARG_ARRAYTYPE_P(3),
-								 &nvalues);
+								 "a value", &nvalues);
 
 		state = tdigest_aggstate_allocate(0, nvalues, compression);
 
@@ -2540,7 +2541,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 
 		values = array_to_double(fcinfo,
 								 PG_GETARG_ARRAYTYPE_P(4),
-								 &nvalues);
+								 "a value", &nvalues);
 
 		state = tdigest_aggstate_allocate(0, nvalues, compression);
 
@@ -2646,7 +2647,7 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 
 		percentiles = array_to_double(fcinfo,
 									  PG_GETARG_ARRAYTYPE_P(2),
-									  &npercentiles);
+									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
 
@@ -2730,7 +2731,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 
 		values = array_to_double(fcinfo,
 								 PG_GETARG_ARRAYTYPE_P(2),
-								 &nvalues);
+								 "a value", &nvalues);
 
 		state = tdigest_aggstate_allocate(0, nvalues, digest->compression);
 
@@ -3298,7 +3299,7 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 
 	values = array_to_double(fcinfo,
 							 PG_GETARG_ARRAYTYPE_P(1),
-							 &nvalues);
+							 "an element", &nvalues);
 
 	for (i = 0; i < nvalues; i++)
 		tdigest_add(state, values[i]);
@@ -4750,9 +4751,14 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
  * Transform an input FLOAT8 SQL array to a plain double C array.
  *
  * This expects a single-dimensional float8 array, fails otherwise.
+ *
+ * "what" names a single element of the array, with the article, and is used
+ * when reporting a NULL element. The callers pass arrays of different things
+ * (percentiles, hypothetical values, values to add to a digest), and a message
+ * naming the wrong one points at the wrong argument.
  */
 static double *
-array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int *len)
+array_to_double(FunctionCallInfo fcinfo, ArrayType *v, const char *what, int *len)
 {
 	double *result;
 	int		nitems,
@@ -4806,7 +4812,7 @@ array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int *len)
 	for (i = 0; i < nelements; i++)
 	{
 		if (nulls[i])
-			elog(ERROR, "NULL not allowed as a percentile value");
+			elog(ERROR, "NULL not allowed as %s", what);
 
 		result[i] = DatumGetFloat8(elements[i]);
 	}
