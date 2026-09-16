@@ -115,10 +115,11 @@ pre-computed digests into a single digest, which can be stored again.
 So for example you may do this:
 
 ```
--- table with some random source data
+-- table with some random source data, with "a" usable as a count of
+-- occurrences (so it has to be positive)
 CREATE TABLE t (a int, b int, c double precision);
 
-INSERT INTO t SELECT 10 * random(), 10 * random(), random()
+INSERT INTO t SELECT 1 + 10 * random(), 10 * random(), random()
                 FROM generate_series(1,10000000);
 
 -- table with pre-aggregated digests into table "p"
