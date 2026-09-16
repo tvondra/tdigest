@@ -690,6 +690,10 @@ UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
 Returns the t-digest as a JSON value. The function is also exposed as a
 cast from `tdigest` to `json`.
 
+The document has the flags, the total number of items (`count`), the
+compression and the number of centroids, followed by the per-centroid
+`means` and `counts` arrays.
+
 #### Synopsis
 
 ```

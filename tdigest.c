@@ -3978,6 +3978,11 @@ tdigest_count(PG_FUNCTION_ARGS)
  * in each array is for i-th centroid. We might store it in a single array,
  * but then we'd have to walk it in pairs. And it'd mix float and int
  * values in the same array.
+ *
+ * The arrays are named in plural ("means" and "counts"), so that the array
+ * of per-centroid counts does not collide with the total count. Duplicate
+ * keys are not strictly forbidden by JSON, but most parsers keep just one
+ * of the values (jsonb keeps the last one), losing the other.
  */
 Datum
 tdigest_to_json(PG_FUNCTION_ARGS)
@@ -3998,7 +4003,7 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 	appendStringInfo(&str, "\"compression\": %d, ", digest->compression);
 	appendStringInfo(&str, "\"centroids\": %d, ", digest->ncentroids);
 
-	appendStringInfoString(&str, "\"mean\": [");
+	appendStringInfoString(&str, "\"means\": [");
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
@@ -4027,7 +4032,7 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 
 	appendStringInfoString(&str, "], ");
 
-	appendStringInfoString(&str, "\"count\": [");
+	appendStringInfoString(&str, "\"counts\": [");
 
 	for (i = 0; i < digest->ncentroids; i++)
 	{
