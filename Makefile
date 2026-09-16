@@ -47,5 +47,8 @@ uninstall-stale:
 dist:
 	git archive --format zip --prefix=$(EXTENSION)-$(DISTVERSION)/ -o $(EXTENSION)-$(DISTVERSION).zip HEAD
 
-latest-changes.md: Changes
+# The output is tracked, so checkout timestamps do not establish whether its
+# contents match the release selected by META.json.
+.PHONY: latest-changes.md
+latest-changes.md: Changes META.json
 	perl -e 'while (<>) {last if /^(v?\Q${DISTVERSION}\E)/; } print "Changes for v${DISTVERSION}:\n"; while (<>) { last if /^\s*$$/; s/^\s+//; print }' Changes > $@
