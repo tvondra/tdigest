@@ -554,7 +554,7 @@ tdigest_compact_forced(tdigest_aggstate_t *state)
 	 */
 	Assert(group_size * state->compression >= state->ncentroids);
 
-	/* process groups of input centrois */
+	/* process groups of input centroids */
 	for (;;)
 	{
 		int		i;
@@ -641,7 +641,7 @@ tdigest_compact_forced(tdigest_aggstate_t *state)
  * We always keep the data sorted in ascending order. This way we can reuse
  * the sort between compactions, and also when computing the quantiles.
  *
- * The regular compaction is not guaranteed not make any progress. The size
+ * The regular compaction is not guaranteed to make any progress. The size
  * limits are calculated in double, may end up too low to allow merging any
  * centroids. If that happens, we force a compaction that simply merges
  * neighbor centroids.
@@ -752,7 +752,7 @@ tdigest_compact(tdigest_aggstate_t *state)
 		{
 			/*
 			 * If both centroids have the same mean, don't calculate it again.
-			 * The recaulculation may cause rounding errors, so that the means
+			 * The recalculation may cause rounding errors, so that the means
 			 * would drift apart over time. We want to keep them equal for as
 			 * long as possible.
 			 */
@@ -919,7 +919,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 			c = &state->centroids[j];
 
-			/* Adding the centroid would exceeded the goal, so stop. */
+			/* Adding the centroid would exceed the goal, so stop. */
 			if (count + c->count >= goal)
 				break;
 
@@ -927,7 +927,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		}
 
 		/*
-		 * Adding the whole entroid would exceed the goal, but we don't know
+		 * Adding the whole centroid would exceed the goal, but we don't know
 		 * on which side of the mean the value lies yet. We might have also
 		 * hit the mean exactly. Let's figure that out.
 		 *
@@ -1007,7 +1007,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 		/*
 		 * We should be "to the right" the first centroid, and should not
-		 * be so far ahead to exceed the next one. So in printiple, this
+		 * be so far ahead to exceed the next one. So in principle, this
 		 * should be true:
 		 *
 		 * Assert((distance >= 0) && (distance <= total_distance));
@@ -1023,7 +1023,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 
 		/*
 		 * Clamp distance to [0, total_distance], to mitigate unexpected
-		 * rouding / precision errors.
+		 * rounding / precision errors.
 		 */
 		distance = Max(0.0, Min(total_distance, distance));
 
@@ -1723,7 +1723,7 @@ tdigest_add_generated(tdigest_aggstate_t *state, double value, int64 count)
 		r1 = (q0 * (count_remaining / (double) count) / normalizer);
 
 		/*
-		 * Solve z <= q2 * (1 - q2) as a quadratic equation. The inequatily we
+		 * Solve z <= q2 * (1 - q2) as a quadratic equation. The inequality we
 		 * need to solve is
 		 *
 		 *	0 <= a * x^2 + b * x + c
@@ -1766,7 +1766,7 @@ tdigest_add_generated(tdigest_aggstate_t *state, double value, int64 count)
 			r2 = (2 * c) / (d - b);
 
 		/*
-		 * paranoia: We should not be dealing withh NaN values here. Crash in
+		 * paranoia: We should not be dealing with NaN values here. Crash in
 		 * debug build, double_to_int64 will mitigate it in regular builds.
 		 */
 		Assert(isfinite(r1) && isfinite(r2));
@@ -3310,7 +3310,7 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 }
 
 /*
- * Merge a t-digest into another t-digest. This is somewaht inefficient, as
+ * Merge a t-digest into another t-digest. This is somewhat inefficient, as
  * it has to deserialize the t-digests into the in-memory aggstate values,
  * and serialize it back for each call, but it's better than doing it for
  * each individual value (like tdigest_union_double_increment).

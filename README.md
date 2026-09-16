@@ -969,7 +969,7 @@ values with 4-byte varlena header don't need a copy during detoasting, and
 so might have kept the incorrect alignment.
 
 In practice there's little additional cost - we've already had to make the
-copy for most digests anyway, and and few digests should be inline.
+copy for most digests anyway, and few digests should be inline.
 
 The SQL data type retains its original 4-byte alignment for compatibility
 with existing on-disk values. Its C representation contains `double` and
