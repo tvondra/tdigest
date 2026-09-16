@@ -956,16 +956,19 @@ would be 8. On amd64/arm64 this is mostly harmless (except for some minor
 performance penalty), but on on platforms with strict alignment it may
 cause `SIGBUS` crashes.
 
-It's not clear how to best fix this. One option would be to change the
-`CREATE TYPE`, and only use the correct alignment for new installations.
-But maybe that'd be a problem with binary upgrades? The other option is
-to simply copy the data into the correct alignment before accessing the
-double/int64 fields (on platforms with strict alignment).
+The implementation handles this in `tdigest_detoast()` - after detoasting,
+it copies a value if necessary before accessing those fields. In fact,
+larger detoasted values are already aligned properly, because detoasting
+allocates a new buffer - which is guaranteed to be aligned. But inline
+values with 4-byte varlena header don't need a copy during detoasting, and
+so might have kept the incorrect alignment.
 
-In fact, detoasted values are already aligned properly, because that
-allocates a new buffer - which is guaranteed to be aligned. But values
-with 4B header, while stored inline, still have the issue. This makes
-the price for extra copy much lower, we're already paying it anyway.
+In practice there's little additional cost - we've already had to make the
+copy for most digests anyway, and and few digests should be inline.
+
+The SQL data type retains its original 4-byte alignment for compatibility
+with existing on-disk values. Its C representation contains `double` and
+`int64` fields that can require stricter alignment.
 
 
 ## FINALFUNC_MODIFY = READ_ONLY
