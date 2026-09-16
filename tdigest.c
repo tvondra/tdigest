@@ -258,6 +258,7 @@ Datum tdigest_digest_avg(PG_FUNCTION_ARGS);
 static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v, int * len);
 static int64 double_to_int64(double value, int64 maxvalue);
+static tdigest_aggstate_t *tdigest_copy(tdigest_aggstate_t *state);
 
 #if PG_VERSION_NUM < 150000
 /*
@@ -2778,7 +2779,17 @@ tdigest_percentiles(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	tdigest_compute_quantiles(state, &ret);
+	/* windows and shared aggregates may need the original state again. */
+	if (AggStateIsShared(fcinfo))
+	{
+		tdigest_aggstate_t *copy = tdigest_copy(state);
+
+		tdigest_compute_quantiles(copy, &ret);
+
+		pfree(copy);
+	}
+	else
+		tdigest_compute_quantiles(state, &ret);
 
 	PG_RETURN_FLOAT8(ret);
 }
@@ -2804,7 +2815,17 @@ tdigest_percentiles_of(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	tdigest_compute_quantiles_of(state, &ret);
+	/* windows and shared aggregates may need the original state again. */
+	if (AggStateIsShared(fcinfo))
+	{
+		tdigest_aggstate_t *copy = tdigest_copy(state);
+
+		tdigest_compute_quantiles_of(copy, &ret);
+
+		pfree(copy);
+	}
+	else
+		tdigest_compute_quantiles_of(state, &ret);
 
 	PG_RETURN_FLOAT8(ret);
 }
@@ -2818,6 +2839,7 @@ tdigest_digest(PG_FUNCTION_ARGS)
 	tdigest_t			   *digest;
 	tdigest_aggstate_t	   *state;
 	MemoryContext	aggcontext;
+	bool			shared;
 
 	/* cannot be called directly because of internal-type argument */
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
@@ -2829,7 +2851,15 @@ tdigest_digest(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
+	/* windows and shared aggregates may need the original state again. */
+	shared = AggStateIsShared(fcinfo);
+	if (shared)
+		state = tdigest_copy(state);
+
 	digest = tdigest_aggstate_to_digest(state, true);
+
+	if (shared)
+		pfree(state);
 
 	PG_RETURN_POINTER(digest);
 }
@@ -2857,7 +2887,17 @@ tdigest_array_percentiles(PG_FUNCTION_ARGS)
 
 	result = palloc(state->npercentiles * sizeof(double));
 
-	tdigest_compute_quantiles(state, result);
+	/* windows and shared aggregates may need the original state again. */
+	if (AggStateIsShared(fcinfo))
+	{
+		tdigest_aggstate_t *copy = tdigest_copy(state);
+
+		tdigest_compute_quantiles(copy, result);
+
+		pfree(copy);
+	}
+	else
+		tdigest_compute_quantiles(state, result);
 
 	return double_to_array(fcinfo, result, state->npercentiles);
 }
@@ -2885,7 +2925,17 @@ tdigest_array_percentiles_of(PG_FUNCTION_ARGS)
 
 	result = palloc(state->nvalues * sizeof(double));
 
-	tdigest_compute_quantiles_of(state, result);
+	/* windows and shared aggregates may need the original state again. */
+	if (AggStateIsShared(fcinfo))
+	{
+		tdigest_aggstate_t *copy = tdigest_copy(state);
+
+		tdigest_compute_quantiles_of(copy, result);
+
+		pfree(copy);
+	}
+	else
+		tdigest_compute_quantiles_of(state, result);
 
 	return double_to_array(fcinfo, result, state->nvalues);
 }

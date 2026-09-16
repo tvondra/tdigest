@@ -1,0 +1,47 @@
+-- Finalizing a prefix window must not change the state used for later
+-- frames. Compare all three builders with independent aggregation of the
+-- same ordered input. This is an equality check between two executions of
+-- tdigest, not a claim that its estimates equal exact percentiles.
+--
+-- Before the fix, each builder disagrees on 62 of the 100 frames.
+-- After the fix, this script succeeds and leaves no database objects behind.
+
+SET max_parallel_workers_per_gather = 0;
+
+DO $$
+DECLARE
+    raw_mismatches bigint;
+    weighted_mismatches bigint;
+    merged_mismatches bigint;
+BEGIN
+    WITH inputs AS (
+        SELECT i, tdigest_add(NULL::tdigest, i::double precision, 100) AS d
+          FROM generate_series(1, 100) AS t(i)
+    ), windows AS (
+        SELECT i,
+               tdigest(i::double precision, 100) OVER w AS raw,
+               tdigest(i::double precision, 1::bigint, 100) OVER w AS weighted,
+               tdigest(d) OVER w AS merged
+          FROM inputs
+        WINDOW w AS (ORDER BY i ROWS UNBOUNDED PRECEDING)
+    ), compared AS (
+        SELECT w.*,
+               (SELECT tdigest(j::double precision, 100 ORDER BY j)
+                  FROM generate_series(1, w.i) AS t(j)) AS expected
+          FROM windows w
+    )
+    SELECT count(*) FILTER (WHERE tdigest_send(raw)
+                                  IS DISTINCT FROM tdigest_send(expected)),
+           count(*) FILTER (WHERE tdigest_send(weighted)
+                                  IS DISTINCT FROM tdigest_send(expected)),
+           count(*) FILTER (WHERE tdigest_send(merged)
+                                  IS DISTINCT FROM tdigest_send(expected))
+      INTO raw_mismatches, weighted_mismatches, merged_mismatches
+      FROM compared;
+
+    IF raw_mismatches <> 0 OR weighted_mismatches <> 0 OR merged_mismatches <> 0 THEN
+        RAISE EXCEPTION 'window finalization changed reusable state: raw %, weighted %, merged % mismatches',
+                        raw_mismatches, weighted_mismatches, merged_mismatches;
+    END IF;
+END
+$$;
