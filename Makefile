@@ -32,8 +32,8 @@ override CFLAGS += $(FP_CONTRACT)
 
 # The PGXS "uninstall" target only removes the files currently listed in DATA,
 # so scripts installed by an older build (e.g. upgrade scripts that were since
-# renamed or removed) would be left behind. Delete everything matching the
-# extension name, to get rid of those stale files too.
+# renamed or removed) would be left behind. Match the control file and versioned
+# SQL scripts, not just the name prefix, which other extensions may share.
 #
 # A recipe can't be appended to the PGXS "uninstall" rule, so this is hooked in
 # as a prerequisite (which means it runs before the PGXS part - that's fine,
@@ -42,7 +42,8 @@ uninstall: uninstall-stale
 
 .PHONY: uninstall-stale
 uninstall-stale:
-	rm -f '$(DESTDIR)$(datadir)/extension'/$(EXTENSION)*
+	rm -f '$(DESTDIR)$(datadir)/extension/$(EXTENSION).control' \
+		'$(DESTDIR)$(datadir)/extension/$(EXTENSION)--'*.sql
 
 dist:
 	git archive --format zip --prefix=$(EXTENSION)-$(DISTVERSION)/ -o $(EXTENSION)-$(DISTVERSION).zip HEAD

@@ -1,6 +1,7 @@
 Revision history for PostgreSQL extension tdigest.
 
 1.4.7
+    - Restrict uninstall cleanup to this extension's control and SQL files.
     - Prevent divisions by zero in double arithmetics (benign with IEEE-754).
     - Mark scalar functions operating on a tdigest value as parallel safe, to
       allow parallel queries in more cases).
