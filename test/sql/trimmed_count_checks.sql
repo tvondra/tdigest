@@ -2,8 +2,8 @@
 -- the transition function of the trimmed aggregates accepting an explicit
 -- number of occurrences of a value.
 --
--- The count says how many times the value is added to the digest, so it
--- has to be a positive value.
+-- A non-NULL count must be positive. A NULL count means one occurrence
+-- of the input value.
 
 \set VERBOSITY terse
 

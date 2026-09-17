@@ -1,6 +1,6 @@
 -- Regression test for adding a value with a count exceeding BUFFER_SIZE in
--- tdigest_add_double_array_values_count(), the shared value/count transition
--- function.
+-- tdigest_add_double_array_values_count(), the transition function for
+-- inverse percentiles of an array of hypothetical values.
 --
 -- Adding the values one by one would mean too many compactions, so counts
 -- larger than the buffer (BUFFER_SIZE = 10 * compression, i.e. 100 for the

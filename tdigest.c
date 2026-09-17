@@ -1479,8 +1479,8 @@ tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression)
 	Assert(nvalues == 0 || npercentiles == 0);
 
 	/*
-	 * We allocate a single chunk for the struct including percentiles and
-	 * centroids (including extra buffer for new data).
+	 * Allocate a single chunk for the struct, the optional percentile or
+	 * hypothetical-value array, and the centroid buffer.
 	 */
 	len = MAXALIGN(sizeof(tdigest_aggstate_t)) +
 		  MAXALIGN(sizeof(double) * npercentiles) +
@@ -1580,8 +1580,12 @@ check_trim_values(double low, double high)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with a single percentile.
+ * Add an input value to the aggregate state, creating it if needed.
+ * Shared by tdigest and tdigest_percentile with a single percentile.
+ *
+ * Transition functions capture compression and query parameters when the
+ * first non-NULL input creates the state. Callers should keep those
+ * parameters constant within a group; later rows are not checked for changes.
  */
 Datum
 tdigest_add_double(PG_FUNCTION_ARGS)
@@ -1794,8 +1798,8 @@ tdigest_add_generated(tdigest_aggstate_t *state, double value, int64 count)
 }
 
 /*
- * Add a value with count to the tdigest (create one if needed). Transition
- * function for tdigest aggregate with a single percentile.
+ * Add an input value with a count to the aggregate state, creating it if
+ * needed. Shared by tdigest and tdigest_percentile with a single percentile.
  */
 Datum
 tdigest_add_double_count(PG_FUNCTION_ARGS)
@@ -1905,8 +1909,8 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with a single value.
+ * Add an input value to the aggregate state for tdigest_percentile_of
+ * with a single hypothetical value.
  */
 Datum
 tdigest_add_double_values(PG_FUNCTION_ARGS)
@@ -1981,8 +1985,8 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with a single value.
+ * Add an input value with a count to the aggregate state for
+ * tdigest_percentile_of with a single hypothetical value.
  */
 Datum
 tdigest_add_double_values_count(PG_FUNCTION_ARGS)
@@ -2092,8 +2096,8 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with a single percentile.
+ * Merge an input digest into the aggregate state, creating it if needed.
+ * Shared by tdigest and tdigest_percentile with a single percentile.
  */
 Datum
 tdigest_add_digest(PG_FUNCTION_ARGS)
@@ -2163,9 +2167,9 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add a digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
+	 * Keep the compression chosen when the state was created, even if the
+	 * input uses a different setting. Compaction can merge incoming
+	 * centroids, but cannot split them to recover lost detail.
 	 */
 
 	/* copy data from the tdigest into the aggstate */
@@ -2183,8 +2187,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with a single value.
+ * Merge an input digest into the aggregate state for tdigest_percentile_of
+ * with a single hypothetical value.
  */
 Datum
 tdigest_add_digest_values(PG_FUNCTION_ARGS)
@@ -2252,9 +2256,9 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add a digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
+	 * Keep the compression chosen when the state was created, even if the
+	 * input uses a different setting. Compaction can merge incoming
+	 * centroids, but cannot split them to recover lost detail.
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
@@ -2271,8 +2275,8 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with an array of percentiles.
+ * Add an input value to the aggregate state for tdigest_percentile with
+ * an array of requested percentiles.
  */
 Datum
 tdigest_add_double_array(PG_FUNCTION_ARGS)
@@ -2344,8 +2348,8 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with an array of percentiles.
+ * Add an input value with a count to the aggregate state for
+ * tdigest_percentile with an array of requested percentiles.
  */
 Datum
 tdigest_add_double_array_count(PG_FUNCTION_ARGS)
@@ -2455,8 +2459,8 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with an array of values.
+ * Add an input value to the aggregate state for tdigest_percentile_of
+ * with an array of hypothetical values.
  */
 Datum
 tdigest_add_double_array_values(PG_FUNCTION_ARGS)
@@ -2526,8 +2530,8 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a value to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with an array of values.
+ * Add an input value with a count to the aggregate state for
+ * tdigest_percentile_of with an array of hypothetical values.
  */
 Datum
 tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
@@ -2635,8 +2639,8 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a digest to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with an array of percentiles.
+ * Merge an input digest into the aggregate state for tdigest_percentile
+ * with an array of requested percentiles.
  */
 Datum
 tdigest_add_digest_array(PG_FUNCTION_ARGS)
@@ -2700,9 +2704,9 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add a digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
+	 * Keep the compression chosen when the state was created, even if the
+	 * input uses a different setting. Compaction can merge incoming
+	 * centroids, but cannot split them to recover lost detail.
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
@@ -2719,8 +2723,8 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 }
 
 /*
- * Add a digest to the tdigest (create one if needed). Transition function
- * for tdigest aggregate with an array of values.
+ * Merge an input digest into the aggregate state for tdigest_percentile_of
+ * with an array of hypothetical values.
  */
 Datum
 tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
@@ -2782,9 +2786,9 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add a digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
+	 * Keep the compression chosen when the state was created, even if the
+	 * input uses a different setting. Compaction can merge incoming
+	 * centroids, but cannot split them to recover lost detail.
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)
@@ -2801,8 +2805,8 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 }
 
 /*
- * Compute percentile from a tdigest. Final function for tdigest aggregate
- * with a single percentile.
+ * Compute a percentile from the aggregate state. Final function for
+ * tdigest_percentile with a single requested percentile.
  */
 Datum
 tdigest_percentiles(PG_FUNCTION_ARGS)
@@ -2837,8 +2841,8 @@ tdigest_percentiles(PG_FUNCTION_ARGS)
 }
 
 /*
- * Compute percentile from a tdigest. Final function for tdigest aggregate
- * with a single percentile.
+ * Compute an inverse percentile from the aggregate state. Final function
+ * for tdigest_percentile_of with a single hypothetical value.
  */
 Datum
 tdigest_percentiles_of(PG_FUNCTION_ARGS)
@@ -2907,8 +2911,8 @@ tdigest_digest(PG_FUNCTION_ARGS)
 }
 
 /*
- * Compute percentiles from a tdigest. Final function for tdigest aggregate
- * with an array of percentiles.
+ * Compute percentiles from the aggregate state. Final function for
+ * tdigest_percentile with an array of requested percentiles.
  */
 Datum
 tdigest_array_percentiles(PG_FUNCTION_ARGS)
@@ -2945,8 +2949,8 @@ tdigest_array_percentiles(PG_FUNCTION_ARGS)
 }
 
 /*
- * Compute percentiles from a tdigest. Final function for tdigest aggregate
- * with an array of values.
+ * Compute inverse percentiles from the aggregate state. Final function
+ * for tdigest_percentile_of with an array of hypothetical values.
  */
 Datum
 tdigest_array_percentiles_of(PG_FUNCTION_ARGS)
@@ -3159,9 +3163,9 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	AssertCheckTDigestAggState(src);
 
 	/*
-	 * XXX should it be allowed to add a digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
+	 * Keep the compression chosen when the state was created, even if the
+	 * input uses a different setting. Compaction can merge incoming
+	 * centroids, but cannot split them to recover lost detail.
 	 */
 
 	/* copy data from the tdigest into the aggstate */
@@ -4384,9 +4388,9 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add a digest to a state with a different
-	 * compression value? Will it produce a "good" t-digest or does it break
-	 * the assumptions and produce much worse estimates?
+	 * Keep the compression chosen when the state was created, even if the
+	 * input uses a different setting. Compaction can merge incoming
+	 * centroids, but cannot split them to recover lost detail.
 	 */
 
 	for (i = 0; i < digest->ncentroids; i++)

@@ -1,6 +1,6 @@
--- unlike percentile values passed to tdigest_percentile(), values passed to
--- the tdigest_percentile_of() functions are not validated and instead return
--- hard-coded values for NaN/infinity
+-- Unlike percentiles passed to tdigest_percentile(), non-finite hypothetical
+-- values passed to tdigest_percentile_of() are accepted and mapped to fixed
+-- results. Input values stored in the digest must still be finite.
 
 \set VERBOSITY terse
 
@@ -20,7 +20,7 @@ SELECT tdigest_percentile_of('flags 1 count 3 compression 10 centroids 3 (1, 1) 
 SELECT tdigest_percentile_of('flags 1 count 3 compression 10 centroids 3 (1, 1) (2, 1) (3, 1)'::tdigest,
                              ARRAY['NaN', '-infinity', 'infinity']::double precision[]);
 
--- the value/count API does not check the values either
+-- the value/count API has the same handling of non-finite hypothetical values
 SELECT tdigest_percentile_of(1.0::double precision, 2::bigint, 10, 'NaN'::double precision);
 SELECT tdigest_percentile_of(1.0::double precision, 2::bigint, 10, '-infinity'::double precision);
 SELECT tdigest_percentile_of(1.0::double precision, 2::bigint, 10, 'infinity'::double precision);

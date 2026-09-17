@@ -1,9 +1,9 @@
--- Make sure the non-STRICT transition functions correctly handle NULLs passed
--- to them. NULL percentiles/values should be rejected, because the aggregate
--- can't return anything sensible.
+-- Non-STRICT transition functions must reject NULL percentile or hypothetical
+-- value arguments when a non-NULL input creates the aggregate state. NULL
+-- input values themselves are skipped instead.
 \set VERBOSITY terse
--- The array is only read while the aggregate state is still NULL, i.e. on the
--- first row with a non-NULL value, so a single row is enough.
+-- The requested percentile/value is only read while the aggregate state is
+-- still NULL, so the first non-NULL input is enough to exercise each check.
 -- tdigest_add_double(internal, double precision, int, double precision)
 SELECT tdigest_percentile(v, 100, NULL::double precision)
   FROM (VALUES (1.0::double precision), (2.0)) s(v);

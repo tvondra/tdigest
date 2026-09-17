@@ -122,6 +122,12 @@ functions (with `tdigest` as the first argument).
 The `tdigest(digest tdigest)` variant is an aggregate merging multiple
 pre-computed digests into a single digest, which can be stored again.
 
+Digest-input aggregates accept digests with different compression settings.
+Each aggregate state takes its compression from its first non-`NULL` digest;
+with parallel aggregation, the final choice can depend on worker and combine
+order. Use a consistent compression across input digests when that choice
+matters. Merging cannot recover detail already lost by compaction.
+
 So for example you may do this:
 
 ```
@@ -217,9 +223,10 @@ There are seven such aggregate functions:
 * `tdigest_sum(value double precision, count bigint, compression int,
                low double precision, high double precision)`
 
-The `count` has to be a positive value, and it determines how many times
-the value is added to the digest. See the "trimmed aggregates" section
-for more details about `low` and `high` parameters.
+A non-`NULL` `count` must be positive and determines how many times the value
+is added to the digest. A `NULL` count means one occurrence. The total count
+in a digest must fit in a `bigint`; exceeding 9223372036854775807 raises an
+error. See the "trimmed aggregates" section for the `low` and `high` parameters.
 
 
 ## Incremental updates
@@ -337,19 +344,52 @@ other columns without a `GROUP BY` clause).
 
 ## Functions
 
-The following list covers the complete SQL API. The `accuracy` parameter is
-the compression used when building the t-digest, as described in the
+The following list covers the aggregates and utility functions provided
+by this extension. Type I/O functions and internal aggregate support
+functions are not listed. The `accuracy` parameter in these descriptions
+is the compression used when building the t-digest, as described in the
 [Accuracy](#accuracy) section.
 
 The `tdigest`, `tdigest_percentile`, `tdigest_percentile_of`, `tdigest_avg`
 and `tdigest_sum` functions are aggregates (all of them parallel safe), while
 `tdigest_count`, `tdigest_add`, `tdigest_union`, `tdigest_json`,
-`tdigest_double_array`, `tdigest_digest_sum` and `tdigest_digest_avg` are
-plain functions operating on a single `tdigest` value.
+`tdigest_double_array`, `tdigest_digest_sum`, `tdigest_digest_avg` and
+`tdigest_is_valid` are plain functions operating on `tdigest` values.
 
 The examples use a table `t` with the values in column `c`, and - for the
 variants with a `count` parameter - the number of occurrences of each value
-in column `a`. The counts have to be positive, otherwise an error is raised.
+in column `a`. Non-`NULL` counts must be positive; a `NULL` count means one
+occurrence.
+
+### Common argument rules
+
+Aggregates ignore `NULL` input values or digests and return SQL `NULL` when
+there are no non-`NULL` inputs. This also applies to the array-returning
+aggregates: empty input produces `NULL`, not an empty array. Values added to
+a digest must be finite; `NaN` and positive or negative infinity are rejected.
+
+Compression, requested percentiles or hypothetical values, and trim
+thresholds must be non-`NULL` when the aggregate state is initialized. Keep
+these arguments constant within each group. The implementation captures
+them on the first non-`NULL` input of each state, rather than checking them
+on every row; later changes are ignored and can give order-dependent results,
+especially in parallel queries. The input value and its count may vary
+between rows.
+
+Requested percentiles must be in `[0, 1]`. Arrays of percentiles or
+hypothetical values must be nonempty, one-dimensional, and contain no `NULL`
+elements. Array results follow the order of the requested elements and have
+the usual lower bound of 1, regardless of the input array's lower bound.
+
+All `tdigest_percentile_of` variants estimate a smoothed relative rank,
+counting half of an equal-mean centroid group's weight at that mean. This
+is not an exact count of smaller values. Hypothetical values may be
+non-finite: `-Infinity`, `Infinity` and `NaN` return 0, 1 and `NaN`,
+respectively, when the aggregate has non-`NULL` input.
+
+The non-incremental scalar functions return `NULL` if any argument is `NULL`.
+The incremental functions have the initialization and no-op rules described
+in [Incremental updates](#incremental-updates).
 
 ### `tdigest_percentile(value, accuracy, percentile)`
 
@@ -962,10 +1002,10 @@ SELECT a, b FROM p WHERE NOT tdigest_is_valid(p.d);
 Notes
 -----
 
-At the moment, the extension only supports `double precision` values, but
-it should not be very difficult to extend it to other numeric types (both
-integer and/or floating point, including `numeric`). Ultimately, it could
-support any data type with a concept of ordering and mean.
+Input values and centroid means use `double precision`. PostgreSQL can
+convert other numeric types to it, as in the integer-valued examples, but
+those conversions can lose precision. The digest does not retain the native
+precision of `bigint` or `numeric` inputs.
 
 The estimates do depend on the order of incoming data, and so may differ
 between runs. This applies especially to parallel queries, for which the
