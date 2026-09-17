@@ -993,14 +993,21 @@ with existing on-disk values. Its C representation contains `double` and
 
 ## FINALFUNC_MODIFY = READ_ONLY
 
-The final functions are mutating the state (by sorting and compacting it),
-which means the `FINALFUNC_MODIFY` should not be `READ_ONLY`. This means
-the aggregates will give incorrect results when used as window functions.
+The final functions mutate the aggregate state (they sort it, and most of
+them also compact it), which means `FINALFUNC_MODIFY` should not be
+`READ_ONLY`. It is, though, because that's what the aggregates were created
+with, and changing it would break upgrades of existing installations.
 
-OTOH the mutation is sorting and compaction of the aggregate state, which
-can introduce some differences, but it's within the bounds of what we
-expect from an estimate. In fact, most final functions probably should not
-do compaction at all, just sort. Which would eliminate the differences.
+Instead, each final function that would damage the state checks
+`AggStateIsShared()`, and works on a copy when the state may be needed
+again - that is, when the aggregate is used as a window function, or when
+several aggregates share a single transition state. So the results are
+correct in those cases, at the cost of copying the state.
+
+The two exceptions are the final functions of the trimmed `tdigest_sum()`
+and `tdigest_avg()` aggregates, which only sort the state. Sorting is just
+a permutation of the centroids, and the state is sorted anyway before it's
+used, so there's nothing to protect and no copy is made.
 
 
 ## fused multiply-add (FMA)
