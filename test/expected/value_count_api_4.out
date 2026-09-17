@@ -86,13 +86,13 @@ from (values
 ----------------------------------------------
 -- nice data set with random data (uniform) --
 ----------------------------------------------
--- 10 centroids (tiny)
+-- compression 10
 WITH
  data AS (SELECT prng(1000) x, prng(1000, 29823218) cnt),
  data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -113,13 +113,13 @@ FROM (
  0.99 | t        |    
 (6 rows)
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH
  data AS (SELECT prng(1000) x, prng(1000, 29823218) cnt),
  data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -140,13 +140,13 @@ FROM (
  0.99 | t        |    
 (6 rows)
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH
  data AS (SELECT prng(1000) x, prng(1000, 29823218) cnt),
  data_expanded AS (SELECT x FROM (SELECT x, generate_series(1, (10 + 100 * cnt)::int) FROM data) foo ORDER BY random())
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT

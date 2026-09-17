@@ -30,11 +30,11 @@ $$ LANGUAGE plpgsql;
 -- nice data set with ordered (asc) / evenly-spaced data --
 -----------------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(1,10000) s(i))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -59,11 +59,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(1,10000) s(i))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -88,11 +88,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(1,10000) s(i))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -121,11 +121,11 @@ SELECT * FROM (
 -- nice data set with ordered (desc) / evenly-spaced data --
 ------------------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(10000,1,-1) s(i))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -150,11 +150,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(10000,1,-1) s(i))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -179,11 +179,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(10000,1,-1) s(i))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -212,11 +212,11 @@ SELECT * FROM (
 -- nice data set with random / evenly-spaced data --
 ----------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT i / 10000.0 AS x FROM (SELECT generate_series(1,10000) AS i, prng(10000, 49979693) AS x ORDER BY x) foo)
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -241,11 +241,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT i / 10000.0 AS x FROM (SELECT generate_series(1,10000) AS i, prng(10000, 49979693) AS x ORDER BY x) foo)
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -270,11 +270,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT i / 10000.0 AS x FROM (SELECT generate_series(1,10000) AS i, prng(10000, 49979693) AS x ORDER BY x) foo)
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -303,11 +303,11 @@ SELECT * FROM (
 -- nice data set with random data (uniform) --
 ----------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT x FROM prng(10000) s(x))
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -332,11 +332,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT x FROM prng(10000) s(x))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -361,11 +361,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT x FROM prng(10000) s(x))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -394,11 +394,11 @@ SELECT * FROM (
 -- nice data set with random data (skewed sqrt) --
 --------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT sqrt(z) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -423,11 +423,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT sqrt(z) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -452,11 +452,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT sqrt(z) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -485,11 +485,11 @@ SELECT * FROM (
 -- nice data set with random data (skewed sqrt+sqrt) --
 -------------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT sqrt(sqrt(z)) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -514,11 +514,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT sqrt(sqrt(z)) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -543,11 +543,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT sqrt(sqrt(z)) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -576,11 +576,11 @@ SELECT * FROM (
 -- nice data set with random data (skewed pow) --
 -------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT pow(z, 2) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -605,11 +605,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT pow(z, 2) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.005, -- arbitrary threshold of 0.5%
+    abs(a - b) < 0.005, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.005 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -634,11 +634,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT pow(z, 2) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -668,11 +668,11 @@ SELECT * FROM (
 -- nice data set with random data (skewed pow+pow) --
 -----------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT pow(z, 4) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10%
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -697,11 +697,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT pow(z, 4) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -726,11 +726,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT pow(z, 4) AS x FROM prng(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -756,14 +756,14 @@ SELECT * FROM (
     ) foo ) bar WHERE a <= b;
 
 ----------------------------------------------------------
--- nice data set with random data (normal distribution) --
+-- fourth power of data from a truncated normal distribution --
 ----------------------------------------------------------
 
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT pow(z, 4) AS x FROM random_normal(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.025, -- arbitrary threshold of 2.5%
+    abs(a - b) < 0.025, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.025 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -788,11 +788,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 100 centroids (okay-ish)
+-- compression 100
 WITH data AS (SELECT pow(z, 4) AS x FROM random_normal(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -817,11 +817,11 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- 1000 centroids (very accurate)
+-- compression 1000
 WITH data AS (SELECT pow(z, 4) AS x FROM random_normal(10000) s(z))
 SELECT
     p,
-    abs(a - b) < 0.001, -- arbitrary threshold of 0.1%
+    abs(a - b) < 0.001, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.001 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -847,14 +847,14 @@ SELECT * FROM (
     ) foo ) bar WHERE a <= b;
 
 -- some basic tests to verify transforming from and to text works
--- 10 centroids (tiny)
+-- compression 10
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(1,10000) s(i)),
      intermediate AS (SELECT tdigest(x, 10)::text AS intermediate_x FROM data),
      tdigest_parsed AS (SELECT tdigest_percentile(intermediate_x::tdigest, ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) AS a FROM intermediate),
      pg_percentile AS (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) AS b FROM data)
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -881,7 +881,7 @@ WITH data AS (SELECT pow(z, 4) AS x FROM random_normal(10000) s(z)),
      pg_percentile AS (SELECT percentile_cont(ARRAY[0.01, 0.05, 0.1, 0.9, 0.95, 0.99]) WITHIN GROUP (ORDER BY x) AS b FROM data)
 SELECT
     p,
-    abs(a - b) < 0.01, -- arbitrary threshold of 1%
+    abs(a - b) < 0.01, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.01 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT
@@ -898,7 +898,7 @@ DROP TABLE intermediate_tdigest;
 WITH data AS (SELECT x FROM generate_series(1,10) AS x)
 SELECT
     p,
-    abs(a - b) < 0.1, -- arbitrary threshold of 10% given the small dataset and extreme percentiles it is not very accurate
+    abs(a - b) < 0.1, -- absolute error tolerance for this data set
     (CASE WHEN abs(a - b) < 0.1 THEN NULL ELSE (a - b) END) AS err
 FROM (
     SELECT

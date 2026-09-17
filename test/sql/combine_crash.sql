@@ -7,7 +7,7 @@ CREATE TABLE combine_crash_test_2 PARTITION OF combine_crash_test FOR VALUES IN 
 -- comp=10: BUFFER_SIZE=100 slots
 INSERT INTO combine_crash_test SELECT 1, tdigest(v::float8, 10) FROM generate_series(1,100) v;
 
--- comp=10000: BUFFER_SIZE=10000 slots
+-- comp=10000: BUFFER_SIZE=100000 slots, with 10000 input values
 INSERT INTO combine_crash_test SELECT 2, tdigest(v::float8, 10000) FROM generate_series(1,10000) v;
 
 -- enough data to reliably trigger partitionwise aggregate

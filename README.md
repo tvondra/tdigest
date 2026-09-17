@@ -55,29 +55,40 @@ compression parameter.
 
 ## Accuracy
 
-All functions building the t-digest summaries accept an accuracy parameter
-(called `compression` in the function signatures) that determines how
-detailed the histogram approximating the CDF is. The value essentially
-limits the number of "buckets" (centroids) in the t-digest, so the higher
-the value the larger the digest. The accepted range is `[10, 10000]`, and
-values outside this range are rejected with an error.
+Functions building t-digests accept a `compression` parameter that controls
+the trade-off between accuracy, digest size, memory use and processing cost.
+Larger values generally retain more, smaller centroids. The accepted range is
+`[10, 10000]`; values outside this range are rejected with an error.
 
-Each bucket is represented by a `double precision` mean and a 64-bit count
-(i.e. 16B per bucket), so the maximum of 10000 buckets means the largest
-possible t-digest is ~160kB. That is however before the transparent
-compression all varlena types go through, so the on-disk footprint may be
-much smaller.
+Compression is neither the number of centroids nor an error bound. Accuracy
+depends on the data distribution, input order and history of merging digests.
+There is no general `1/N` error guarantee for a digest with `N` centroids, and
+compression 100 does not promise 1% error relative to the range of data values.
+Values such as 100, used in the examples, are starting points to evaluate
+against exact results on representative data.
 
-It's hard to say what is a good accuracy value, as it very much depends on
-the data set (how non-uniform the data distribution is, etc.), but given a
-t-digest with N buckets, the error is roughly 1/N. So t-digests built with
-accuracy set to 100 have roughly 1% error (with respect to the total range
-of data), which is more than enough for most use cases.
+The algorithm allows smaller centroid weights near quantiles 0.0 and 1.0
+than near the median. This concentrates resolution in the tails, but does
+not impose a fixed error bound in the units of the input values.
 
-This however ignores that t-digests don't have uniform bucket size. Buckets
-close to 0.0 and 1.0 are much smaller (thus providing more accurate results)
-while buckets close to the median are much bigger. That's consistent with
-the purpose of the t-digest, i.e. estimating percentiles close to extremes.
+### Digest size and storage
+
+The centroid buffer holds at most `10 * compression` centroids, including
+uncompacted input. A compacted digest is usually much smaller. Each centroid
+stores an 8-byte `double precision` mean and an 8-byte integer count. With
+the 24-byte full header, a digest uses `24 + 16 * ncentroids` bytes before
+any TOAST processing. The largest permitted value therefore has 100000
+centroids and occupies 1,600,024 bytes (about 1.53 MiB).
+
+The on-disk digests are typically much smaller than the centroid buffer,
+due to compaction which merges centroids depending on how close to the
+median of the dataset they lie.
+
+The type uses PostgreSQL's `EXTERNAL` storage policy by default. This allows
+large values to be stored out of line using TOAST, but does not compress
+them. A column can use `EXTENDED` storage to permit TOAST compression;
+changing that setting does not itself rewrite existing values. Tuple and
+TOAST overhead are additional to the size of the digest.
 
 
 ## Advanced usage
@@ -128,7 +139,7 @@ CREATE TABLE p AS SELECT a, b, tdigest(c, 100) AS d FROM t GROUP BY a, b;
 SELECT a, tdigest_percentile(d, 0.95) FROM p GROUP BY a ORDER BY a;
 ```
 
-The pre-aggregated table is indeed much smaller:
+An example run produced a much smaller pre-aggregated table:
 
 ~~~
 db=# \d+
@@ -140,8 +151,9 @@ db=# \d+
 (2 rows)
 ~~~
 
-And on my machine the last query takes ~1.5ms. Compare that to queries on
-the source data:
+On the same machine, the last query took about 1.5 ms. Compare that to the
+following example timings on the source data; sizes and timings will vary
+with the data, PostgreSQL version and hardware:
 
 ~~~
 \timing on
@@ -165,15 +177,15 @@ SELECT a, tdigest_percentile(c, 100, 0.95) FROM t GROUP BY a ORDER BY a;
 Time: 893.538 ms
 ~~~
 
-This shows how much more efficient the t-digest estimate is compared to the
-exact query with `percentile_cont` (the difference would increase for larger
-data sets, due to increased overhead for spilling to disk).
+This illustrates how much faster the t-digest estimate can be than the
+exact query with `percentile_cont`. The difference can increase when sorting
+larger data sets requires spilling to disk.
 
-It also shows how effective the pre-aggregation can be. There are 121 rows
-in table `p` so with 120kB disk space that's ~1kB per row, each representing
-about 80k values. With 8B per value, that's ~640kB, i.e. a compression ratio
-of 640:1. As the digest size is not tied to the number of items, this will
-only improve for larger data sets.
+It also shows how effective the pre-aggregation can be. In this example,
+there are 121 rows in table `p`, so with 120kB disk space that's ~1kB per row,
+each representing about 80k values. With 8B per value, that's ~640kB, or a
+compression ratio of about 640:1. For a fixed number of groups and a fixed
+compression, digest storage is bounded while the raw data grows.
 
 
 ## Pre-aggregated data
@@ -963,32 +975,27 @@ Known issues
 ## incorrect alignment
 
 The SQL data type is defined without specifying the `ALIGNMENT` parameter,
-so it's left set to 4, the default value. This means the on-disk data may
-be misaligned, as it contains `double` fields and so the correct alignment
-would be 8. On amd64/arm64 this is mostly harmless (except for some minor
-performance penalty), but on platforms with strict alignment it may
-cause `SIGBUS` crashes.
+so it uses the default 4-byte alignment. Its C representation contains
+`double` and `int64` fields that can require 8-byte alignment. Accessing
+misaligned fields may incur a performance penalty on amd64/arm64 and can
+cause `SIGBUS` crashes on platforms with strict alignment requirements.
 
-The implementation handles this in `tdigest_detoast()` - after detoasting,
-it copies a value if necessary before accessing those fields. In fact,
-larger detoasted values are already aligned properly, because detoasting
-allocates a new buffer - which is guaranteed to be aligned. But inline
-values with 4-byte varlena header don't need a copy during detoasting, and
-so might have kept the incorrect alignment.
+The implementation handles this in `tdigest_detoast()` by making an aligned
+copy when necessary. Detoasting out-of-line values, compressed values or
+values with a short varlena header already produces an aligned allocation.
+Inline values with a 4-byte header need no copy during ordinary detoasting,
+so they may need the additional alignment copy.
 
-The impact depends on how large the digest is. With compression values in
-the 100-200 range, used in practice (and in this README), a compacted digest
-is a few hundred bytes to about 1.5kB. That keeps it in the tuple with a
-4-byte header, and it's exactly the case that needs the extra copy. Only
-the larger digests - compression 500 and above, get pushed out or
-compressed, and those are the ones detoasting realigns for free.
+Whether a digest stays inline depends on its actual centroid count, the
+other columns in the tuple, and the column's storage settings. There is no
+compression-parameter threshold that guarantees out-of-line storage, and
+the default `EXTERNAL` policy does not permit TOAST compression.
 
-The copy is cheap, though: it is a single `memcpy()` of a value that was
-just read from a page and is still in cache.
+The extra copy requires an allocation and a single `memcpy()` of the digest.
+For small inline values, this overhead is usually modest.
 
 The SQL data type retains its original 4-byte alignment for compatibility
-with existing on-disk values. Its C representation contains `double` and
-`int64` fields that can require stricter alignment.
+with existing on-disk values.
 
 
 ## FINALFUNC_MODIFY = READ_ONLY

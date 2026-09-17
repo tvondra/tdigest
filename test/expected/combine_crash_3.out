@@ -17,7 +17,7 @@ INSERT INTO combine_crash_test SELECT 1, tdigest(v::float8, 10) FROM generate_se
 ERROR:  relation "combine_crash_test" does not exist
 LINE 1: INSERT INTO combine_crash_test SELECT 1, tdigest(v::float8,...
                     ^
--- comp=10000: BUFFER_SIZE=10000 slots
+-- comp=10000: BUFFER_SIZE=100000 slots, with 10000 input values
 INSERT INTO combine_crash_test SELECT 2, tdigest(v::float8, 10000) FROM generate_series(1,10000) v;
 ERROR:  relation "combine_crash_test" does not exist
 LINE 1: INSERT INTO combine_crash_test SELECT 2, tdigest(v::float8,...

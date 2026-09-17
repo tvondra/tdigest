@@ -69,7 +69,7 @@ typedef struct tdigest_t {
  *
  * When adding new values to the t-digest, we add them as centroids into a
  * separate "uncompacted" part of the array. While centroids need more space
- * than plain points (24B vs. 8B), making the aggregate state quite a bit
+ * than plain points (16B vs. 8B), making the aggregate state quite a bit
  * larger, it does simplify the code quite a bit as it only needs to deal
  * with a single struct type instead of two (centroids + points). But maybe
  * we should separate those two things in the future.
@@ -103,16 +103,15 @@ static int  centroid_cmp(const void *a, const void *b);
  * The tdigest type is int4-aligned - that's the default for CREATE TYPE, and
  * changing it now would break on-disk compatibility, as typalign determines
  * where the value is placed in a tuple. But tdigest_t contains int64 and
- * double fields, so it really needs 8B alignment. Reading digest->count or
+ * double fields, which can require 8B alignment. Reading digest->count or
  * digest->centroids[i].mean from a value that is merely 4B aligned is
  * undefined behavior - it happens to work on x86-64, but it's a crash on
  * platforms not allowing unaligned access, and UBSan complains about it.
  *
- * Detoasting hides this most of the time, because toasted, compressed and
- * short-header values get expanded into a freshly palloc-ed (and thus
- * properly aligned) copy. But a value large enough to keep the 4B varlena
- * header (more than ~130B, i.e. about 7 centroids) and stored inline is used
- * where it sits in the tuple, so we have to make the aligned copy ourselves.
+ * Detoasting out-of-line, compressed and short-header values already makes
+ * a freshly palloc-ed (and thus properly aligned) copy. But an inline value
+ * with a 4B varlena header may still point into the tuple, so we have to make
+ * an aligned copy ourselves if necessary.
  */
 static tdigest_t *
 tdigest_detoast(Datum datum)
