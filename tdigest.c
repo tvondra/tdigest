@@ -43,7 +43,7 @@ typedef struct centroid_t {
  */
 typedef struct tdigest_t {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
-	int32		flags;			/* reserved for future use (versioning, ...) */
+	int32		flags;			/* on-disk format flags */
 	int64		count;			/* number of items added to the t-digest */
 	int			compression;	/* compression used to build the digest */
 	int			ncentroids;		/* number of cetroids in the array */
@@ -428,7 +428,7 @@ tdigest_sort_centroids(centroid_t *centroids, int ncentroids, int64 count)
 	int64	next_group;
 	int64	median_count;
 
-	/* do qsort on the non-sorted part */
+	/* sort the whole array before rebalancing equal-mean groups */
 	pg_qsort(centroids,
 			 ncentroids,
 			 sizeof(centroid_t), centroid_cmp);
@@ -1315,7 +1315,6 @@ tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 	/* make sure we have space for the value */
 	Assert(state->ncentroids < BUFFER_SIZE(compression));
 
-	/* for a single point, the value is both sum and mean */
 	state->centroids[state->ncentroids].count = count;
 	state->centroids[state->ncentroids].mean = mean;
 	state->ncentroids++;
@@ -1337,7 +1336,6 @@ tdigest_allocate(int ncentroids)
 
 	len = offsetof(tdigest_t, centroids) + ncentroids * sizeof(centroid_t);
 
-	/* we pre-allocate the array for all centroids and also the buffer for incoming data */
 	ptr = palloc(len);
 	SET_VARSIZE(ptr, len);
 
@@ -2836,7 +2834,7 @@ tdigest_percentiles_of(PG_FUNCTION_ARGS)
 }
 
 /*
- * Build a t-digest varlena value from the aggegate state.
+ * Build a t-digest varlena value from the aggregate state.
  */
 Datum
 tdigest_digest(PG_FUNCTION_ARGS)
@@ -2992,7 +2990,7 @@ tdigest_serial(PG_FUNCTION_ARGS)
 /*
  * XXX Unlike the other "input" functions (tdigest_in/tdigest_recv), this
  * does not validate the digest at all. We assume this function is used only
- * on data we created in the same process (possibly in a parallel worker),
+ * on data we created in the same query (possibly in a parallel worker),
  * and not on untrusted values controlled by the user (which is why the other
  * input functions need the validation).
  */
@@ -3313,7 +3311,7 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
  * Merge a t-digest into another t-digest. This is somewhat inefficient, as
  * it has to deserialize the t-digests into the in-memory aggstate values,
  * and serialize it back for each call, but it's better than doing it for
- * each individual value (like tdigest_union_double_increment).
+ * each individual value (like tdigest_add_double_increment).
  *
  * This is similar to hll_union.
  */
@@ -3479,7 +3477,7 @@ parse_int64(char **ptr, const char *field)
  * Parse an int32 value, and make sure it's in range.
  *
  * Parse it as int64 first, so that we can range check it before narrowing it
- * down, instead of relying on the (undefined) conversion.
+ * down, instead of relying on an implementation-defined narrowing conversion.
  */
 static int32
 parse_int32(char **ptr, const char *field)
@@ -3601,10 +3599,6 @@ tdigest_in(PG_FUNCTION_ARGS)
 		count = parse_int64(&ptr, "count of a centroid");
 		parse_str(&ptr, ")", false);
 
-		/*
-		 * Not sure if this can happen with text input, but better to keep the
-		 * checks the same as in tdigest_recv.
-		 */
 		if (!isfinite(mean))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -3970,7 +3964,7 @@ tdigest_count(PG_FUNCTION_ARGS)
  *		Transform the tdigest into a JSON value.
  *
  * We make sure to always print mean, even for tdigests in the older format
- * storing sum for centroids. Otherwise the "mean" key would be confusing.
+ * storing sum for centroids. Otherwise the "means" key would be confusing.
  * But we don't call tdigest_update_format, and instead we simply update the
  * flags and convert the sum/mean values.
  *
