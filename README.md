@@ -21,8 +21,7 @@ the fact that t-digests are much more compact when stored on disk.
 For the basic use case the extension provides four aggregate functions. The
 `tdigest_percentile` ones can be seen as a replacement of the
 `percentile_cont` aggregate, while the `tdigest_percentile_of` ones perform
-the inverse operation (they answer what fraction of the data is below a
-given value):
+the inverse operation, estimating the relative rank of a given value:
 
 * `tdigest_percentile(value double precision, compression int,
                       quantile double precision)`
@@ -594,7 +593,14 @@ SELECT tdigest_percentile(d, ARRAY[0.95, 0.99]) FROM (
 
 ### `tdigest_percentile_of(tdigest, hypothetical_value)`
 
-Computes relative rank of a hypothetical value, using a pre-computed t-digest.
+Estimates the relative rank of a hypothetical value using a pre-computed
+t-digest.
+
+At an exact centroid mean, half of the total weight of all centroids with
+that mean is counted. A digest containing only copies of one value therefore
+returns `0.5` at that value, not the fraction of rows strictly below it
+(`0.0`). This is a smoothed rank estimate, not an exact count of smaller
+values.
 
 #### Synopsis
 
@@ -612,7 +618,9 @@ SELECT tdigest_percentile_of(d, 349834.1) FROM (
 
 ### `tdigest_percentile_of(tdigest, hypothetical_value[])`
 
-Computes relative ranks of hypothetical values, using a pre-computed t-digest.
+Estimates relative ranks of hypothetical values using a pre-computed
+t-digest, with the same half-weight convention at centroid means as the
+scalar form.
 
 #### Synopsis
 
