@@ -41,6 +41,12 @@ SELECT 'flags 1 count 3 compression 10 centroids 1 (x, 3)'::tdigest;
 -- floating point field that does not fit into double precision
 SELECT 'flags 1 count 3 compression 10 centroids 1 (1e400, 3)'::tdigest;
 
+-- complete underflow must not silently turn a nonzero input into zero
+SELECT 'flags 1 count 3 compression 10 centroids 1 (1e-400, 3)'::tdigest;
+SELECT 'flags 1 count 3 compression 10 centroids 1 (-1e-400, 3)'::tdigest;
+SELECT 'flags 0 count 3 compression 10 centroids 1 (1e-400, 3)'::tdigest;
+SELECT 'flags 0 count 3 compression 10 centroids 1 (-1e-400, 3)'::tdigest;
+
 --
 -- sanity checks on the parsed header
 --

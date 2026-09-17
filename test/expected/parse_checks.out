@@ -42,6 +42,15 @@ ERROR:  failed to parse mean of a centroid of a t-digest at character 8
 -- floating point field that does not fit into double precision
 SELECT 'flags 1 count 3 compression 10 centroids 1 (1e400, 3)'::tdigest;
 ERROR:  mean of a centroid of a t-digest is out of range for double precision at character 8
+-- complete underflow must not silently turn a nonzero input into zero
+SELECT 'flags 1 count 3 compression 10 centroids 1 (1e-400, 3)'::tdigest;
+ERROR:  mean of a centroid of a t-digest is out of range for double precision at character 8
+SELECT 'flags 1 count 3 compression 10 centroids 1 (-1e-400, 3)'::tdigest;
+ERROR:  mean of a centroid of a t-digest is out of range for double precision at character 8
+SELECT 'flags 0 count 3 compression 10 centroids 1 (1e-400, 3)'::tdigest;
+ERROR:  mean of a centroid of a t-digest is out of range for double precision at character 8
+SELECT 'flags 0 count 3 compression 10 centroids 1 (-1e-400, 3)'::tdigest;
+ERROR:  mean of a centroid of a t-digest is out of range for double precision at character 8
 --
 -- sanity checks on the parsed header
 --

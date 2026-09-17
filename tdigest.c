@@ -3509,7 +3509,8 @@ parse_double(char **ptr, const char *field)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("failed to parse %s of a t-digest", field)));
 
-	if ((errno == ERANGE) && !isfinite(value))
+	/* ERANGE may also signal a nonzero subnormal, which we can store. */
+	if ((errno == ERANGE) && ((value == 0.0) || !isfinite(value)))
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("%s of a t-digest is out of range for double precision",
