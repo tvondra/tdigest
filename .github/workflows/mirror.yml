@@ -10,6 +10,7 @@ on:
 
 jobs:
   sync-repo-to-codeberg:
+    if: ${{ vars.CODEBERG_SYNC_ENABLED == '1' }}
     runs-on: ubuntu-latest
     steps:
       - name: "Checkout"
