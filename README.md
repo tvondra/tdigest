@@ -226,8 +226,9 @@ for more details about `low` and `high` parameters.
 
 An existing t-digest may be updated incrementally, either by adding a single
 value, or by merging-in a whole t-digest. The following examples use the
-table `t` with the pre-aggregated digests (in column `d`), built in the
-previous section.
+table `p` with the pre-aggregated digests (in column `d`), built in
+[Advanced usage](#advanced-usage). Each example adds the same new values to
+every row of `p`; use a `WHERE` clause when updating only selected groups.
 
 For example, it's possible to add 1000 random values to the t-digests like
 this:
@@ -238,7 +239,7 @@ DECLARE
   r record;
 BEGIN
   FOR r IN (SELECT random() AS v FROM generate_series(1,1000)) LOOP
-    UPDATE t SET d = tdigest_add(d, r.v);
+    UPDATE p SET d = tdigest_add(d, r.v);
   END LOOP;
 END $$;
 ```
@@ -254,7 +255,7 @@ DECLARE
   vals double precision[];
 BEGIN
   SELECT array_agg(random()) INTO vals FROM generate_series(1,1000);
-  UPDATE t SET d = tdigest_add(d, vals);
+  UPDATE p SET d = tdigest_add(d, vals);
 END $$;
 ```
 
@@ -262,32 +263,33 @@ Alternatively, it's possible to use pre-aggregated t-digest values instead
 of the arrays:
 
 ```
-DO LANGUAGE plpgsql $$
-DECLARE
-  r record;
-BEGIN
-  FOR r IN (SELECT mod(i,3) AS a, tdigest(random(),100) AS d FROM generate_series(1,1000) s(i) GROUP BY mod(i,3)) LOOP
-    UPDATE t SET d = tdigest_union(d, r.d);
-  END LOOP;
-END $$;
+WITH batch AS (
+    SELECT tdigest(random(), 100) AS d FROM generate_series(1,1000)
+)
+UPDATE p SET d = tdigest_union(p.d, batch.d) FROM batch;
 ```
 
-It may be undesirable to perform compaction after every incremental update
-(esp. when adding the values one by one).  All functions in the incremental
-API allow disabling compaction by setting the `compact` parameter to `false`.
-The disadvantage is that without the compaction, the resulting digests may
-be somewhat larger (by a factor of 10). It's advisable to use either the
-multi-value functions (with compaction after each batch) if possible, or
-force compaction, e.g. by re-aggregating the digest using the `tdigest`
-aggregate:
+It may be undesirable to perform compaction after every incremental update,
+especially when adding values one by one. Setting `compact` to `false` skips
+compaction at the end of the call; compaction still occurs when adding to a
+full centroid buffer. The result may be unsorted and larger than a compacted
+digest, but remains subject to the `10 * compression` centroid limit.
+
+Use the multi-value functions with compaction after each batch when possible,
+or compact a stored digest by re-aggregating it:
 
 ```
 UPDATE p SET d = (SELECT tdigest(x) FROM (SELECT p.d) s(x));
 ```
 
-Note that `tdigest_add` and `tdigest_union` simply return the other argument
-when one of the digests is `NULL`, so e.g. `tdigest_union(NULL, d)` does
-*not* compact the digest.
+Adding a `NULL` value or a `NULL` array with `tdigest_add` returns the original
+digest unchanged. A non-`NULL` value or array with a `NULL` digest instead
+creates a new digest and requires a compression value.
+
+When either input to `tdigest_union` is `NULL`, it returns the other digest
+unchanged, without compaction; two `NULL` digests produce `NULL`. In all
+incremental functions, the `compact` flag itself must not be `NULL`, even
+for calls that otherwise do nothing.
 
 
 ## Trimmed aggregates
@@ -648,62 +650,64 @@ SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
 - `hypothetical_value` - hypothetical values
 
 
-### `tdigest_add(tdigest, double precision)`
+### `tdigest_add(tdigest, double precision, compression = NULL, compact = true)`
 
 Performs incremental update of the t-digest by adding a single value.
 
 #### Synopsis
 
 ```
-UPDATE t SET d = tdigest_add(d, random());
+UPDATE p SET d = tdigest_add(d, random());
 ```
 
 #### Parameters
 
 - `tdigest` - t-digest to update (may be `NULL`)
-- `element` - value to add to the digest
-- `compression` - compression to use (required when the t-digest is `NULL`,
-  ignored otherwise; default: `NULL`)
-- `compact` - force compaction (default: true)
+- `element` - value to add; `NULL` leaves the digest unchanged
+- `compression` - required to initialize a digest from a non-`NULL` value;
+  ignored for an existing digest (default: `NULL`)
+- `compact` - compact at the end of the call (default: true; must not be `NULL`)
 
 
-### `tdigest_add(tdigest, double precision[])`
+### `tdigest_add(tdigest, double precision[], compression = NULL, compact = true)`
 
 Performs incremental update of the t-digest by adding values from an array.
 
 #### Synopsis
 
 ```
-UPDATE t SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
+UPDATE p SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
 ```
 
 #### Parameters
 
 - `tdigest` - t-digest to update (may be `NULL`)
-- `elements` - array of values to add to the digest
-- `compression` - compression to use (required when the t-digest is `NULL`,
-  ignored otherwise; default: `NULL`)
-- `compact` - force compaction (default: true)
+- `elements` - nonempty, one-dimensional array of non-`NULL` values;
+  a `NULL` array leaves the digest unchanged
+- `compression` - required to initialize a digest from a non-`NULL` array;
+  ignored for an existing digest (default: `NULL`)
+- `compact` - compact at the end of the call (default: true; must not be `NULL`)
 
 
-### `tdigest_union(tdigest, tdigest)`
+### `tdigest_union(tdigest, tdigest, compact = true)`
 
 Performs incremental update of the t-digest by merging-in another digest.
 When either of the digests is `NULL`, the other one is returned unchanged
-(without compaction).
+(without compaction). When both are non-`NULL`, the result uses the
+compression of `digest1`, even if `digest2` has a different compression.
 
 #### Synopsis
 
 ```
 WITH x AS (SELECT tdigest(random(), 100) AS d FROM generate_series(1,1000))
-UPDATE t SET d = tdigest_union(t.d, x.d) FROM x;
+UPDATE p SET d = tdigest_union(p.d, x.d) FROM x;
 ```
 
 #### Parameters
 
 - `digest1` - t-digest to update
 - `digest2` - t-digest to merge into `digest1`
-- `compact` - force compaction (default: true)
+- `compact` - compact at the end of the call (default: true; must not be `NULL`)
 
 
 ### `tdigest_json(tdigest)`

@@ -1,7 +1,7 @@
 -- The centroids of a t-digest are expected to be sorted by mean, but a digest
 -- with the centroids in an arbitrary order is a perfectly valid value - the
--- incremental API keeps the digests uncompacted (and thus unsorted), and such
--- digests may get stored on disk, dumped, replicated, etc. The input functions
+-- incremental API can leave digests uncompacted and unsorted with compact=false,
+-- and those may get stored on disk, dumped, replicated, etc. The input functions
 -- therefore accept unsorted digests, and all the places that need the sorted
 -- order are expected to do the sort themselves.
 --

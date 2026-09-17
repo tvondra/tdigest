@@ -1406,9 +1406,9 @@ tdigest_update_format(tdigest_t *digest)
  *		Make sure the centroids of the digest are sorted by mean.
  *
  * Digests with the centroids in an arbitrary order are perfectly valid - the
- * incremental API keeps the digests uncompacted (and thus unsorted), and the
- * input functions accept such digests too. So the places walking the centroids
- * in the order of means have to do the sort themselves.
+ * incremental API can leave digests uncompacted (and possibly unsorted) when
+ * compact is false, and the input functions accept such digests too. So the
+ * places walking the centroids in mean order have to do the sort themselves.
  *
  * If the digest is already sorted, this is a no-op. Otherwise a sorted copy of
  * the digest is returned - we must not sort the digest in place, it might be
@@ -3219,6 +3219,9 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
  * by first aggregating the updates into a t-digest, and then merging that
  * into an existing t-digest in one step using tdigest_union_double_increment.
  *
+ * The compact flag controls final compaction only. Adding to a full buffer
+ * still triggers compaction through tdigest_add or tdigest_add_centroid.
+ *
  * This is similar to hll_add, while the "union" is more like hll_union.
  */
 Datum
@@ -3282,6 +3285,9 @@ tdigest_add_double_increment(PG_FUNCTION_ARGS)
  * When efficiency is important, it may be possible to use the batch variant
  * by first aggregating the updates into a t-digest, and then merging that
  * into an existing t-digest in one step using tdigest_union_double_increment.
+ *
+ * The compact flag controls final compaction only. Adding to a full buffer
+ * still triggers compaction through tdigest_add or tdigest_add_centroid.
  *
  * This is similar to hll_add, while the "union" is more like hll_union.
  */
@@ -3351,6 +3357,9 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
  * it has to deserialize the t-digests into the in-memory aggstate values,
  * and serialize it back for each call, but it's better than doing it for
  * each individual value (like tdigest_add_double_increment).
+ *
+ * The compact flag controls final compaction only. Adding to a full buffer
+ * still triggers compaction through tdigest_add or tdigest_add_centroid.
  *
  * This is similar to hll_union.
  */
