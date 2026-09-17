@@ -976,8 +976,15 @@ allocates a new buffer - which is guaranteed to be aligned. But inline
 values with 4-byte varlena header don't need a copy during detoasting, and
 so might have kept the incorrect alignment.
 
-In practice there's little additional cost - we've already had to make the
-copy for most digests anyway, and few digests should be inline.
+The impact depends on how large the digest is. With compression values in
+the 100-200 range, used in practice (and in this README), a compacted digest
+is a few hundred bytes to about 1.5kB. That keeps it in the tuplw with a
+4-byte header, and it's exactly the case that needs the extra copy. Only
+the larger digests - compression 500 and above, get pushed out or
+compressed, and those are the ones detoasting realigns for free.
+
+The copy is cheap, though: it is a single `memcpy()` of a value that was
+just read from a page and is still in cache.
 
 The SQL data type retains its original 4-byte alignment for compatibility
 with existing on-disk values. Its C representation contains `double` and
