@@ -1611,10 +1611,15 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int		compression = PG_GETARG_INT32(2);
+		int		compression;
 		double *percentiles = NULL;
 		int		npercentiles = 0;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(2);
 
 		check_compression(compression);
 
@@ -1821,10 +1826,15 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int		compression = PG_GETARG_INT32(3);
+		int		compression;
 		double *percentiles = NULL;
 		int		npercentiles = 0;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(3))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(3);
 
 		check_compression(compression);
 
@@ -1926,10 +1936,15 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int		compression = PG_GETARG_INT32(2);
+		int		compression;
 		double *values = NULL;
 		int		nvalues = 0;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(2);
 
 		check_compression(compression);
 
@@ -1999,10 +2014,15 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int		compression = PG_GETARG_INT32(3);
+		int		compression;
 		double *values = NULL;
 		int		nvalues = 0;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(3))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(3);
 
 		check_compression(compression);
 
@@ -2282,10 +2302,15 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int compression = PG_GETARG_INT32(2);
+		int compression;
 		double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(2);
 
 		check_compression(compression);
 
@@ -2352,10 +2377,15 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int compression = PG_GETARG_INT32(3);
+		int compression;
 		double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(3))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(3);
 
 		check_compression(compression);
 
@@ -2456,10 +2486,15 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int compression = PG_GETARG_INT32(2);
+		int compression;
 		double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(2);
 
 		check_compression(compression);
 
@@ -2524,10 +2559,15 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 	/* if there's no digest allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		int compression = PG_GETARG_INT32(3);
+		int compression;
 		double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
+
+		if (PG_ARGISNULL(3))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(3);
 
 		check_compression(compression);
 
@@ -4137,7 +4177,7 @@ tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		MemoryContext oldcontext;
-		int		compression = PG_GETARG_INT32(2);
+		int		compression;
 		double	low,
 				high;
 
@@ -4147,6 +4187,11 @@ tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
 
 		low = PG_GETARG_FLOAT8(3);
 		high = PG_GETARG_FLOAT8(4);
+
+		if (PG_ARGISNULL(2))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(2);
 
 		check_compression(compression);
 
@@ -4200,7 +4245,7 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		MemoryContext oldcontext;
-		int		compression = PG_GETARG_INT32(3);
+		int		compression;
 		double	low,
 				high;
 
@@ -4210,6 +4255,11 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 
 		low = PG_GETARG_FLOAT8(4);
 		high = PG_GETARG_FLOAT8(5);
+
+		if (PG_ARGISNULL(3))
+			elog(ERROR, "compression must not be NULL");
+
+		compression = PG_GETARG_INT32(3);
 
 		check_compression(compression);
 
