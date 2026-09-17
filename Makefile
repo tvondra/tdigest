@@ -24,11 +24,12 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
-# Disable the FP contraction, if the compiler understands the option. It's added
-# after including PGXS, so that it overrides any earlier -ffp-contract value.
+# Disable FP contraction, if supported, for native code and LLVM bitcode.
+# Append after PGXS so this overrides any earlier -ffp-contract option.
 FP_CONTRACT := $(shell $(CC) -ffp-contract=off -xc -E /dev/null > /dev/null 2>&1 \
                        && echo -ffp-contract=off)
 override CFLAGS += $(FP_CONTRACT)
+override BITCODE_CFLAGS += $(FP_CONTRACT)
 
 # The PGXS "uninstall" target only removes the files currently listed in DATA,
 # so scripts installed by an older build (e.g. upgrade scripts that were since
