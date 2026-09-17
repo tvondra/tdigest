@@ -3,7 +3,7 @@ TODO
 
 This is a simple list of possible improvements and enhancements, in mostly
 random order. So if you're thinking about contributing to the extension,
-this might be an inspiration. Of course, if you can think of yet another
+this might provide inspiration. Of course, if you can think of yet another
 improvement, add it to this list.
 
 * Support other data types, not just "double precision". Supporting "numeric"

@@ -74,7 +74,7 @@ SELECT tdigest('-Infinity'::float8, 200::bigint, 10);
 SELECT tdigest_percentile('flags 1 count 4611686018427388928 compression 10 centroids 3 (1, 4611686018427387904) (2, 512) (3, 512)'::tdigest,
                           0.9999999999999998::double precision);
 
--- same centroid, but the percentile falls in between the second and third centroid
+-- same digest, but the percentile falls in between the second and third centroid
 SELECT tdigest_percentile('flags 1 count 4611686018427388928 compression 10 centroids 3 (1, 4611686018427387904) (2, 512) (3, 512)'::tdigest,
                           ARRAY[0.0, 0.5, 0.9999999999999996, 1.0]::double precision[]);
 
@@ -86,7 +86,7 @@ SELECT c AS compression,
   FROM (VALUES (10), (100), (1000), (10000)) v(c)
  GROUP BY c ORDER BY c;
 
--- make sure finite inputs do not not produce infinite centroids
+-- make sure finite inputs do not produce infinite centroids
 SELECT tdigest_count(tdigest(v, 10))
 FROM (SELECT (CASE WHEN i % 2 = 0 THEN 1e308 ELSE 1e307 END)::float8 AS v
       FROM generate_series(1,200) i) x;

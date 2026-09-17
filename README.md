@@ -6,8 +6,8 @@ This PostgreSQL extension implements t-digest, a data structure for on-line
 accumulation of rank-based statistics such as quantiles and trimmed means.
 The algorithm is also very friendly to parallel programs.
 
-The t-digest data structure was introduced by Ted Dunning in 2013, and more
-detailed description and example implementation is available in his github
+The t-digest data structure was introduced by Ted Dunning in 2013, and a more
+detailed description and an example implementation are available in his GitHub
 repository [1]. In particular, see the paper [2] explaining the idea. Some
 of the code was inspired by tdigestc [3] and tdigest [4] by ajwerner.
 
@@ -19,7 +19,7 @@ the fact that t-digests are much more compact when stored on disk.
 ## Basic usage
 
 For the basic use case the extension provides four aggregate functions. The
-`tdigest_percentile` ones can be seen as a replacement of the
+`tdigest_percentile` ones can be seen as a replacement for the
 `percentile_cont` aggregate, while the `tdigest_percentile_of` ones perform
 the inverse operation, estimating the relative rank of a given value:
 
@@ -47,8 +47,8 @@ you might now run
 SELECT tdigest_percentile(a, 100, 0.95) FROM t
 ```
 
-and similarly for the variants with array of percentiles. This should run
-much faster, as the t-digest does not require sort of all the data and can
+and similarly for the variants with an array of percentiles. This should run
+much faster, as the t-digest does not require sorting all the data and can
 be parallelized. Also, the memory usage is very limited, depending on the
 compression parameter.
 
@@ -70,7 +70,7 @@ much smaller.
 
 It's hard to say what is a good accuracy value, as it very much depends on
 the data set (how non-uniform the data distribution is, etc.), but given a
-t-digest with N buckets, the error is roughly 1/N. So t-digests build with
+t-digest with N buckets, the error is roughly 1/N. So t-digests built with
 accuracy set to 100 have roughly 1% error (with respect to the total range
 of data), which is more than enough for most use cases.
 
@@ -84,11 +84,11 @@ the purpose of the t-digest, i.e. estimating percentiles close to extremes.
 
 The extension also provides a `tdigest` data type, which makes it possible
 to precompute digests for subsets of data, and then quickly combine those
-"partial" digest into a digest representing the whole data set. The prebuilt
+"partial" digests into a digest representing the whole data set. The prebuilt
 digests should be much smaller compared to the original data set, allowing
 significantly faster response times.
 
-To compute the `t-digest` use `tdigest` aggregate function. The digests can
+To compute a `t-digest`, use the `tdigest` aggregate function. The digests can
 then be stored on disk and later summarized using the `tdigest_percentile`
 functions (with `tdigest` as the first argument).
 
@@ -121,10 +121,10 @@ CREATE TABLE t (a int, b int, c double precision);
 INSERT INTO t SELECT 1 + 10 * random(), 10 * random(), random()
                 FROM generate_series(1,10000000);
 
--- table with pre-aggregated digests into table "p"
+-- table with pre-aggregated digests
 CREATE TABLE p AS SELECT a, b, tdigest(c, 100) AS d FROM t GROUP BY a, b;
 
--- summarize the data from "p" (compute the 95-th percentile)
+-- summarize the data from "p" (compute the 95th percentile)
 SELECT a, tdigest_percentile(d, 0.95) FROM p GROUP BY a ORDER BY a;
 ```
 
@@ -173,7 +173,7 @@ It also shows how effective the pre-aggregation can be. There are 121 rows
 in table `p` so with 120kB disk space that's ~1kB per row, each representing
 about 80k values. With 8B per value, that's ~640kB, i.e. a compression ratio
 of 640:1. As the digest size is not tied to the number of items, this will
-only improve for larger data set.
+only improve for larger data sets.
 
 
 ## Pre-aggregated data
@@ -450,7 +450,7 @@ SELECT tdigest_percentile_of(t.c, t.a, 100, 139832.3) FROM t
 
 ### `tdigest_percentile_of(value, accuracy, hypothetical_value[])`
 
-Computes relative ranks of a hypothetical values, using a t-digest with
+Computes relative ranks of hypothetical values, using a t-digest with
 the specified accuracy.
 
 #### Synopsis
@@ -468,7 +468,7 @@ SELECT tdigest_percentile_of(t.c, 100, ARRAY[6343.43, 139832.3]) FROM t
 
 ### `tdigest_percentile_of(value, count, accuracy, hypothetical_value[])`
 
-Computes relative ranks of a hypothetical values, using a t-digest with
+Computes relative ranks of hypothetical values, using a t-digest with
 the specified accuracy.
 
 #### Synopsis
@@ -539,7 +539,7 @@ SELECT tdigest(d) FROM (
 
 ### `tdigest_count(tdigest)`
 
-Returns number of items represented by the t-digest. This is a plain
+Returns the number of items represented by the t-digest. This is a plain
 function, not an aggregate.
 
 #### Synopsis
@@ -922,7 +922,7 @@ SELECT tdigest_digest_sum(d, 0.25, 0.75) FROM (
 
 ### `tdigest_is_valid(tdigest)`
 
-Checks the t-digest is valid, i.e. that it passes the same sanity checks
+Checks whether the t-digest is valid, i.e. that it passes the same sanity checks
 as the input functions (parsing the text or binary representation). Returns
 `true` for valid digests, `false` otherwise.
 
@@ -966,7 +966,7 @@ The SQL data type is defined without specifying the `ALIGNMENT` parameter,
 so it's left set to 4, the default value. This means the on-disk data may
 be misaligned, as it contains `double` fields and so the correct alignment
 would be 8. On amd64/arm64 this is mostly harmless (except for some minor
-performance penalty), but on on platforms with strict alignment it may
+performance penalty), but on platforms with strict alignment it may
 cause `SIGBUS` crashes.
 
 The implementation handles this in `tdigest_detoast()` - after detoasting,
@@ -978,7 +978,7 @@ so might have kept the incorrect alignment.
 
 The impact depends on how large the digest is. With compression values in
 the 100-200 range, used in practice (and in this README), a compacted digest
-is a few hundred bytes to about 1.5kB. That keeps it in the tuplw with a
+is a few hundred bytes to about 1.5kB. That keeps it in the tuple with a
 4-byte header, and it's exactly the case that needs the extra copy. Only
 the larger digests - compression 500 and above, get pushed out or
 compressed, and those are the ones detoasting realigns for free.
@@ -1040,8 +1040,8 @@ results (thanks to a single rounding).
 
 License
 -------
-This software is distributed under the terms of PostgreSQL license.
-See LICENSE or http://www.opensource.org/licenses/bsd-license.php for
+This software is distributed under the terms of the PostgreSQL license.
+See LICENSE or https://www.postgresql.org/about/licence/ for
 more details.
 
 

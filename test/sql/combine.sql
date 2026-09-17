@@ -11,12 +11,12 @@ BEGIN
 
     SELECT substring(setting from '\d+')::numeric INTO v_version FROM pg_settings WHERE name = 'server_version';
 
-    -- GUCs common for all versions
+    -- GUCs common to all versions
     PERFORM set_config('parallel_setup_cost', '0', false);
     PERFORM set_config('parallel_tuple_cost', '0', false);
     PERFORM set_config('max_parallel_workers_per_gather', '2', false);
 
-    -- 9.6 used somewhat different GUC name for relation size
+    -- 9.6 used a different GUC name for relation size
     IF v_version < 10 THEN
         PERFORM set_config('min_parallel_relation_size', '0', false);
     ELSE
@@ -61,7 +61,7 @@ BEGIN
 
                 INSERT INTO digest_combine_test SELECT 1, tdigest(v * random(), v_compress) FROM generate_series(1, v_rows) v;
 
-                -- second ranndom t-digest
+                -- second random t-digest
                 v_compress := pow(10, v_scale_2) + (random() * pow(10, (v_scale_2 + 1)))::int;
                 v_compress := GREATEST(10, LEAST(v_compress, 10000));
 

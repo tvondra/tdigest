@@ -1,6 +1,5 @@
 -- Use terse verbosity, so that the expected output does not depend on the
--- error context, which differs between PostgreSQL versions (particularly
--- for the COPY ... FROM statements below).
+-- error context, which differs between PostgreSQL versions.
 \set VERBOSITY terse
 -- Reproducer: tdigest_trimmed_agg() used to convert the trimmed range from
 -- double to int64 without checking whether the rounded bounds still fit.

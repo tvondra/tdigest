@@ -12,7 +12,7 @@ SELECT tdigest_percentile_of(v, 100::bigint, 10, 1.0) FROM (VALUES (1.0)) AS t(v
 SELECT tdigest_percentile_of(v, 101::bigint, 10, 1.0) FROM (VALUES (1.0)) AS t(v);
 SELECT tdigest_percentile_of(v, 1000000::bigint, 10, 1.0) FROM (VALUES (1.0)) AS t(v);
 
--- two distinct values, with the counts just below and just above the
+-- two distinct values, with the counts at and just above the
 -- threshold
 SELECT tdigest_percentile_of(v, 100::bigint, 10, 2.0) FROM (VALUES (1.0), (2.0)) AS t(v);
 SELECT tdigest_percentile_of(v, 101::bigint, 10, 2.0) FROM (VALUES (1.0), (2.0)) AS t(v);

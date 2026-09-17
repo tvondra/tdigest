@@ -5,19 +5,19 @@ BEGIN
 
     SELECT substring(setting from '\d+')::numeric INTO v_version FROM pg_settings WHERE name = 'server_version';
 
-    -- GUCs common for all versions
+    -- GUCs common to all versions
     PERFORM set_config('parallel_setup_cost', '0', false);
     PERFORM set_config('parallel_tuple_cost', '0', false);
     PERFORM set_config('max_parallel_workers_per_gather', '2', false);
 
-    -- 9.6 used somewhat different GUC name for relation size
+    -- 9.6 used a different GUC name for relation size
     IF v_version < 10 THEN
         PERFORM set_config('min_parallel_relation_size', '1kB', false);
     ELSE
         PERFORM set_config('min_parallel_table_scan_size', '1kB', false);
     END IF;
 
-    -- in 14 disable Memoize nodes, to make explain more consistent
+    -- on 14 and later, disable Memoize nodes to make EXPLAIN more consistent
     IF v_version >= 14 THEN
         PERFORM set_config('enable_memoize', 'off', false);
     END IF;
@@ -846,7 +846,7 @@ SELECT * FROM (
         FROM data
     ) foo ) bar WHERE a <= b;
 
--- some basic tests to verify transforming from and to text work
+-- some basic tests to verify transforming from and to text works
 -- 10 centroids (tiny)
 WITH data AS (SELECT i / 10000.0 AS x FROM generate_series(1,10000) s(i)),
      intermediate AS (SELECT tdigest(x, 10)::text AS intermediate_x FROM data),
@@ -908,7 +908,7 @@ FROM (
     FROM data
 ) foo;
 
--- check that the computed percentiles are perfectly correlated (don't decrease for higher p values)
+-- check that the computed percentiles don't decrease for higher p values
 -- first test on a tiny t-digest with all centroids having count = 1
 WITH
 -- percentiles to compute

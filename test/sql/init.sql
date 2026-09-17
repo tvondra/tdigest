@@ -9,7 +9,7 @@ SET extra_float_digits = 0;
 
 \set ECHO all
 
--- SRF function implementing a simple deterministict PRNG
+-- Set-returning function implementing a simple deterministic PRNG
 
 CREATE OR REPLACE FUNCTION prng(nrows int, seed int = 23982, p1 bigint = 16807, p2 bigint = 0, n bigint = 2147483647) RETURNS SETOF double precision AS $$
 DECLARE

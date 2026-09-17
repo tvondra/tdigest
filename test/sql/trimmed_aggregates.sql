@@ -5,20 +5,20 @@ BEGIN
 
     SELECT substring(setting from '\d+')::numeric INTO v_version FROM pg_settings WHERE name = 'server_version';
 
-    -- GUCs common for all versions
+    -- GUCs common to all versions
     PERFORM set_config('extra_float_digits', '0', false);
     PERFORM set_config('parallel_setup_cost', '0', false);
     PERFORM set_config('parallel_tuple_cost', '0', false);
     PERFORM set_config('max_parallel_workers_per_gather', '2', false);
 
-    -- 9.6 used somewhat different GUC name for relation size
+    -- 9.6 used a different GUC name for relation size
     IF v_version < 10 THEN
         PERFORM set_config('min_parallel_relation_size', '1kB', false);
     ELSE
         PERFORM set_config('min_parallel_table_scan_size', '1kB', false);
     END IF;
 
-    -- in 14 disable Memoize nodes, to make explain more consistent
+    -- on 14 and later, disable Memoize nodes to make EXPLAIN more consistent
     IF v_version >= 14 THEN
         PERFORM set_config('enable_memoize', 'off', false);
     END IF;
@@ -44,7 +44,7 @@ SELECT
     tdigest_avg(data.r, data.c, 100, 0.5, 1.0) between 0.7 and 0.8 AS mean_50_100
 FROM data;
 
--- check trimmed mean (from pracalculated tdigest)
+-- check trimmed mean (from precalculated tdigest)
 -- we compare the result to a range, to deal with the randomness
 WITH data AS (SELECT tdigest(random(), 50) AS d FROM generate_series(1,10000) AS x)
 SELECT
@@ -72,7 +72,7 @@ SELECT
     tdigest_sum(data.r, data.c, 100, 0.5, 1.0) between 12500 * 0.7 and 12500 * 0.8 AS sum_50_100
 FROM data;
 
--- check trimmed sum (from pracalculated tdigest)
+-- check trimmed sum (from precalculated tdigest)
 -- we compare the result to a range, to deal with the randomness
 WITH data AS (SELECT tdigest(random(), 50) AS d FROM generate_series(1,10000) AS x)
 SELECT

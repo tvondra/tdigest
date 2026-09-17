@@ -1,6 +1,5 @@
 -- Use terse verbosity, so that the expected output does not depend on the
--- error context, which differs between PostgreSQL versions (particularly
--- for the COPY ... FROM statements below).
+-- error context, which differs between PostgreSQL versions.
 \set VERBOSITY terse
 -- check tdigest_compact() makes progress even for extreme digests
 --
@@ -16,7 +15,7 @@
 -- the digests are well-formed. But code expecting the compaction to free
 -- some space in the buffer may write beyond the end of the buffer, etc.
 --
--- 1) small number of values - no crash, but already trigger OOB writer
+-- 1) small number of values - no crash, but already triggers an OOB write
 SELECT tdigest_count(tdigest(d)) FROM (
     SELECT ('flags 1 count ' || c || ' compression 10 centroids 1 (' || i || ', ' || c || ')')::tdigest AS d
       FROM generate_series(1, 500) s(i),

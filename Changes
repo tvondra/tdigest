@@ -4,9 +4,9 @@ Revision history for PostgreSQL extension tdigest.
     - Disable FP contraction for LLVM bitcode as well as native code.
     - Reject text input that underflows to zero, while accepting nonzero subnormals.
     - Restrict uninstall cleanup to this extension's control and SQL files.
-    - Prevent divisions by zero in double arithmetics (benign with IEEE-754).
+    - Prevent divisions by zero in double arithmetic (benign with IEEE-754).
     - Mark scalar functions operating on a tdigest value as parallel safe, to
-      allow parallel queries in more cases).
+      allow parallel queries in more cases.
 
 1.4.6
     - Disable FP contraction to make tests pass on arm64
@@ -26,7 +26,7 @@ Revision history for PostgreSQL extension tdigest.
     - Harden validation of function parameters to reject NULL/NaN/infinity values
     - Use overflow-resilient and/or numerically stable formulas in multiple functions
     - Improve test coverage by adding new regression tests
-    - Speedup regression tests by using parallel schedule
+    - Speed up regression tests by using a parallel schedule
     - Add tdigest_is_valid() to check validity of existing t-digest values
     - Mitigate incorrect alignment of t-digest values.
 
@@ -34,7 +34,7 @@ Revision history for PostgreSQL extension tdigest.
     - Add missing parts of automated release workflow.
     - Make regression tests pass on Postgres 19 branch
     - Fix various issues when parsing/validating input data
-    - Fix combinning t-digests with different parameters
+    - Fix combining t-digests with different parameters
 
 1.4.3
     - PGXN packaging (META etc.).

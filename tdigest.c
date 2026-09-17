@@ -46,7 +46,7 @@ typedef struct tdigest_t {
 	int32		flags;			/* on-disk format flags */
 	int64		count;			/* number of items added to the t-digest */
 	int			compression;	/* compression used to build the digest */
-	int			ncentroids;		/* number of cetroids in the array */
+	int			ncentroids;		/* number of centroids in the array */
 	centroid_t	centroids[FLEXIBLE_ARRAY_MEMBER];
 } tdigest_t;
 
@@ -71,18 +71,18 @@ typedef struct tdigest_t {
  * separate "uncompacted" part of the array. While centroids need more space
  * than plain points (24B vs. 8B), making the aggregate state quite a bit
  * larger, it does simplify the code quite a bit as it only needs to deal
- * with single struct type instead of two (centroids + points). But maybe
+ * with a single struct type instead of two (centroids + points). But maybe
  * we should separate those two things in the future.
  *
  * XXX We only ever use one of values/percentiles, never both at the same
- * time. In the future the values may use a different data types than double
+ * time. In the future the values may use a different data type than double
  * (e.g. numeric), so we keep both fields.
  */
 typedef struct tdigest_aggstate_t {
 	/* basic t-digest fields (centroids at the end) */
 	int64		count;			/* number of samples in the digest */
 	int			ncompactions;	/* number of merges/compactions */
-	int			compression;	/* compression algorithm */
+	int			compression;	/* compression parameter */
 	int			ncentroids;		/* number of centroids */
 	int			ncompacted;		/* compacted part */
 	/* array of requested percentiles and values */
@@ -607,7 +607,7 @@ tdigest_compact_forced(tdigest_aggstate_t *state)
 		/*
 		 * XXX It should not be possible to get a NaN mean. That would require
 		 * adding up -infinity and +infinity in the loop above, but the input
-		 * means should be finite (or we have bigger problem earlier). And for
+		 * means should be finite (or we have a bigger problem earlier). And for
 		 * the multiplication to overflow, the weight needs to be close to 1.0,
 		 * but that can happen only for a single centroid.
 		 */
@@ -935,7 +935,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		 * interpolation (previous/following one) later.
 		 *
 		 * We know centroid "c" exceeds the goal, but did we hit the mean,
-		 * or are we to the left/right? We assume half the items is before
+		 * or are we to the left/right? We assume half the items are before
 		 * the mean, half after.
 		 */
 		is_before = goal < (count + c->count / 2.0);
@@ -1006,7 +1006,7 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		total_distance = (prev->count / 2.0) + (next->count / 2.0);
 
 		/*
-		 * We should be "to the right" the first centroid, and should not
+		 * We should be "to the right" of the first centroid, and should not
 		 * be so far ahead to exceed the next one. So in principle, this
 		 * should be true:
 		 *
@@ -1186,7 +1186,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		 * where along the line from the prev node to this node the value is.
 		 *
 		 * FIXME What if there are multiple centroids with the same mean as the
-		 * prev/curr centroid? This probably needs to lookup all of them and sum
+		 * prev/curr centroid? This probably needs to look up all of them and sum
 		 * their counts, just like we did in case of the exact mean equality, no?
 		 * Both for the current and previous centroids, so that the approximation
 		 * works well.
@@ -1195,7 +1195,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		count -= (prev->count / 2.0);
 
 		/*
-		 * We assume for both prev/curr centroid, half the count is on left/righ,
+		 * We assume for both prev/curr centroids, half the count is on each side,
 		 * so between them we have (prev->count/2 + curr->count/2). At zero we
 		 * are in prev->mean and at (prev->count/2 + curr->count/2) we're at
 		 * curr->mean.
@@ -1224,7 +1224,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		 * Calculate the linear interpolation of q1/q2 percentiles.
 		 *
 		 * We need to be careful about infinity/NaN during calculation. The
-		 * means may be so close to +/- DBL_MAX, that with "d" gets infinite.
+		 * means may be so close to +/- DBL_MAX that "d" becomes infinite.
 		 * That's equivalent to 0 slope, but we can do a bit better - if this
 		 * happens, we halve the values, which makes the difference finite
 		 * again (in exchange for loss of precision, but that's acceptable).
@@ -1295,7 +1295,7 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 
 /*
  * Add a centroid (possibly with count not equal to 1) to the t-digest,
- * triggers a compaction when buffer full.
+ * triggering a compaction when the buffer is full.
  */
 static void
 tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
@@ -1346,7 +1346,7 @@ tdigest_allocate(int ncentroids)
 	digest->count = 0;
 	digest->compression = 0;
 
-	/* new tdigest are automatically storing mean */
+	/* new t-digests automatically store means */
 	digest->flags |= TDIGEST_STORES_MEAN;
 
 	return digest;
@@ -1451,7 +1451,7 @@ tdigest_sort_digest(tdigest_t *digest)
 
 	/*
 	 * Create a fresh copy of the digest, not to break the current one (which
-	 * may even be persistent on disk.
+	 * may even be persistent on disk).
 	 */
 	s = VARSIZE_ANY(digest);
 	ptr = palloc(s);
@@ -1878,7 +1878,7 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 			 (long long) count);
 
 	/*
-	 * When adding too many values (than would fit into an empty buffer, and
+	 * When adding more values than would fit into an empty buffer (and
 	 * thus likely causing too many compactions), we instead add them as
 	 * properly sized centroids.
 	 *
@@ -1893,9 +1893,9 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * If there are only a couple values, just add them one by one, so that
+	 * If there are only a few values, just add them one by one, so that
 	 * we do proper compaction and sizing of centroids. Otherwise we might end
-	 * up with oversized centroid on the tails etc.
+	 * up with oversized centroids on the tails etc.
 	 */
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
@@ -2065,7 +2065,7 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 			 (long long) count);
 
 	/*
-	 * When adding too many values (than would fit into an empty buffer, and
+	 * When adding more values than would fit into an empty buffer (and
 	 * thus likely causing too many compactions), we instead add them as
 	 * properly sized centroids.
 	 *
@@ -2080,9 +2080,9 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * If there are only a couple values, just add them one by one, so that
+	 * If there are only a few values, just add them one by one, so that
 	 * we do proper compaction and sizing of centroids. Otherwise we might end
-	 * up with oversized centroid on the tails etc.
+	 * up with oversized centroids on the tails etc.
 	 */
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
@@ -2164,7 +2164,7 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add digest to a state with a different
+	 * XXX should it be allowed to add a digest to a state with a different
 	 * compression value? Will it produce a "good" t-digest or does it break
 	 * the assumptions and produce much worse estimates?
 	 */
@@ -2253,7 +2253,7 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add digest to a state with a different
+	 * XXX should it be allowed to add a digest to a state with a different
 	 * compression value? Will it produce a "good" t-digest or does it break
 	 * the assumptions and produce much worse estimates?
 	 */
@@ -2425,7 +2425,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 			 (long long) count);
 
 	/*
-	 * When adding too many values (than would fit into an empty buffer, and
+	 * When adding more values than would fit into an empty buffer (and
 	 * thus likely causing too many compactions), we instead add them as
 	 * properly sized centroids.
 	 *
@@ -2442,7 +2442,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
 	 * We do it like this to allow proper compaction and sizing of centroids,
-	 * otherwise we might end up with oversized centroid on the tails etc.
+	 * otherwise we might end up with oversized centroids on the tails etc.
 	 *
 	 * XXX If this turns out a bit too expensive, we may try determining the
 	 * size by looking for the smallest centroid covering this value.
@@ -2605,7 +2605,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 			 (long long) count);
 
 	/*
-	 * When adding too many values (than would fit into an empty buffer, and
+	 * When adding more values than would fit into an empty buffer (and
 	 * thus likely causing too many compactions), we instead add them as
 	 * properly sized centroids.
 	 *
@@ -2622,7 +2622,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 	/*
 	 * Add the values one by one, not as one large centroid with the count.
 	 * We do it like this to allow proper compaction and sizing of centroids,
-	 * otherwise we might end up with oversized centroid on the tails etc.
+	 * otherwise we might end up with oversized centroids on the tails etc.
 	 *
 	 * XXX If this turns out a bit too expensive, we may try determining the
 	 * size by looking for the smallest centroid covering this value.
@@ -2701,7 +2701,7 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add digest to a state with a different
+	 * XXX should it be allowed to add a digest to a state with a different
 	 * compression value? Will it produce a "good" t-digest or does it break
 	 * the assumptions and produce much worse estimates?
 	 */
@@ -2783,7 +2783,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add digest to a state with a different
+	 * XXX should it be allowed to add a digest to a state with a different
 	 * compression value? Will it produce a "good" t-digest or does it break
 	 * the assumptions and produce much worse estimates?
 	 */
@@ -3130,7 +3130,7 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	/* if no "merged" state yet, try creating it */
 	if (PG_ARGISNULL(0))
 	{
-		/* nope, the second argument is NULL to, so return NULL */
+		/* nope, the second argument is NULL too, so return NULL */
 		if (PG_ARGISNULL(1))
 			PG_RETURN_NULL();
 
@@ -3160,7 +3160,7 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	AssertCheckTDigestAggState(src);
 
 	/*
-	 * XXX should it be allowed to add digest to a state with a different
+	 * XXX should it be allowed to add a digest to a state with a different
 	 * compression value? Will it produce a "good" t-digest or does it break
 	 * the assumptions and produce much worse estimates?
 	 */
@@ -3217,8 +3217,8 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
  * for some use cases.
  *
  * When efficiency is important, it may be possible to use the batch variant
- * with first aggregating the updates into a t-digest, and then merge that
- * into an existing t-digest in one step using tdigest_union_double_increment
+ * by first aggregating the updates into a t-digest, and then merging that
+ * into an existing t-digest in one step using tdigest_union_double_increment.
  *
  * This is similar to hll_add, while the "union" is more like hll_union.
  */
@@ -3281,8 +3281,8 @@ tdigest_add_double_increment(PG_FUNCTION_ARGS)
  * version.
  *
  * When efficiency is important, it may be possible to use the batch variant
- * with first aggregating the updates into a t-digest, and then merge that
- * into an existing t-digest in one step using tdigest_union_double_increment
+ * by first aggregating the updates into a t-digest, and then merging that
+ * into an existing t-digest in one step using tdigest_union_double_increment.
  *
  * This is similar to hll_add, while the "union" is more like hll_union.
  */
@@ -4052,9 +4052,9 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 			appendStringInfoString(&str, ", ");
 
 		/*
-		 * When the TDIGEST_STORES_MEAN flags is not set, the value is
+		 * When the TDIGEST_STORES_MEAN flag is not set, the value is
 		 * actually a sum, so convert it to mean now. We have to check the
-		 * diget->flags, not the local variable.
+		 * digest->flags, not the local variable.
 		 */
 		if (! (digest->flags & TDIGEST_STORES_MEAN))
 			mean = mean / digest->centroids[i].count;
@@ -4095,7 +4095,7 @@ tdigest_to_json(PG_FUNCTION_ARGS)
  * may be a bit confusing and perhaps fragile if more fields need to be
  * added in the future. The initial elements are flags, count (number of
  * items added to the digest), compression (determines the limit on number
- * of centroids) and current number of centroids. Follows stream of values
+ * of centroids) and current number of centroids, followed by a stream of values
  * encoding the centroids in pairs of (mean, count).
  *
  * We make sure to always print mean, even for tdigests in the older format
@@ -4132,9 +4132,9 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 		CHECK_FOR_INTERRUPTS();
 
 		/*
-		 * When the TDIGEST_STORES_MEAN flags is not set, the value is
+		 * When the TDIGEST_STORES_MEAN flag is not set, the value is
 		 * actually a sum, so convert it to mean now. We have to check the
-		 * diget->flags, not the local variable.
+		 * digest->flags, not the local variable.
 		 */
 		if (! (digest->flags & TDIGEST_STORES_MEAN))
 			mean = mean / digest->centroids[i].count;
@@ -4287,7 +4287,7 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 			 (long long) count);
 
 	/*
-	 * When adding too many values (than would fit into an empty buffer, and
+	 * When adding more values than would fit into an empty buffer (and
 	 * thus likely causing too many compactions), we instead add them as
 	 * properly sized centroids.
 	 *
@@ -4302,9 +4302,9 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * If there are only a couple values, just add them one by one, so that
+	 * If there are only a few values, just add them one by one, so that
 	 * we do proper compaction and sizing of centroids. Otherwise we might end
-	 * up with oversized centroid on the tails etc.
+	 * up with oversized centroids on the tails etc.
 	 */
 	for (i = 0; i < count; i++)
 		tdigest_add(state, PG_GETARG_FLOAT8(1));
@@ -4376,7 +4376,7 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
 	/*
-	 * XXX should it be allowed to add digest to a state with a different
+	 * XXX should it be allowed to add a digest to a state with a different
 	 * compression value? Will it produce a "good" t-digest or does it break
 	 * the assumptions and produce much worse estimates?
 	 */
@@ -4427,13 +4427,13 @@ double_to_int64(double value, int64 maxvalue)
 	/*
 	 * The comparison is done in double on purpose. If we did it as int64,
 	 * it might already overflow and wrap. Converting count to double may
-	 * round it up to 2^63, but that should be tine - the comparison is
+	 * round it up to 2^63, but that should be fine - the comparison is
 	 * still correct, and we return count for anything that large.
 	 */
 	if (value >= (double) maxvalue)
 		return maxvalue;
 
-	/* ok, should be safe to count */
+	/* ok, should be safe to cast */
 	return (int64) value;
 }
 
