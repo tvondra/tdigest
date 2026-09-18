@@ -257,8 +257,7 @@ Datum tdigest_digest_sum(PG_FUNCTION_ARGS);
 Datum tdigest_digest_avg(PG_FUNCTION_ARGS);
 
 static ArrayType *double_array_allocate(int nitems);
-static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v,
-							   const char *what, int * len);
+static const double *array_to_double(ArrayType *v, const char *what, int *len);
 static int64 double_to_int64(double value, int64 maxvalue);
 static tdigest_aggstate_t *tdigest_copy(tdigest_aggstate_t *state);
 
@@ -1567,7 +1566,7 @@ tdigest_aggstate_to_digest(tdigest_aggstate_t *state, bool compact)
 
 /* check that the requested percentiles are valid */
 static void
-check_percentiles(double *percentiles, int npercentiles)
+check_percentiles(const double *percentiles, int npercentiles)
 {
 	int i;
 
@@ -2331,7 +2330,7 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression;
-		double *percentiles;
+		const double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
 		ArrayType *array;
@@ -2349,7 +2348,7 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 
 		/* process the input array in caller's memory context */
 		array = PG_GETARG_ARRAYTYPE_P(3);
-		percentiles = array_to_double(fcinfo, array,
+		percentiles = array_to_double(array,
 									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
@@ -2363,7 +2362,6 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 
 		/* free the parsed data, possibly detoasted copy of the array */
-		pfree(percentiles);
 		PG_FREE_IF_COPY(array, 3);
 	}
 	else
@@ -2410,7 +2408,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression;
-		double *percentiles;
+		const double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
 		ArrayType *array;
@@ -2428,7 +2426,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 
 		/* process the input array in caller's memory context */
 		array = PG_GETARG_ARRAYTYPE_P(4);
-		percentiles = array_to_double(fcinfo, array,
+		percentiles = array_to_double(array,
 									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
@@ -2442,7 +2440,6 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 
 		/* free the parsed data, possibly detoasted copy of the array */
-		pfree(percentiles);
 		PG_FREE_IF_COPY(array, 4);
 	}
 	else
@@ -2523,7 +2520,7 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression;
-		double *values;
+		const double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
 		ArrayType *array;
@@ -2541,7 +2538,7 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 
 		/* process the input array in caller's memory context */
 		array = PG_GETARG_ARRAYTYPE_P(3);
-		values = array_to_double(fcinfo, array,
+		values = array_to_double(array,
 								 "a value", &nvalues);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
@@ -2553,7 +2550,6 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 
 		/* free the parsed data, possibly detoasted copy of the array */
-		pfree(values);
 		PG_FREE_IF_COPY(array, 3);
 	}
 	else
@@ -2600,7 +2596,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 	{
 		int compression;
-		double *values;
+		const double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
 		ArrayType *array;
@@ -2618,7 +2614,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 
 		/* process the input array in caller's memory context */
 		array = PG_GETARG_ARRAYTYPE_P(4);
-		values = array_to_double(fcinfo, array,
+		values = array_to_double(array,
 								 "a value", &nvalues);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
@@ -2630,7 +2626,6 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 
 		/* free the parsed data, possibly detoasted copy of the array */
-		pfree(values);
 		PG_FREE_IF_COPY(array, 4);
 	}
 	else
@@ -2715,7 +2710,7 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		double *percentiles;
+		const double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
 		ArrayType *array;
@@ -2726,7 +2721,7 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 
 		/* process the input array in caller's memory context */
 		array = PG_GETARG_ARRAYTYPE_P(2);
-		percentiles = array_to_double(fcinfo, array,
+		percentiles = array_to_double(array,
 									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
@@ -2741,7 +2736,6 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 
 		/* free the parsed data, possibly detoasted copy of the array */
-		pfree(percentiles);
 		PG_FREE_IF_COPY(array, 2);
 	}
 	else
@@ -2804,7 +2798,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
 	{
-		double *values;
+		const double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
 		ArrayType *array;
@@ -2815,7 +2809,7 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 
 		/* process the input array in caller's memory context */
 		array = PG_GETARG_ARRAYTYPE_P(2);
-		values = array_to_double(fcinfo, array,
+		values = array_to_double(array,
 								 "a value", &nvalues);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
@@ -2828,7 +2822,6 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 
 		/* free the parsed data, possibly detoasted copy of the array */
-		pfree(values);
 		PG_FREE_IF_COPY(array, 2);
 	}
 	else
@@ -3383,7 +3376,7 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 	tdigest_t		   *result;
 	bool				compact;
 	ArrayType		   *array;
-	double			   *values;
+	const double	   *values;
 	int					nvalues;
 	int					i;
 
@@ -3435,13 +3428,12 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 	}
 
 	array = PG_GETARG_ARRAYTYPE_P(1);
-	values = array_to_double(fcinfo, array,
+	values = array_to_double(array,
 							 "an element", &nvalues);
 
 	for (i = 0; i < nvalues; i++)
 		tdigest_add(state, values[i]);
 
-	pfree(values);
 	PG_FREE_IF_COPY(array, 1);
 
 	AssertCheckTDigestAggState(state);
@@ -4938,7 +4930,7 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
 }
 
 /*
- * Transform an input FLOAT8 SQL array to a plain double C array.
+ * Return a read-only view of an input FLOAT8 SQL array as C doubles.
  *
  * This expects a single-dimensional float8 array, fails otherwise.
  *
@@ -4947,12 +4939,11 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
  * (percentiles, hypothetical values, values to add to a digest), and a message
  * naming the wrong one points at the wrong argument.
  *
- * The caller owns the returned copy.
+ * The caller must keep the detoasted array alive while using the view.
  */
-static double *
-array_to_double(FunctionCallInfo fcinfo, ArrayType *v, const char *what, int *len)
+static const double *
+array_to_double(ArrayType *v, const char *what, int *len)
 {
-	double *result;
 	int		nitems,
 		   *dims,
 			ndims;
@@ -4984,13 +4975,10 @@ array_to_double(FunctionCallInfo fcinfo, ArrayType *v, const char *what, int *le
 	if (array_contains_nulls(v))
 		elog(ERROR, "NULL not allowed as %s", what);
 
-	/* Non-NULL float8 elements have the same layout as a C double array. */
-	result = (double *) palloc(nitems * sizeof(double));
-	memcpy(result, ARR_DATA_PTR(v), nitems * sizeof(double));
-
 	(*len) = nitems;
 
-	return result;
+	/* Non-NULL float8 elements have the same layout as a C double array. */
+	return (const double *) ARR_DATA_PTR(v);
 }
 
 /*
