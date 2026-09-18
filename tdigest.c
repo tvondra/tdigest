@@ -20,7 +20,6 @@
 #include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
-#include "utils/lsyscache.h"
 
 #if PG_VERSION_NUM >= 120000
 #include "utils/float.h"	/* float8out_internal */
@@ -2350,6 +2349,7 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 		double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
+		ArrayType *array;
 
 		if (PG_ARGISNULL(2))
 			elog(ERROR, "compression must not be NULL");
@@ -2362,21 +2362,24 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 		if (PG_ARGISNULL(3))
 			elog(ERROR, "percentiles must not be NULL");
 
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		percentiles = array_to_double(fcinfo,
-									  PG_GETARG_ARRAYTYPE_P(3),
+		/* process the input array in caller's memory context */
+		array = PG_GETARG_ARRAYTYPE_P(3);
+		percentiles = array_to_double(fcinfo, array,
 									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		state = tdigest_aggstate_allocate(npercentiles, 0, compression, 0);
 
 		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
 
-		pfree(percentiles);
-
 		MemoryContextSwitchTo(oldcontext);
+
+		/* free the parsed data, possibly detoasted copy of the array */
+		pfree(percentiles);
+		PG_FREE_IF_COPY(array, 3);
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
@@ -2425,6 +2428,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 		double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
+		ArrayType *array;
 
 		if (PG_ARGISNULL(3))
 			elog(ERROR, "compression must not be NULL");
@@ -2437,21 +2441,24 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 		if (PG_ARGISNULL(4))
 			elog(ERROR, "percentiles must not be NULL");
 
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		percentiles = array_to_double(fcinfo,
-									  PG_GETARG_ARRAYTYPE_P(4),
+		/* process the input array in caller's memory context */
+		array = PG_GETARG_ARRAYTYPE_P(4);
+		percentiles = array_to_double(fcinfo, array,
 									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		state = tdigest_aggstate_allocate(npercentiles, 0, compression, 0);
 
 		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
 
-		pfree(percentiles);
-
 		MemoryContextSwitchTo(oldcontext);
+
+		/* free the parsed data, possibly detoasted copy of the array */
+		pfree(percentiles);
+		PG_FREE_IF_COPY(array, 4);
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
@@ -2534,6 +2541,7 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 		double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
+		ArrayType *array;
 
 		if (PG_ARGISNULL(2))
 			elog(ERROR, "compression must not be NULL");
@@ -2546,19 +2554,22 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 		if (PG_ARGISNULL(3))
 			elog(ERROR, "values must not be NULL");
 
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		values = array_to_double(fcinfo,
-								 PG_GETARG_ARRAYTYPE_P(3),
+		/* process the input array in caller's memory context */
+		array = PG_GETARG_ARRAYTYPE_P(3);
+		values = array_to_double(fcinfo, array,
 								 "a value", &nvalues);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		state = tdigest_aggstate_allocate(0, nvalues, compression, 0);
 
 		memcpy(state->values, values, sizeof(double) * nvalues);
 
-		pfree(values);
-
 		MemoryContextSwitchTo(oldcontext);
+
+		/* free the parsed data, possibly detoasted copy of the array */
+		pfree(values);
+		PG_FREE_IF_COPY(array, 3);
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
@@ -2607,6 +2618,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 		double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
+		ArrayType *array;
 
 		if (PG_ARGISNULL(3))
 			elog(ERROR, "compression must not be NULL");
@@ -2619,19 +2631,22 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 		if (PG_ARGISNULL(4))
 			elog(ERROR, "values must not be NULL");
 
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		values = array_to_double(fcinfo,
-								 PG_GETARG_ARRAYTYPE_P(4),
+		/* process the input array in caller's memory context */
+		array = PG_GETARG_ARRAYTYPE_P(4);
+		values = array_to_double(fcinfo, array,
 								 "a value", &nvalues);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		state = tdigest_aggstate_allocate(0, nvalues, compression, 0);
 
 		memcpy(state->values, values, sizeof(double) * nvalues);
 
-		pfree(values);
-
 		MemoryContextSwitchTo(oldcontext);
+
+		/* free the parsed data, possibly detoasted copy of the array */
+		pfree(values);
+		PG_FREE_IF_COPY(array, 4);
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
@@ -2720,27 +2735,31 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		double *percentiles;
 		int		npercentiles;
 		MemoryContext	oldcontext;
+		ArrayType *array;
 
 		/* Percentiles are required in order to create the aggregate state. */
 		if (PG_ARGISNULL(2))
 			elog(ERROR, "percentiles must not be NULL");
 
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		percentiles = array_to_double(fcinfo,
-									  PG_GETARG_ARRAYTYPE_P(2),
+		/* process the input array in caller's memory context */
+		array = PG_GETARG_ARRAYTYPE_P(2);
+		percentiles = array_to_double(fcinfo, array,
 									  "a percentile value", &npercentiles);
 
 		check_percentiles(percentiles, npercentiles);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression,
 										  digest->ncentroids);
 
 		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
 
-		pfree(percentiles);
-
 		MemoryContextSwitchTo(oldcontext);
+
+		/* free the parsed data, possibly detoasted copy of the array */
+		pfree(percentiles);
+		PG_FREE_IF_COPY(array, 2);
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
@@ -2805,25 +2824,29 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		double *values;
 		int		nvalues;
 		MemoryContext	oldcontext;
+		ArrayType *array;
 
 		/* Values are required in order to create the aggregate state. */
 		if (PG_ARGISNULL(2))
 			elog(ERROR, "values must not be NULL");
 
-		oldcontext = MemoryContextSwitchTo(aggcontext);
-
-		values = array_to_double(fcinfo,
-								 PG_GETARG_ARRAYTYPE_P(2),
+		/* process the input array in caller's memory context */
+		array = PG_GETARG_ARRAYTYPE_P(2);
+		values = array_to_double(fcinfo, array,
 								 "a value", &nvalues);
+
+		oldcontext = MemoryContextSwitchTo(aggcontext);
 
 		state = tdigest_aggstate_allocate(0, nvalues, digest->compression,
 										  digest->ncentroids);
 
 		memcpy(state->values, values, sizeof(double) * nvalues);
 
-		pfree(values);
-
 		MemoryContextSwitchTo(oldcontext);
+
+		/* free the parsed data, possibly detoasted copy of the array */
+		pfree(values);
+		PG_FREE_IF_COPY(array, 2);
 	}
 	else
 		state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
@@ -4883,6 +4906,8 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
  * when reporting a NULL element. The callers pass arrays of different things
  * (percentiles, hypothetical values, values to add to a digest), and a message
  * naming the wrong one points at the wrong argument.
+ *
+ * The caller owns the returned copy.
  */
 static double *
 array_to_double(FunctionCallInfo fcinfo, ArrayType *v, const char *what, int *len)
@@ -4892,15 +4917,6 @@ array_to_double(FunctionCallInfo fcinfo, ArrayType *v, const char *what, int *le
 		   *dims,
 			ndims;
 	Oid		element_type;
-	int16	typlen;
-	bool	typbyval;
-	char	typalign;
-	int		i;
-
-	/* deconstruct_array */
-	Datum	   *elements;
-	bool	   *nulls;
-	int			nelements;
 
 	ndims = ARR_NDIM(v);
 	dims = ARR_DIMS(v);
@@ -4925,26 +4941,14 @@ array_to_double(FunctionCallInfo fcinfo, ArrayType *v, const char *what, int *le
 	if (element_type != FLOAT8OID)
 		elog(ERROR, "array_to_double expects FLOAT8 array");
 
-	/* allocate space for enough elements */
-	result = (double*) palloc(nitems * sizeof(double));
+	if (array_contains_nulls(v))
+		elog(ERROR, "NULL not allowed as %s", what);
 
-	get_typlenbyvalalign(element_type, &typlen, &typbyval, &typalign);
+	/* Non-NULL float8 elements have the same layout as a C double array. */
+	result = (double *) palloc(nitems * sizeof(double));
+	memcpy(result, ARR_DATA_PTR(v), nitems * sizeof(double));
 
-	deconstruct_array(v, element_type, typlen, typbyval, typalign,
-					  &elements, &nulls, &nelements);
-
-	/* we should get the same counts here */
-	Assert(nelements == nitems);
-
-	for (i = 0; i < nelements; i++)
-	{
-		if (nulls[i])
-			elog(ERROR, "NULL not allowed as %s", what);
-
-		result[i] = DatumGetFloat8(elements[i]);
-	}
-
-	(*len) = nelements;
+	(*len) = nitems;
 
 	return result;
 }
