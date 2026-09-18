@@ -1,0 +1,53 @@
+-- check the number of batches and amount of memory used by the HashAgg node
+CREATE FUNCTION check_memory_usage(text) RETURNS TABLE (nbatches INT, memorykb INT)
+LANGUAGE plpgsql AS
+$$
+DECLARE
+    ln TEXT;
+    tmp TEXT[];
+    found_match BOOL := false;
+BEGIN
+    FOR LN IN
+        EXECUTE format('EXPLAIN ANALYZE %s', $1)
+    LOOP
+        IF NOT found_match THEN
+            tmp := regexp_match(ln, '.*Batches: (\d*) .* Memory Usage: (\d*)')kB;
+            IF tmp IS NOT NULL THEN
+                found_match := true;
+                RETURN query SELECT tmp[1]::int, tmp[2]::int;
+            END IF;
+        END IF;
+    END LOOP;
+END;
+$$;
+-- make sure we use hash aggregate, with a single batch
+SET max_parallel_workers_per_gather = 0;
+SET work_mem = '256MB';
+SET enable_hashagg = on;
+SET enable_sort = off;
+-- tiny table with just 256 rows
+CREATE TABLE tdigest_memory AS
+SELECT i % 128 AS g, i::float8 AS v
+FROM generate_series(1, 256) AS s(i);
+ANALYZE tdigest_memory;
+-- check we're actually using hash aggregate
+EXPLAIN (COSTS OFF) SELECT g, tdigest_count(tdigest(v, 10000)) AS count FROM tdigest_memory GROUP BY g;
+            QUERY PLAN            
+----------------------------------
+ HashAggregate
+   Group Key: g
+   ->  Seq Scan on tdigest_memory
+(3 rows)
+
+-- Hash aggregation holds all 128 groups at once: single batch should be enough,
+-- and we compare the memory to 200kB, in case older releases or some platforms
+-- happen to use a bit more memory etc.
+SELECT (nbatches = 1) AS batches_ok, (memorykb < 200) AS memory_ok
+  FROM check_memory_usage('SELECT g, tdigest_count(tdigest(v, 10000)) AS count FROM tdigest_memory GROUP BY g');
+ batches_ok | memory_ok 
+------------+-----------
+ t          | t
+(1 row)
+
+DROP TABLE tdigest_memory;
+DROP FUNCTION check_memory_usage;

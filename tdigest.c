@@ -83,6 +83,7 @@ typedef struct tdigest_aggstate_t {
 	int64		count;			/* number of samples in the digest */
 	int			ncompactions;	/* number of merges/compactions */
 	int			compression;	/* compression parameter */
+	int			maxcentroids;	/* capacity of the centroids buffer */
 	int			ncentroids;		/* number of centroids */
 	int			ncompacted;		/* compacted part */
 	/* array of requested percentiles and values */
@@ -150,6 +151,7 @@ tdigest_detoast(Datum datum)
  * and memory usage.
  */
 #define	BUFFER_SIZE(compression)	(10 * (compression))
+#define	BUFFER_INITIAL_SIZE		16
 #define AssertBounds(index, length) Assert((index) >= 0 && (index) < (length))
 
 #define MIN_COMPRESSION		10
@@ -334,6 +336,8 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 	Assert(state->count >= 0);
 
 	Assert(state->ncentroids >= 0);
+	Assert(state->ncentroids <= state->maxcentroids);
+	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
 	Assert(state->ncentroids <= BUFFER_SIZE(state->compression));
 
 	cnt = 0;
@@ -1257,6 +1261,32 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 	}
 }
 
+/*
+ * Make sure the aggregate state has space for more centroids. Double the
+ * capacity up to the allowed maximum determined by the compression.
+ */
+static void
+tdigest_aggstate_enlarge(tdigest_aggstate_t *state)
+{
+	Assert(state->ncentroids <= state->maxcentroids);
+	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
+
+	/* only enlarge if actually full */
+	if (state->ncentroids < state->maxcentroids)
+		return;
+
+	/* double the capacity, but cap it to BUFFER_SIZE */
+	state->maxcentroids = Min(2 * state->maxcentroids,
+							  BUFFER_SIZE(state->compression));
+
+	/* repalloc keeps the buffer in its original memory context */
+	state->centroids = repalloc(state->centroids,
+								state->maxcentroids * sizeof(centroid_t));
+
+	/* make sure we have space for the value */
+	Assert(state->ncentroids < state->maxcentroids);
+	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
+}
 
 /* add a value to the t-digest, trigger a compaction if full */
 static void
@@ -1277,8 +1307,8 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 	if (state->ncentroids == BUFFER_SIZE(compression))
 		tdigest_compact(state);
 
-	/* make sure we have space for the value */
-	Assert(state->ncentroids < BUFFER_SIZE(compression));
+	/* ensure there's free space in the aggregate state */
+	tdigest_aggstate_enlarge(state);
 
 	/* for a single point, the value is both sum and mean */
 	state->centroids[state->ncentroids].count = 1;
@@ -1311,8 +1341,8 @@ tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 	if (state->ncentroids == BUFFER_SIZE(compression))
 		tdigest_compact(state);
 
-	/* make sure we have space for the value */
-	Assert(state->ncentroids < BUFFER_SIZE(compression));
+	/* ensure there's free space in the aggregate state */
+	tdigest_aggstate_enlarge(state);
 
 	state->centroids[state->ncentroids].count = count;
 	state->centroids[state->ncentroids].mean = mean;
@@ -1465,11 +1495,13 @@ tdigest_sort_digest(tdigest_t *digest)
 }
 
 /*
- * allocate a tdigest aggregate state, along with space for percentile(s)
- * and value(s) requested when calling the aggregate function
+ * Allocate a tdigest aggregate state and its query parameters. The centroid
+ * buffer grows separately, leaving the state pointer stable for the executor.
+ * ncentroids is an initial capacity hint, not the number of populated slots.
  */
 static tdigest_aggstate_t *
-tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression)
+tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression,
+						  int ncentroids)
 {
 	Size				len;
 	tdigest_aggstate_t *state;
@@ -1477,15 +1509,15 @@ tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression)
 
 	/* at least one of those values is 0 */
 	Assert(nvalues == 0 || npercentiles == 0);
+	Assert(ncentroids >= 0 && ncentroids <= BUFFER_SIZE(compression));
 
 	/*
 	 * Allocate a single chunk for the struct, the optional percentile or
-	 * hypothetical-value array, and the centroid buffer.
+	 * hypothetical-value array.
 	 */
 	len = MAXALIGN(sizeof(tdigest_aggstate_t)) +
 		  MAXALIGN(sizeof(double) * npercentiles) +
-		  MAXALIGN(sizeof(double) * nvalues) +
-		  (BUFFER_SIZE(compression) * sizeof(centroid_t));
+		  MAXALIGN(sizeof(double) * nvalues);
 
 	ptr = palloc0(len);
 
@@ -1508,12 +1540,19 @@ tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression)
 		ptr += MAXALIGN(sizeof(double) * nvalues);
 	}
 
-	state->centroids = (centroid_t *) ptr;
-	ptr += (BUFFER_SIZE(compression) * sizeof(centroid_t));
-
 	Assert(ptr == (char *) state + len);
 
+	state->maxcentroids = Max(BUFFER_INITIAL_SIZE, ncentroids);
+	state->centroids = palloc(state->maxcentroids * sizeof(centroid_t));
+
 	return state;
+}
+
+static void
+tdigest_aggstate_free(tdigest_aggstate_t *state)
+{
+	pfree(state->centroids);
+	pfree(state);
 }
 
 static tdigest_t *
@@ -1641,7 +1680,7 @@ tdigest_add_double(PG_FUNCTION_ARGS)
 			check_percentiles(percentiles, npercentiles);
 		}
 
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression, 0);
 
 		if (percentiles)
 		{
@@ -1855,7 +1894,7 @@ tdigest_add_double_count(PG_FUNCTION_ARGS)
 			check_percentiles(percentiles, npercentiles);
 		}
 
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression, 0);
 
 		if (percentiles)
 		{
@@ -1964,7 +2003,7 @@ tdigest_add_double_values(PG_FUNCTION_ARGS)
 			nvalues = 1;
 		}
 
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
+		state = tdigest_aggstate_allocate(0, nvalues, compression, 0);
 
 		if (values)
 		{
@@ -2042,7 +2081,7 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 			nvalues = 1;
 		}
 
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
+		state = tdigest_aggstate_allocate(0, nvalues, compression, 0);
 
 		if (values)
 		{
@@ -2153,7 +2192,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 			check_percentiles(percentiles, npercentiles);
 		}
 
-		state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression);
+		state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression,
+										  digest->ncentroids);
 
 		if (percentiles)
 		{
@@ -2242,7 +2282,8 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 			nvalues = 1;
 		}
 
-		state = tdigest_aggstate_allocate(0, nvalues, digest->compression);
+		state = tdigest_aggstate_allocate(0, nvalues, digest->compression,
+										  digest->ncentroids);
 
 		if (values)
 		{
@@ -2329,7 +2370,7 @@ tdigest_add_double_array(PG_FUNCTION_ARGS)
 
 		check_percentiles(percentiles, npercentiles);
 
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression, 0);
 
 		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
 
@@ -2404,7 +2445,7 @@ tdigest_add_double_array_count(PG_FUNCTION_ARGS)
 
 		check_percentiles(percentiles, npercentiles);
 
-		state = tdigest_aggstate_allocate(npercentiles, 0, compression);
+		state = tdigest_aggstate_allocate(npercentiles, 0, compression, 0);
 
 		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
 
@@ -2511,7 +2552,7 @@ tdigest_add_double_array_values(PG_FUNCTION_ARGS)
 								 PG_GETARG_ARRAYTYPE_P(3),
 								 "a value", &nvalues);
 
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
+		state = tdigest_aggstate_allocate(0, nvalues, compression, 0);
 
 		memcpy(state->values, values, sizeof(double) * nvalues);
 
@@ -2584,7 +2625,7 @@ tdigest_add_double_array_values_count(PG_FUNCTION_ARGS)
 								 PG_GETARG_ARRAYTYPE_P(4),
 								 "a value", &nvalues);
 
-		state = tdigest_aggstate_allocate(0, nvalues, compression);
+		state = tdigest_aggstate_allocate(0, nvalues, compression, 0);
 
 		memcpy(state->values, values, sizeof(double) * nvalues);
 
@@ -2692,7 +2733,8 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 
 		check_percentiles(percentiles, npercentiles);
 
-		state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression);
+		state = tdigest_aggstate_allocate(npercentiles, 0, digest->compression,
+										  digest->ncentroids);
 
 		memcpy(state->percentiles, percentiles, sizeof(double) * npercentiles);
 
@@ -2774,7 +2816,8 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 								 PG_GETARG_ARRAYTYPE_P(2),
 								 "a value", &nvalues);
 
-		state = tdigest_aggstate_allocate(0, nvalues, digest->compression);
+		state = tdigest_aggstate_allocate(0, nvalues, digest->compression,
+										  digest->ncentroids);
 
 		memcpy(state->values, values, sizeof(double) * nvalues);
 
@@ -2832,7 +2875,7 @@ tdigest_percentiles(PG_FUNCTION_ARGS)
 
 		tdigest_compute_quantiles(copy, &ret);
 
-		pfree(copy);
+		tdigest_aggstate_free(copy);
 	}
 	else
 		tdigest_compute_quantiles(state, &ret);
@@ -2868,7 +2911,7 @@ tdigest_percentiles_of(PG_FUNCTION_ARGS)
 
 		tdigest_compute_quantiles_of(copy, &ret);
 
-		pfree(copy);
+		tdigest_aggstate_free(copy);
 	}
 	else
 		tdigest_compute_quantiles_of(state, &ret);
@@ -2905,7 +2948,7 @@ tdigest_digest(PG_FUNCTION_ARGS)
 	digest = tdigest_aggstate_to_digest(state, true);
 
 	if (shared)
-		pfree(state);
+		tdigest_aggstate_free(state);
 
 	PG_RETURN_POINTER(digest);
 }
@@ -2940,7 +2983,7 @@ tdigest_array_percentiles(PG_FUNCTION_ARGS)
 
 		tdigest_compute_quantiles(copy, result);
 
-		pfree(copy);
+		tdigest_aggstate_free(copy);
 	}
 	else
 		tdigest_compute_quantiles(state, result);
@@ -2978,7 +3021,7 @@ tdigest_array_percentiles_of(PG_FUNCTION_ARGS)
 
 		tdigest_compute_quantiles_of(copy, result);
 
-		pfree(copy);
+		tdigest_aggstate_free(copy);
 	}
 	else
 		tdigest_compute_quantiles_of(state, result);
@@ -3068,7 +3111,7 @@ tdigest_deserial(PG_FUNCTION_ARGS)
 	}
 
 	state = tdigest_aggstate_allocate(tmp.npercentiles, tmp.nvalues,
-									  tmp.compression);
+									  tmp.compression, tmp.ncentroids);
 
 	if (tmp.npercentiles > 0)
 	{
@@ -3082,8 +3125,20 @@ tdigest_deserial(PG_FUNCTION_ARGS)
 		pfree(values);
 	}
 
-	/* copy the data into the newly-allocated state */
-	memcpy(state, &tmp, offsetof(tdigest_aggstate_t, percentiles));
+	/*
+	 * copy the aggstate header (except for the maxcentroids, which would
+	 * corrupt the aggstate we just allocated)
+	 */
+	state->count = tmp.count;
+	state->ncompactions = tmp.ncompactions;
+	state->compression = tmp.compression;
+	/* skip maxcentroids */
+	state->ncentroids = tmp.ncentroids;
+	state->ncompacted = tmp.ncompacted;
+	state->npercentiles = tmp.npercentiles;
+	state->nvalues = tmp.nvalues;
+	state->trim_low = tmp.trim_low;
+	state->trim_high = tmp.trim_high;
 	/* we don't need to move the pointer */
 
 	/* copy the centroids back */
@@ -3100,9 +3155,22 @@ tdigest_copy(tdigest_aggstate_t *state)
 	tdigest_aggstate_t *copy;
 
 	copy = tdigest_aggstate_allocate(state->npercentiles, state->nvalues,
-									 state->compression);
+									 state->compression, state->ncentroids);
 
-	memcpy(copy, state, offsetof(tdigest_aggstate_t, percentiles));
+	/*
+	 * copy the aggstate header (except for the maxcentroids, which would
+	 * corrupt the aggstate we just allocated)
+	 */
+	copy->count = state->count;
+	copy->ncompactions = state->ncompactions;
+	copy->compression = state->compression;
+	/* skip maxcentroids */
+	copy->ncentroids = state->ncentroids;
+	copy->ncompacted = state->ncompacted;
+	copy->npercentiles = state->npercentiles;
+	copy->nvalues = state->nvalues;
+	copy->trim_low = state->trim_low;
+	copy->trim_high = state->trim_high;
 
 	if (state->nvalues > 0)
 		memcpy(copy->values, state->values,
@@ -3196,7 +3264,8 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 	/* make sure we get digest with the new format */
 	digest = tdigest_update_format(digest);
 
-	state = tdigest_aggstate_allocate(0, 0, digest->compression);
+	state = tdigest_aggstate_allocate(0, 0, digest->compression,
+									  digest->ncentroids);
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
@@ -3269,7 +3338,7 @@ tdigest_add_double_increment(PG_FUNCTION_ARGS)
 
 		check_compression(compression);
 
-		state = tdigest_aggstate_allocate(0, 0, compression);
+		state = tdigest_aggstate_allocate(0, 0, compression, 0);
 	}
 	else
 		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
@@ -3339,7 +3408,7 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 
 		check_compression(compression);
 
-		state = tdigest_aggstate_allocate(0, 0, compression);
+		state = tdigest_aggstate_allocate(0, 0, compression, 0);
 	}
 	else
 		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
@@ -4211,7 +4280,7 @@ tdigest_add_double_trimmed(PG_FUNCTION_ARGS)
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		state = tdigest_aggstate_allocate(0, 0, compression);
+		state = tdigest_aggstate_allocate(0, 0, compression, 0);
 		state->trim_low = low;
 		state->trim_high = high;
 
@@ -4279,7 +4348,7 @@ tdigest_add_double_count_trimmed(PG_FUNCTION_ARGS)
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
 
-		state = tdigest_aggstate_allocate(0, 0, compression);
+		state = tdigest_aggstate_allocate(0, 0, compression, 0);
 		state->trim_low = low;
 		state->trim_high = high;
 
@@ -4378,7 +4447,8 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 		check_trim_values(low, high);
 
 		oldcontext = MemoryContextSwitchTo(aggcontext);
-		state = tdigest_aggstate_allocate(0, 0, digest->compression);
+		state = tdigest_aggstate_allocate(0, 0, digest->compression,
+										  digest->ncentroids);
 		state->trim_low = low;
 		state->trim_high = high;
 
