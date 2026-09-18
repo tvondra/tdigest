@@ -3101,42 +3101,24 @@ tdigest_deserial(PG_FUNCTION_ARGS)
 	char   *ptr = VARDATA_ANY(v);
 	tdigest_aggstate_t	tmp;
 	tdigest_aggstate_t *state;
-	double			   *percentiles = NULL;
-	double			   *values = NULL;
 
 	/* copy aggstate header into a local variable */
 	memcpy(&tmp, ptr, offsetof(tdigest_aggstate_t, percentiles));
 	ptr += offsetof(tdigest_aggstate_t, percentiles);
-
-	/* allocate and copy percentiles */
-	if (tmp.npercentiles > 0)
-	{
-		percentiles = palloc(tmp.npercentiles * sizeof(double));
-		memcpy(percentiles, ptr, tmp.npercentiles * sizeof(double));
-		ptr += tmp.npercentiles * sizeof(double);
-	}
-
-	/* allocate and copy values */
-	if (tmp.nvalues > 0)
-	{
-		values = palloc(tmp.nvalues * sizeof(double));
-		memcpy(values, ptr, tmp.nvalues * sizeof(double));
-		ptr += tmp.nvalues * sizeof(double);
-	}
 
 	state = tdigest_aggstate_allocate(tmp.npercentiles, tmp.nvalues,
 									  tmp.compression, tmp.ncentroids);
 
 	if (tmp.npercentiles > 0)
 	{
-		memcpy(state->percentiles, percentiles, tmp.npercentiles * sizeof(double));
-		pfree(percentiles);
+		memcpy(state->percentiles, ptr, tmp.npercentiles * sizeof(double));
+		ptr += tmp.npercentiles * sizeof(double);
 	}
 
 	if (tmp.nvalues > 0)
 	{
-		memcpy(state->values, values, tmp.nvalues * sizeof(double));
-		pfree(values);
+		memcpy(state->values, ptr, tmp.nvalues * sizeof(double));
+		ptr += tmp.nvalues * sizeof(double);
 	}
 
 	/*
@@ -3159,6 +3141,8 @@ tdigest_deserial(PG_FUNCTION_ARGS)
 	memcpy(state->centroids, ptr,
 		   sizeof(centroid_t) * state->ncentroids);
 	ptr += sizeof(centroid_t) * state->ncentroids;
+
+	Assert(ptr == VARDATA_ANY(v) + VARSIZE_ANY_EXHDR(v));
 
 	PG_RETURN_POINTER(state);
 }
