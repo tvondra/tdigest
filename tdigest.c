@@ -1387,36 +1387,19 @@ tdigest_allocate(int ncentroids)
  * Switches the centroids from (sum,count) to (mean,count), so that all
  * the places processing centroids can use just the new format.
  *
- * If the digest already uses the new format, this is a no-op. Otherwise
- * a modified copy of the digest is returned.
- *
- * XXX This does not affect on-disk representation of existing digests,
- * we create just an in-memory version of the digest. Only when the
- * digest gets modified a new format will be written back.
+ * The caller must own the value before converting a legacy digest, and
+ * the digest is modified in place (without creating a copy). Current
+ * format values are left untouched.
  */
-static tdigest_t *
+static void
 tdigest_update_format(tdigest_t *digest)
 {
 	int		i;
-	int		s;
-	char   *ptr;
 
 	/* if already new format, we're done */
 	if (digest->flags & TDIGEST_STORES_MEAN)
-		return digest;
+		return;
 
-	/*
-	 * We'll convert the digest so that centroids use means, but we must
-	 * not modify the input digest - it might be just a pointer to data
-	 * buffer, or something like that. So we have to create a copy first.
-	 */
-	s = VARSIZE_ANY(digest);
-	ptr = palloc(s);
-	memcpy(ptr, digest, s);
-
-	digest = (tdigest_t *) ptr;
-
-	/* And now tweak the contents of the copy. */
 	for (i = 0; i < digest->ncentroids; i++)
 	{
 		CHECK_FOR_INTERRUPTS();
@@ -1426,38 +1409,45 @@ tdigest_update_format(tdigest_t *digest)
 	}
 
 	digest->flags |= TDIGEST_STORES_MEAN;
-
-	return digest;
 }
 
 /*
- * tdigest_sort_digest
- *		Make sure the centroids of the digest are sorted by mean.
+ * tdigest_prepare
+ *		Prepare the digest for additional processing (adding values, ...).
+ *
+ * Detoast, align and normalize a digest, optionally sorting its centroids.
  *
  * Digests with the centroids in an arbitrary order are perfectly valid - the
  * incremental API can leave digests uncompacted (and possibly unsorted) when
  * compact is false, and the input functions accept such digests too. So the
  * places walking the centroids in mean order have to do the sort themselves.
  *
- * If the digest is already sorted, this is a no-op. Otherwise a sorted copy of
- * the digest is returned - we must not sort the digest in place, it might be
- * just a pointer to a data buffer, or something like that.
- *
- * Expects a digest in the new format, i.e. with centroids storing means (see
- * tdigest_update_format).
- *
- * XXX It's a bit wasteful to do the sort over and over, even for on-disk digests
- * that are perfectly sorted. It should be possible to have a TDIGEST_SORTED flag
- * tracking when a digest is already sorted, and skip the sort.
+ * Reuse an owned detoasted/aligned copy for conversion and sorting. Otherwise
+ * copy only before the first modification. The returned value is either the
+ * original datum or one owned allocation, releasable with PG_FREE_IF_COPY.
  */
 static tdigest_t *
-tdigest_sort_digest(tdigest_t *digest)
+tdigest_prepare(Datum datum, bool sort)
 {
+	tdigest_t *digest = tdigest_detoast(datum);
 	int		i;
-	int		s;
-	char   *ptr;
 
-	Assert(digest->flags & TDIGEST_STORES_MEAN);
+	/*
+	 * If the digest uses the old format, switch to the new one (and make
+	 * sure we have a copy, as required by tdigest_update_format).
+	 */
+	if (!(digest->flags & TDIGEST_STORES_MEAN))
+	{
+		/* if not a copy already, make one */
+		if ((Pointer) digest == DatumGetPointer(datum))
+			digest = (tdigest_t *) PG_DETOAST_DATUM_COPY(datum);
+
+		tdigest_update_format(digest);
+	}
+
+	/* if not requested to sort centroids, we're done */
+	if (!sort)
+		return digest;
 
 	/* if the centroids are already sorted, we're done */
 	for (i = 1; i < digest->ncentroids; i++)
@@ -1477,15 +1467,9 @@ tdigest_sort_digest(tdigest_t *digest)
 	if (i >= digest->ncentroids)
 		return digest;
 
-	/*
-	 * Create a fresh copy of the digest, not to break the current one (which
-	 * may even be persistent on disk).
-	 */
-	s = VARSIZE_ANY(digest);
-	ptr = palloc(s);
-	memcpy(ptr, digest, s);
-
-	digest = (tdigest_t *) ptr;
+	/* if not a copy already, make one */
+	if ((Pointer) digest == DatumGetPointer(datum))
+		digest = (tdigest_t *) PG_DETOAST_DATUM_COPY(datum);
 
 	tdigest_sort_centroids(digest->centroids, digest->ncentroids,
 						   digest->count);
@@ -2163,10 +2147,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = PG_GETARG_TDIGEST(1);
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
+	/* make sure we have a detoasted copy */
+	digest = tdigest_prepare(PG_GETARG_DATUM(1), false);
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -2222,6 +2204,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 
 	AssertCheckTDigestAggState(state);
 
+	PG_FREE_IF_COPY(digest, 1);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -2255,10 +2239,8 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = PG_GETARG_TDIGEST(1);
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
+	/* make sure we have a detoasted copy */
+	digest = tdigest_prepare(PG_GETARG_DATUM(1), false);
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -2310,6 +2292,8 @@ tdigest_add_digest_values(PG_FUNCTION_ARGS)
 	}
 
 	AssertCheckTDigestAggState(state);
+
+	PG_FREE_IF_COPY(digest, 1);
 
 	PG_RETURN_POINTER(state);
 }
@@ -2724,10 +2708,8 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = PG_GETARG_TDIGEST(1);
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
+	/* make sure we have a detoasted copy */
+	digest = tdigest_prepare(PG_GETARG_DATUM(1), false);
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -2780,6 +2762,8 @@ tdigest_add_digest_array(PG_FUNCTION_ARGS)
 
 	AssertCheckTDigestAggState(state);
 
+	PG_FREE_IF_COPY(digest, 1);
+
 	PG_RETURN_POINTER(state);
 }
 
@@ -2813,10 +2797,8 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = PG_GETARG_TDIGEST(1);
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
+	/* make sure we have a detoasted copy */
+	digest = tdigest_prepare(PG_GETARG_DATUM(1), false);
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -2866,6 +2848,8 @@ tdigest_add_digest_array_values(PG_FUNCTION_ARGS)
 	}
 
 	AssertCheckTDigestAggState(state);
+
+	PG_FREE_IF_COPY(digest, 1);
 
 	PG_RETURN_POINTER(state);
 }
@@ -3284,8 +3268,11 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 	int					i;
 	tdigest_aggstate_t *state;
 
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
+	/*
+	 * The digest should have gone through tdigest_prepare(), which means
+	 * we should have a local copy in the new format.
+	 */
+	Assert(digest->flags & TDIGEST_STORES_MEAN);
 
 	state = tdigest_aggstate_allocate(0, 0, digest->compression,
 									  digest->ncentroids);
@@ -3324,6 +3311,7 @@ Datum
 tdigest_add_double_increment(PG_FUNCTION_ARGS)
 {
 	tdigest_aggstate_t *state;
+	tdigest_t		   *result;
 	bool				compact;
 
 	/* the flag determines whether the result gets compacted */
@@ -3364,13 +3352,23 @@ tdigest_add_double_increment(PG_FUNCTION_ARGS)
 		state = tdigest_aggstate_allocate(0, 0, compression, 0);
 	}
 	else
-		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
+	{
+		tdigest_t *digest;
+
+		digest = tdigest_prepare(PG_GETARG_DATUM(0), false);
+		state = tdigest_digest_to_aggstate(digest);
+
+		PG_FREE_IF_COPY(digest, 0);
+	}
 
 	tdigest_add(state, PG_GETARG_FLOAT8(1));
 
 	AssertCheckTDigestAggState(state);
 
-	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
+	result = tdigest_aggstate_to_digest(state, compact);
+	tdigest_aggstate_free(state);
+
+	PG_RETURN_POINTER(result);
 }
 
 /*
@@ -3391,7 +3389,9 @@ Datum
 tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 {
 	tdigest_aggstate_t *state;
+	tdigest_t		   *result;
 	bool				compact;
+	ArrayType		   *array;
 	double			   *values;
 	int					nvalues;
 	int					i;
@@ -3434,18 +3434,31 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 		state = tdigest_aggstate_allocate(0, 0, compression, 0);
 	}
 	else
-		state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
+	{
+		tdigest_t *digest;
 
-	values = array_to_double(fcinfo,
-							 PG_GETARG_ARRAYTYPE_P(1),
+		digest = tdigest_prepare(PG_GETARG_DATUM(0), false);
+		state = tdigest_digest_to_aggstate(digest);
+
+		PG_FREE_IF_COPY(digest, 0);
+	}
+
+	array = PG_GETARG_ARRAYTYPE_P(1);
+	values = array_to_double(fcinfo, array,
 							 "an element", &nvalues);
 
 	for (i = 0; i < nvalues; i++)
 		tdigest_add(state, values[i]);
 
+	pfree(values);
+	PG_FREE_IF_COPY(array, 1);
+
 	AssertCheckTDigestAggState(state);
 
-	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
+	result = tdigest_aggstate_to_digest(state, compact);
+	tdigest_aggstate_free(state);
+
+	PG_RETURN_POINTER(result);
 }
 
 /*
@@ -3465,6 +3478,7 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 	int					i;
 	tdigest_aggstate_t *state;
 	tdigest_t		   *digest;
+	tdigest_t		   *result;
 	bool				compact;
 
 	/* the flag determines whether the result gets compacted */
@@ -3483,14 +3497,15 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 	/* now we know both arguments are non-null */
 
 	/* parse the first digest (we'll merge the other one into this) */
-	state = tdigest_digest_to_aggstate(PG_GETARG_TDIGEST(0));
+	digest = tdigest_prepare(PG_GETARG_DATUM(0), false);
+	state = tdigest_digest_to_aggstate(digest);
+
+	PG_FREE_IF_COPY(digest, 0);
+
 	AssertCheckTDigestAggState(state);
 
 	/* parse the second digest */
-	digest = PG_GETARG_TDIGEST(1);
-
-	/* make sure we get a digest with the new format */
-	digest = tdigest_update_format(digest);
+	digest = tdigest_prepare(PG_GETARG_DATUM(1), false);
 
 	AssertCheckTDigest(digest);
 
@@ -3503,9 +3518,14 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 									digest->centroids[i].count);
 	}
 
+	PG_FREE_IF_COPY(digest, 1);
+
 	AssertCheckTDigestAggState(state);
 
-	PG_RETURN_POINTER(tdigest_aggstate_to_digest(state, compact));
+	result = tdigest_aggstate_to_digest(state, compact);
+	tdigest_aggstate_free(state);
+
+	PG_RETURN_POINTER(result);
 }
 
 
@@ -3823,7 +3843,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 	 * Make sure we return digest with the new format (it might be the
 	 * old format, in which case "mean" fields actually store "sum").
 	 */
-	digest = tdigest_update_format(digest);
+	tdigest_update_format(digest);
 
 	AssertCheckTDigest(digest);
 
@@ -3861,6 +3881,7 @@ tdigest_out(PG_FUNCTION_ARGS)
 		pfree(tmp);
 	}
 
+	PG_FREE_IF_COPY(digest, 0);
 	PG_RETURN_CSTRING(str.data);
 }
 
@@ -3961,7 +3982,7 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	 * Make sure we return digest with the new format (it might be the
 	 * old format, in which case "mean" fields actually store "sum").
 	 */
-	digest = tdigest_update_format(digest);
+	tdigest_update_format(digest);
 
 	AssertCheckTDigest(digest);
 
@@ -3990,6 +4011,7 @@ tdigest_send(PG_FUNCTION_ARGS)
 		pq_sendint64(&buf, digest->centroids[i].count);
 	}
 
+	PG_FREE_IF_COPY(digest, 0);
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
 
@@ -4016,14 +4038,13 @@ tdigest_send(PG_FUNCTION_ARGS)
  *
  * XXX Keep this in sync with the checks in tdigest_in and tdigest_recv.
  */
-Datum
-tdigest_is_valid(PG_FUNCTION_ARGS)
+static bool
+tdigest_is_valid_internal(tdigest_t *digest)
 {
 	int			i;
 	int64		total_count;
 	Size		vlen;
 	Size		expected;
-	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
 
 	vlen = VARSIZE_ANY(digest);
 
@@ -4032,24 +4053,24 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 	 * describing the rest of the value.
 	 */
 	if (vlen < offsetof(tdigest_t, centroids))
-		PG_RETURN_BOOL(false);
+		return false;
 
 	/* make sure the t-digest format is supported */
 	if ((digest->flags & ~TDIGEST_VALID_FLAGS) != 0)
-		PG_RETURN_BOOL(false);
+		return false;
 
 	if ((digest->compression < MIN_COMPRESSION) ||
 		(digest->compression > MAX_COMPRESSION))
-		PG_RETURN_BOOL(false);
+		return false;
 
 	if (digest->count <= 0)
-		PG_RETURN_BOOL(false);
+		return false;
 
 	if (digest->ncentroids <= 0)
-		PG_RETURN_BOOL(false);
+		return false;
 
 	if (digest->ncentroids > BUFFER_SIZE(digest->compression))
-		PG_RETURN_BOOL(false);
+		return false;
 
 	/*
 	 * The header determines how long the value has to be, so make sure it
@@ -4062,7 +4083,7 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 			   digest->ncentroids * sizeof(centroid_t);
 
 	if (vlen != expected)
-		PG_RETURN_BOOL(false);
+		return false;
 
 	total_count = 0;
 	for (i = 0; i < digest->ncentroids; i++)
@@ -4070,12 +4091,12 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 		CHECK_FOR_INTERRUPTS();
 
 		if (!isfinite(digest->centroids[i].mean))
-			PG_RETURN_BOOL(false);
+			return false;
 
 		if (digest->centroids[i].count <= 0)
-			PG_RETURN_BOOL(false);
+			return false;
 		else if (digest->centroids[i].count > digest->count)
-			PG_RETURN_BOOL(false);
+			return false;
 
 		/*
 		 * track the total count so that we can check later
@@ -4086,14 +4107,28 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 		 */
 		if (pg_add_s64_overflow(total_count, digest->centroids[i].count,
 								&total_count))
-			PG_RETURN_BOOL(false);
+			return false;
 	}
 
 	/* check that the total matches */
 	if (total_count != digest->count)
-		PG_RETURN_BOOL(false);
+		return false;
 
-	PG_RETURN_BOOL(true);
+	return true;
+}
+
+/*
+ * Wrapper for tdigest_is_valid_internal(), so that we can free the digest.
+ */
+Datum
+tdigest_is_valid(PG_FUNCTION_ARGS)
+{
+	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
+	bool		valid = tdigest_is_valid_internal(digest);
+
+	PG_FREE_IF_COPY(digest, 0);
+
+	PG_RETURN_BOOL(valid);
 }
 
 Datum
@@ -4129,6 +4164,7 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 {
 	int				i;
 	StringInfoData	str;
+	text		   *result;
 	tdigest_t	   *digest = PG_GETARG_TDIGEST(0);
 	int32			flags = digest->flags;
 
@@ -4188,7 +4224,13 @@ tdigest_to_json(PG_FUNCTION_ARGS)
 
 	appendStringInfoChar(&str, '}');
 
-	PG_RETURN_TEXT_P(cstring_to_text(str.data));
+	result = cstring_to_text(str.data);
+
+	/* free the local buffer, and possibly the detoasted digest copy */
+	pfree(str.data);
+	PG_FREE_IF_COPY(digest, 0);
+
+	PG_RETURN_TEXT_P(result);
 }
 
 /*
@@ -4249,6 +4291,8 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 	}
 
 	Assert(idx == nvalues);
+
+	PG_FREE_IF_COPY(digest, 0);
 
 	return double_to_array(fcinfo, values, nvalues);
 }
@@ -4448,10 +4492,8 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 		PG_RETURN_DATUM(PG_GETARG_DATUM(0));
 	}
 
-	digest = PG_GETARG_TDIGEST(1);
-
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
+	/* make sure we have a detoasted copy */
+	digest = tdigest_prepare(PG_GETARG_DATUM(1), false);
 
 	/* if there's no aggregate state allocated, create it now */
 	if (PG_ARGISNULL(0))
@@ -4495,6 +4537,8 @@ tdigest_add_digest_trimmed(PG_FUNCTION_ARGS)
 	}
 
 	AssertCheckTDigestAggState(state);
+
+	PG_FREE_IF_COPY(digest, 1);
 
 	PG_RETURN_POINTER(state);
 }
@@ -4837,7 +4881,7 @@ tdigest_trimmed_sum(PG_FUNCTION_ARGS)
 Datum
 tdigest_digest_sum(PG_FUNCTION_ARGS)
 {
-	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
+	tdigest_t  *digest;
 	double		low = PG_GETARG_FLOAT8(1);
 	double		high = PG_GETARG_FLOAT8(2);
 
@@ -4845,18 +4889,16 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 	double		sum;
 	int64		count;
 
-	AssertCheckTDigest(digest);
-
 	check_trim_values(low, high);
 
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
-
 	/* tdigest_trimmed_agg expects the centroids sorted by mean */
-	digest = tdigest_sort_digest(digest);
+	digest = tdigest_prepare(PG_GETARG_DATUM(0), true);
+	AssertCheckTDigest(digest);
 
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
 						digest->count, low, high, &mean, &sum, &count);
+
+	PG_FREE_IF_COPY(digest, 0);
 
 	if (count > 0)
 		PG_RETURN_FLOAT8(tdigest_trimmed_sum_value(sum, mean, count));
@@ -4870,7 +4912,7 @@ tdigest_digest_sum(PG_FUNCTION_ARGS)
 Datum
 tdigest_digest_avg(PG_FUNCTION_ARGS)
 {
-	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
+	tdigest_t  *digest;
 	double		low = PG_GETARG_FLOAT8(1);
 	double		high = PG_GETARG_FLOAT8(2);
 
@@ -4878,18 +4920,16 @@ tdigest_digest_avg(PG_FUNCTION_ARGS)
 	double		sum;
 	int64		count;
 
-	AssertCheckTDigest(digest);
-
 	check_trim_values(low, high);
 
-	/* make sure we get digest with the new format */
-	digest = tdigest_update_format(digest);
-
 	/* tdigest_trimmed_agg expects the centroids sorted by mean */
-	digest = tdigest_sort_digest(digest);
+	digest = tdigest_prepare(PG_GETARG_DATUM(0), true);
+	AssertCheckTDigest(digest);
 
 	tdigest_trimmed_agg(digest->centroids, digest->ncentroids,
 						digest->count, low, high, &mean, &sum, &count);
+
+	PG_FREE_IF_COPY(digest, 0);
 
 	if (count > 0)
 		PG_RETURN_FLOAT8(mean);
