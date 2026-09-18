@@ -1525,7 +1525,18 @@ tdigest_aggstate_allocate(int npercentiles, int nvalues, int compression,
 
 	Assert(ptr == (char *) state + len);
 
-	state->maxcentroids = Max(BUFFER_INITIAL_SIZE, ncentroids);
+	/*
+	 * ncentroids is an arbitrary value, but we want to stick to power-of-2
+	 * sizes, to match the size classes used by AllocSet
+	 */
+	state->maxcentroids = BUFFER_INITIAL_SIZE;
+	while (state->maxcentroids < ncentroids)
+		state->maxcentroids *= 2;
+
+	/* don't use buffers larger than BUFFER_SIZE */
+	state->maxcentroids = Min(BUFFER_SIZE(compression),
+							  state->maxcentroids);
+
 	state->centroids = palloc(state->maxcentroids * sizeof(centroid_t));
 
 	return state;
