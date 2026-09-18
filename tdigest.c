@@ -20,6 +20,7 @@
 #include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/memutils.h"
 
 #if PG_VERSION_NUM >= 120000
 #include "utils/float.h"	/* float8out_internal */
@@ -255,7 +256,7 @@ Datum tdigest_trimmed_sum(PG_FUNCTION_ARGS);
 Datum tdigest_digest_sum(PG_FUNCTION_ARGS);
 Datum tdigest_digest_avg(PG_FUNCTION_ARGS);
 
-static Datum double_to_array(FunctionCallInfo fcinfo, double * d, int len);
+static ArrayType *double_array_allocate(int nitems);
 static double *array_to_double(FunctionCallInfo fcinfo, ArrayType *v,
 							   const char *what, int * len);
 static int64 double_to_int64(double value, int64 maxvalue);
@@ -2968,6 +2969,7 @@ Datum
 tdigest_array_percentiles(PG_FUNCTION_ARGS)
 {
 	double	*result;
+	ArrayType *array;
 	MemoryContext aggcontext;
 
 	tdigest_aggstate_t *state;
@@ -2981,7 +2983,9 @@ tdigest_array_percentiles(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	result = palloc(state->npercentiles * sizeof(double));
+	/* write results directly into a correctly sized ArrayType */
+	array = double_array_allocate(state->npercentiles);
+	result = (double *) ARR_DATA_PTR(array);
 
 	/* windows and shared aggregates may need the original state again. */
 	if (AggStateIsShared(fcinfo))
@@ -2995,7 +2999,7 @@ tdigest_array_percentiles(PG_FUNCTION_ARGS)
 	else
 		tdigest_compute_quantiles(state, result);
 
-	return double_to_array(fcinfo, result, state->npercentiles);
+	PG_RETURN_ARRAYTYPE_P(array);
 }
 
 /*
@@ -3006,6 +3010,7 @@ Datum
 tdigest_array_percentiles_of(PG_FUNCTION_ARGS)
 {
 	double	*result;
+	ArrayType *array;
 	MemoryContext aggcontext;
 
 	tdigest_aggstate_t *state;
@@ -3019,7 +3024,9 @@ tdigest_array_percentiles_of(PG_FUNCTION_ARGS)
 
 	state = (tdigest_aggstate_t *) PG_GETARG_POINTER(0);
 
-	result = palloc(state->nvalues * sizeof(double));
+	/* write results directly into a correctly sized ArrayType */
+	array = double_array_allocate(state->nvalues);
+	result = (double *) ARR_DATA_PTR(array);
 
 	/* windows and shared aggregates may need the original state again. */
 	if (AggStateIsShared(fcinfo))
@@ -3033,7 +3040,7 @@ tdigest_array_percentiles_of(PG_FUNCTION_ARGS)
 	else
 		tdigest_compute_quantiles_of(state, result);
 
-	return double_to_array(fcinfo, result, state->nvalues);
+	PG_RETURN_ARRAYTYPE_P(array);
 }
 
 Datum
@@ -4256,6 +4263,7 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 					idx;
 	tdigest_t	   *digest = PG_GETARG_TDIGEST(0);
 	int32			flags = digest->flags;
+	ArrayType	   *array;
 	double		   *values;
 	int				nvalues;
 
@@ -4263,7 +4271,10 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 
 	/* number of values to store in the array */
 	nvalues = 4 + (digest->ncentroids * 2);
-	values = (double *) palloc(sizeof(double) * nvalues);
+
+	/* write results directly into a correctly sized ArrayType */
+	array = double_array_allocate(nvalues);
+	values = (double *) ARR_DATA_PTR(array);
 
 	idx = 0;
 	values[idx++] = flags;
@@ -4294,7 +4305,7 @@ tdigest_to_array(PG_FUNCTION_ARGS)
 
 	PG_FREE_IF_COPY(digest, 0);
 
-	return double_to_array(fcinfo, values, nvalues);
+	PG_RETURN_ARRAYTYPE_P(array);
 }
 
 Datum
@@ -4994,32 +5005,45 @@ array_to_double(FunctionCallInfo fcinfo, ArrayType *v, const char *what, int *le
 }
 
 /*
- * construct an SQL array from a simple C double array
+ * Allocate a one-dimensional, non-NULL float8 array for direct result writes.
+ * Array storage uses native doubles even on platforms with pass-by-reference
+ * float8 Datums, so no per-element Datum allocations are needed.
  */
-static Datum
-double_to_array(FunctionCallInfo fcinfo, double *d, int len)
+static ArrayType *
+double_array_allocate(int nitems)
 {
-	ArrayBuildState *astate = NULL;
-	int		 i;
+	ArrayType  *array;
+	Size		size;
 
 	/*
 	 * makeArrayResult() dereferences the build state, so it must not be
 	 * called when nothing was accumulated. Handle that here instead of
 	 * relying on the callers to never ask for an empty array.
 	 */
-	if (len == 0)
-		PG_RETURN_ARRAYTYPE_P(construct_empty_array(FLOAT8OID));
+	if (nitems == 0)
+		return construct_empty_array(FLOAT8OID);
 
-	for (i = 0; i < len; i++)
-	{
-		/* stash away this field */
-		astate = accumArrayResult(astate,
-								  Float8GetDatum(d[i]),
-								  false,
-								  FLOAT8OID,
-								  CurrentMemoryContext);
-	}
+	/* should not happen */
+	if (nitems < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array size (%d)", nitems)));
 
-	PG_RETURN_ARRAYTYPE_P(DatumGetPointer(makeArrayResult(astate,
-										  CurrentMemoryContext)));
+	if (nitems > MaxArraySize)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("array size exceeds the maximum allowed (%d)",
+						(int) MaxArraySize)));
+
+	size = ARR_OVERHEAD_NONULLS(1) + nitems * sizeof(double);
+
+	array = (ArrayType *) palloc(size);
+	SET_VARSIZE(array, size);
+	ARR_NDIM(array) = 1;
+	array->dataoffset = 0;
+	ARR_ELEMTYPE(array) = FLOAT8OID;
+	ARR_DIMS(array)[0] = nitems;
+	ARR_LBOUND(array)[0] = 1;
+
+	return array;
 }
