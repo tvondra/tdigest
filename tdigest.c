@@ -4125,9 +4125,14 @@ tdigest_is_valid(PG_FUNCTION_ARGS)
 Datum
 tdigest_count(PG_FUNCTION_ARGS)
 {
+	int64		result;
 	tdigest_t  *digest = PG_GETARG_TDIGEST(0);
 
-	PG_RETURN_INT64(digest->count);
+	result = digest->count;
+
+	PG_FREE_IF_COPY(digest, 0);
+
+	PG_RETURN_INT64(result);
 }
 
 /*
