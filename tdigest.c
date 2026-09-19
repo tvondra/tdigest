@@ -5050,16 +5050,8 @@ double_array_allocate(int nitems)
 	ArrayType  *array;
 	Size		size;
 
-	/*
-	 * makeArrayResult() dereferences the build state, so it must not be
-	 * called when nothing was accumulated. Handle that here instead of
-	 * relying on the callers to never ask for an empty array.
-	 */
-	if (nitems == 0)
-		return construct_empty_array(FLOAT8OID);
-
 	/* should not happen */
-	if (nitems < 0)
+	if (nitems <= 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid array size (%d)", nitems)));
