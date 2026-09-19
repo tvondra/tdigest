@@ -4717,6 +4717,19 @@ tdigest_trimmed_count(centroid_t *centroid, int64 count_done,
  * The sum, on the other hand, may legitimately exceed the float8 range, so we
  * keep accumulating it the simple way (which is also exact), and leave it to
  * the caller to complain about the overflow.
+ *
+ * FIXME I believe this has two issues:
+ *
+ * First, the count_low/count_high round in opposite direction, but may round
+ * to the same value when the product hits an integer exactly (when low==high).
+ * If this happens, we end up returning NULL a bit later (count_total==0).
+ * Maybe we should require (low < high)? Would that solve the issue, or are
+ * there other ways to still hit this? Or maybe we should do something like
+ * count_high = Max(count_high, count_low + 1), to force non-empty ranges?
+ *
+ * Second, the code assumes the whole centroid is located at the mean, and does
+ * not use the interpolation (assuming half the items are below/above the mean).
+ * Maybe it should do something like the quantile/quantile-of code?
  */
 static void
 tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
