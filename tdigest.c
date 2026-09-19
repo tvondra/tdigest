@@ -3854,7 +3854,7 @@ tdigest_in(PG_FUNCTION_ARGS)
 
 	/*
 	 * Malformed inputs may have the wrong number of centroids, in which case
-	 * we either don't consume the whole input (ncentroids too high), or we
+	 * we either don't consume the whole input (ncentroids too low), or we
 	 * don't get all the expected centroids (ncentroids too high).
 	 */
 	if (ptr < str + slen)
