@@ -2,6 +2,7 @@
 results/
 **/*.o
 **/*.so
+**/*.bc
 regression.diffs
 regression.out
 **/*.gcda
@@ -12,3 +13,4 @@ lcov_base.info
 lcov_test.info
 coverage/
 coverage-html-stamp
+tdigest-*.zip
