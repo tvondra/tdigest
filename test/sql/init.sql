@@ -75,3 +75,7 @@ BEGIN
 
 END;
 $$ LANGUAGE plpgsql;
+
+-- casts allowing us to inspect and forge the on-disk representation
+CREATE CAST (tdigest AS bytea) WITHOUT FUNCTION;
+CREATE CAST (bytea AS tdigest) WITHOUT FUNCTION;
