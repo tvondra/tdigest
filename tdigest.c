@@ -261,6 +261,9 @@ static const double *array_to_double(ArrayType *v, const char *what, int *len);
 static int64 double_to_int64(double value, int64 maxvalue);
 static tdigest_aggstate_t *tdigest_copy(tdigest_aggstate_t *state);
 
+static void tdigest_aggstate_enlarge(tdigest_aggstate_t *state);
+static void tdigest_aggstate_shrink(tdigest_aggstate_t *state);
+
 #if PG_VERSION_NUM < 150000
 /*
  * Thin wrappers that convert strings to exactly 64-bit integers, matching our
@@ -830,6 +833,9 @@ tdigest_compact(tdigest_aggstate_t *state)
 	if (state->ncentroids == BUFFER_SIZE(state->compression))
 		tdigest_compact_forced(state);
 
+	/* Maybe reclaim some of the centroid buffer. */
+	tdigest_aggstate_shrink(state);
+
 	AssertCheckTDigestAggState(state);
 
 	/* Must have freed some space in the buffer. */
@@ -1286,6 +1292,47 @@ tdigest_aggstate_enlarge(tdigest_aggstate_t *state)
 	Assert(state->ncentroids < state->maxcentroids);
 	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
 }
+
+/*
+ * Try to reclaim some of the centroid buffer after compaction.
+ *
+ * After compaction, the centroid buffer is guaranteed to be mostly empty,
+ * and there's no guarantee it'll ever be used again. Reclaim large, mostly
+ * unused allocations, keeping headroom for new centroids.
+ *
+ * We only do this for large buffers, so that the chunks are allocted as
+ * separate oversized chunks, which means we actually do free() on them,
+ * instead of stashing them to a freelist.
+ *
+ * And we only do that for buffers that are at least 75% empty, and thus
+ * outside the usual "doubling" strategy.
+ *
+ * This is not free, but it only happens after compaction, which is rather
+ * rare and already fairly expensive, so the additional cost should be
+ * rather acceptable.
+ *
+ * We have to enforce the power-of-2 sizing even during shrinking.
+ */
+static void
+tdigest_aggstate_shrink(tdigest_aggstate_t *state)
+{
+	/* the buffer has to be at least 75% empty */
+	if (state->maxcentroids <= 4 * state->ncentroids)
+		return;
+
+	/* the buffer has to be at least 8KB */
+	if (state->maxcentroids * sizeof(centroid_t) <= 8192)
+		return;
+
+	/* find the first power-of-2 capacity above ncentroids */
+	state->maxcentroids = BUFFER_INITIAL_SIZE;
+	while (state->maxcentroids < state->ncentroids)
+		state->maxcentroids *= 2;
+
+	state->centroids = repalloc(state->centroids,
+								state->maxcentroids * sizeof(centroid_t));
+}
+
 
 /* add a value to the t-digest, trigger a compaction if full */
 static void
