@@ -1,31 +1,33 @@
 -- tdigest_percentile_of() evaluates the CDF of the digest, so for a given
 -- digest the result has to be a non-decreasing function of the value, and it
--- always has to fall into the [0, 1] range. Neither of that holds right now.
+-- has to fall into the [0, 1] range for finite probes. This guards a former
+-- integer-division bug that violated both properties.
 --
 -- tdigest_compute_quantiles_of() interpolates between two centroids, and to
 -- do that it first moves from the boundary of the previous centroid to its
--- mean, which sits in the middle of the centroid:
+-- mean, which sits in the middle of the centroid. It used to do this with:
 --
 --     count -= (prev->count / 2);
 --
--- That is an int64 division, even though "count" is a double and the very
+-- That was an int64 division, even though "count" is a double and the very
 -- next statement halves the same value as (prev->count / 2.0). For centroids
--- with an odd count the two halves therefore disagree by 0.5 items, and the
--- interpolated CDF ends up shifted by 0.5/count with respect to the exact
+-- with an odd count the two halves therefore disagreed by 0.5 items, and the
+-- interpolated CDF ended up shifted by 0.5/count with respect to the exact
 -- value calculated in the (value == curr->mean) branch just above.
 --
--- The result is a saw-tooth: the CDF jumps up by 0.5/count right after the
--- mean of every odd-sized centroid, and drops back at the next centroid. For
+-- The result was a saw-tooth: the CDF jumped up by 0.5/count right after the
+-- mean of every odd-sized centroid, and dropped back at the next centroid. For
 -- the (0, 7) (100, 3) digest used below:
 --
---     value       now         expected
+--     value       before      expected
 --     0           0.35        0.35
 --     0.0001      0.4000005   0.3500005
 --     50          0.65        0.6
 --     99.9999     0.8999995   0.8499995
 --     100         0.85        0.85
 --
--- i.e. the CDF at 99.9999 is higher than the CDF at 100.
+-- i.e. the CDF at 99.9999 was higher than the CDF at 100. Both divisions
+-- now use floating point, preserving monotonicity.
 
 \set VERBOSITY terse
 
@@ -35,7 +37,7 @@ CREATE TABLE tdigest_monotonic_digests (id int, descr text, d tdigest);
 
 -- Hand-built digests. All of them use centroid means from the [0, 100] range,
 -- so that a single set of probes works for all of them. What matters are the
--- centroid counts - the discontinuity shows up at the mean of every centroid
+-- centroid counts - the old discontinuity showed up at the mean of every centroid
 -- with an odd count.
 INSERT INTO tdigest_monotonic_digests VALUES
     (1, 'two centroids, odd + odd',

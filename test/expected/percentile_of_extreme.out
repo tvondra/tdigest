@@ -1,11 +1,11 @@
--- tdigest_percentile_of() interpolates between two centroids by computing the
--- slope of the line connecting their means
+-- tdigest_percentile_of() used to interpolate between two centroids by
+-- computing the slope of the line connecting their means:
 --
 --     m = (curr->mean - prev->mean) / (curr->count / 2.0 + prev->count / 2.0);
 --     x = (value - prev->mean) / m;
 --
--- and both the difference of the means and the slope may leave the float8
--- range even though every input is an ordinary finite number:
+-- Both the difference of the means and the slope could leave the float8
+-- range even though every input was an ordinary finite number:
 --
 --   * (curr->mean - prev->mean) overflows to infinity when the means are
 --     large and have opposite signs. The slope is then infinity, and x is
@@ -14,14 +14,12 @@
 --   * the slope underflows to zero when the means are tiny (subnormal) and
 --     the counts are huge. x is then infinity, and so is the result.
 --
--- tdigest_compute_quantiles() was reworked to use a convex combination
--- exactly to avoid this. tdigest_compute_quantiles_of() still uses the slope,
--- and it is the last place in the code that does.
+-- Both quantile functions now use convex combinations. The inverse function
+-- computes the relative position between means without dividing by a slope,
+-- and halves the means and probe when their difference would overflow.
 --
--- A percentile is a probability, so the result always has to be a finite
--- number in the [0, 1] range. It also must not depend on the scale of the
--- data - scaling all the means and the probed value by the same power of two
--- has to produce exactly the same percentiles.
+-- For finite probes the result must be a probability in [0, 1]. Power-of-two
+-- rescaling without input precision loss should agree within rounding error.
 \set VERBOSITY terse
 SET extra_float_digits = 0;
 CREATE TABLE tdigest_extreme_digests (id int, descr text, d tdigest, probes double precision[]);
@@ -47,9 +45,8 @@ INSERT INTO tdigest_extreme_digests VALUES
     (7, 'ordinary means, for comparison',
         'flags 1 count 10 compression 10000 centroids 2 (-1.5, 7) (1.5, 3)',
         ARRAY[-1.5, -1, 0, 1, 1.5]);
--- Every result has to be a probability. Currently some of them are NaN
--- (the difference of the means overflowed) or Infinity (the slope underflowed
--- to zero).
+-- Every result has to be a probability. The old implementation returned NaN
+-- when the difference overflowed or Infinity when the slope underflowed.
 WITH q AS (
     SELECT id, descr, probes, tdigest_percentile_of(d, probes) AS res
       FROM tdigest_extreme_digests
