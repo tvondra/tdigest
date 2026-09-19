@@ -1,7 +1,6 @@
-EXTENSION    = $(shell grep -m 1 '"name":' META.json | \
-               sed -e 's/[[:space:]]*"name":[[:space:]]*"\([^"]*\)",/\1/')
-EXTVERSION   = $(shell grep -m 1 '[[:space:]]\{8\}"version":' META.json | \
-               sed -e 's/[[:space:]]*"version":[[:space:]]*"\([^"]*\)",\{0,1\}/\1/')
+# The version the distribution archive and the release notes are built for.
+# The extension name is not read from META.json - the name there is the PGXN
+# distribution name ("t-digest"), which is not the name of the extension.
 DISTVERSION  = $(shell grep -m 1 '[[:space:]]\{3\}"version":' META.json | \
                sed -e 's/[[:space:]]*"version":[[:space:]]*"\([^"]*\)",\{0,1\}/\1/')
 
@@ -13,9 +12,6 @@ DATA = tdigest--1.0.0.sql tdigest--1.0.0--1.0.1.sql tdigest--1.0.1--1.2.0.sql \
 	tdigest--1.2.0--1.3.0.sql tdigest--1.3.0--1.4.0.sql tdigest--1.4.0--1.4.1.sql \
 	tdigest--1.4.1--1.4.2.sql tdigest--1.4.2--1.4.3.sql tdigest--1.4.3--1.4.4.sql \
 	tdigest--1.4.4--1.4.5.sql tdigest--1.4.5--1.4.6.sql tdigest--1.4.6--1.4.7.sql
-MODULES = tdigest
-
-CFLAGS=`pg_config --includedir-server`
 
 REGRESS      = --schedule=$(srcdir)/test/parallel_schedule
 REGRESS_OPTS = --inputdir=test
