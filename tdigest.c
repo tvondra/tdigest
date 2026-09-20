@@ -522,124 +522,6 @@ tdigest_sort(tdigest_aggstate_t *state)
 }
 
 /*
- * Fallback compaction, merging adjacent centroids irrespective of the size
- * limits, until the digest fits into the requested compression.
- *
- * The regular size-based compaction is not guaranteed to make any progress.
- * This is a last resort for such cases, trading accuracy for a guarantee
- * that the digest never grows past the end of the centroid array. It only
- * applies to digests that are already severely skewed, so it does not really
- * cause much harm.
- *
- * The centroids are simply split into groups of the same size (number of
- * centroids), and each group is merged into a single centroid. That needs
- * just a single pass over the array, so the cost is linear even for many
- * centroids.
- *
- * Expects the centroids to be already sorted. We only call this from
- * tdigest_compact(), which does tdigest_sort() at the beginning.
- *
- * XXX At this point this is likely dead code, because the regular compaction
- * in tdigest_compact should always make progress and free some space. But
- * that needs more consideration/verification.
- */
-static void
-tdigest_compact_forced(tdigest_aggstate_t *state)
-{
-	int			cur = 0;		/* current output centroid */
-	int			group_size;		/* input centroids per output centroid */
-
-	Assert(state->ncentroids > state->compression);
-
-	group_size = (state->ncentroids + state->compression - 1) / state->compression;
-
-	/*
-	 * Groups need to be large enough for the compacted digest to fit into
-	 * the requested compression.
-	 */
-	Assert(group_size * state->compression >= state->ncentroids);
-
-	/* process groups of input centroids */
-	for (;;)
-	{
-		int		i;
-		int64	group_count = 0;
-		double	mean = 0;
-
-		/* range of indexes of input centroids */
-		int		start = cur * group_size;
-		int		end = Min(start + group_size, state->ncentroids);
-
-		CHECK_FOR_INTERRUPTS();
-
-		/* stop after processing all input centroids */
-		if (start >= end)
-			break;
-
-		/*
-		 * total count of the range of input centroids
-		 *
-		 * This can't overflow - the counts add up to the total count of the
-		 * digest, which is known not to overflow. So no need to check for
-		 * overflows here.
-		 */
-		for (i = start; i < end; i++)
-		{
-			group_count += state->centroids[i].count;
-		}
-
-		/*
-		 * calculate the group mean using the overflow-resistant approach
-		 *
-		 * XXX We could detect "same mean" case, similar to tdigest_compact,
-		 * and furthermore we could find runs of the same mean in the group,
-		 * and only average when the mean changes. Doesn't seem worth it,
-		 * this is a fallback anyway.
-		 *
-		 * XXX Maybe this is not entirely overflow-free? The weights are
-		 * calculated in double, so can't that lose precision and sum to a
-		 * total > 1.0? Then the result might "drift" above the valid means.
-		 * And consider two centroids with means close to DBL_MAX, with one
-		 * centroid having very high count value. Could it happen that
-		 * (mean * 0.9999 > mean) for a positive mean? Maybe it could even
-		 * overflow to +/- infinity.
-		 */
-		for (i = start; i < end; i++)
-		{
-			mean += state->centroids[i].mean * (state->centroids[i].count / (double) group_count);
-		}
-
-		/*
-		 * XXX It should not be possible to get a NaN mean. That would require
-		 * adding up -infinity and +infinity in the loop above, but the input
-		 * means should be finite (or we have a bigger problem earlier). And for
-		 * the multiplication to overflow, the weight needs to be close to 1.0,
-		 * but that can happen only for a single centroid.
-		 */
-		Assert(!isnan(mean));
-
-		/*
-		 * Handle a possible overflow in the mean calculation above, by clamping
-		 * it by the min/max mean of the group we're compacting.
-		 *
-		 * XXX I'm not convinced it can happen, but better safe than sorry. We
-		 * don't want to end up storing digests with bogus means.
-		 */
-		mean = Max(Min(state->centroids[end - 1].mean, mean),
-				   state->centroids[start].mean);
-
-		state->centroids[cur].count = group_count;
-		state->centroids[cur].mean = mean;
-		cur++;
-	}
-
-	state->ncentroids = cur;
-	state->ncompacted = state->ncentroids;
-
-	Assert(state->ncentroids <= state->compression);
-}
-
-/*
  * Perform compaction of the t-digest, i.e. merge the centroids as required
  * by the compression parameter.
  *
@@ -826,12 +708,19 @@ tdigest_compact(tdigest_aggstate_t *state)
 		memmove(state->centroids, &state->centroids[cur], n * sizeof(centroid_t));
 
 	/*
-	 * The compaction above is not guaranteed to make any progress, so if it
-	 * did not free up any space, fall back to merging the centroids without
-	 * regard for the size limits.
+	 * The compaction should have reduced the number of digest centroids. If
+	 * that did not succeed, and the buffer is still full, something must have
+	 * gone wrong. It's not safe to proceed.
+	 *
+	 * XXX Could be useful to include the digest through errdetail(), but with
+	 * large digests it might generate a significant log volume.
 	 */
 	if (state->ncentroids == BUFFER_SIZE(state->compression))
-		tdigest_compact_forced(state);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("digest compaction failed to reduce number of centroids"),
+				 errhint("This should be impossible. Please report this to maintainers "
+						 "of the extension (ideally with a reproducer).")));
 
 	/* Maybe reclaim some of the centroid buffer. */
 	tdigest_aggstate_shrink(state);
