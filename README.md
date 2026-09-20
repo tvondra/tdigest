@@ -1013,6 +1013,30 @@ workers generally see different subsets of data for each run (and build
 different digests, which are then combined together).
 
 
+Security
+--------
+
+If you believe you have found a security vulnerability in this repository,
+please report [this form](https://github.com/tvondra/tdigest/security/advisories/new)
+of this GitHub project. This creates a private communication channel
+between the reporter and the maintainers.
+
+If you are absolutely unable to or have strong reasons not to use GitHub's
+vulnerability reporting workflow, please reach out to the maintainer at
+[mailto:tomas@vondra.me](tomas@vondra.me).
+
+Notes:
+
+* The code assumes digests stored on-disk are valid and not corrupted
+  It the suspected vulnerability requires a corrupted digest, without a way
+  to create such digests (using the current version), it's not a security
+  issue. This is in line with general assumptions in the Postgres code.
+
+* A valid vulnerability must not require superuser privileges. A superuser
+  can do almost anything (ultimately can read/write memory) and does not
+  need to bother with vulnerabilities.
+
+
 Known issues
 ------------
 
@@ -1103,3 +1127,5 @@ more details.
 [3] https://github.com/ajwerner/tdigestc
 
 [4] https://github.com/ajwerner/tdigest
+
+[5] https://github.com/tvondra/tdigest/security/advisories/new
