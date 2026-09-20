@@ -37,13 +37,13 @@ the inverse operation, estimating the relative rank of a given value:
 
 That is, instead of running
 
-```
+```sql
 SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY a) FROM t
 ```
 
 you might now run
 
-```
+```sql
 SELECT tdigest_percentile(a, 100, 0.95) FROM t
 ```
 
@@ -130,7 +130,7 @@ matters. Merging cannot recover detail already lost by compaction.
 
 So for example you may do this:
 
-```
+```sql
 -- table with some random source data, with "a" usable as a count of
 -- occurrences (so it has to be positive)
 CREATE TABLE t (a int, b int, c double precision);
@@ -161,7 +161,7 @@ On the same machine, the last query took about 1.5 ms. Compare that to the
 following example timings on the source data; sizes and timings will vary
 with the data, PostgreSQL version and hardware:
 
-~~~
+```sql
 \timing on
 
 -- exact results
@@ -181,7 +181,7 @@ SET max_parallel_workers_per_gather = 4;
 SELECT a, tdigest_percentile(c, 100, 0.95) FROM t GROUP BY a ORDER BY a;
   ...
 Time: 893.538 ms
-~~~
+```
 
 This illustrates how much faster the t-digest estimate can be than the
 exact query with `percentile_cont`. The difference can increase when sorting
@@ -240,7 +240,7 @@ every row of `p`; use a `WHERE` clause when updating only selected groups.
 For example, it's possible to add 1000 random values to the t-digests like
 this:
 
-```
+```sql
 DO LANGUAGE plpgsql $$
 DECLARE
   r record;
@@ -256,7 +256,7 @@ deserialized and serialized over and over, for each value we're adding.
 That overhead may be reduced by pre-aggregating data, either into an array
 or a t-digest.
 
-```
+```sql
 DO LANGUAGE plpgsql $$
 DECLARE
   vals double precision[];
@@ -269,7 +269,7 @@ END $$;
 Alternatively, it's possible to use pre-aggregated t-digest values instead
 of the arrays:
 
-```
+```sql
 WITH batch AS (
     SELECT tdigest(random(), 100) AS d FROM generate_series(1,1000)
 )
@@ -285,7 +285,7 @@ digest, but remains subject to the `10 * compression` centroid limit.
 Use the multi-value functions with compaction after each batch when possible,
 or compact a stored digest by re-aggregating it:
 
-```
+```sql
 UPDATE p SET d = (SELECT tdigest(x) FROM (SELECT p.d) s(x));
 ```
 
@@ -398,7 +398,7 @@ specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile(t.c, 100, 0.95) FROM t
 ```
 
@@ -416,7 +416,7 @@ specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile(t.c, t.a, 100, 0.95) FROM t
 ```
 
@@ -435,7 +435,7 @@ specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile(t.c, 100, ARRAY[0.95, 0.99]) FROM t
 ```
 
@@ -453,7 +453,7 @@ specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile(t.c, t.a, 100, ARRAY[0.95, 0.99]) FROM t
 ```
 
@@ -472,7 +472,7 @@ specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile_of(t.c, 100, 139832.3) FROM t
 ```
 
@@ -490,7 +490,7 @@ specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile_of(t.c, t.a, 100, 139832.3) FROM t
 ```
 
@@ -509,7 +509,7 @@ the specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile_of(t.c, 100, ARRAY[6343.43, 139832.3]) FROM t
 ```
 
@@ -527,7 +527,7 @@ the specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile_of(t.c, t.a, 100, ARRAY[6343.43, 139832.3]) FROM t
 ```
 
@@ -545,7 +545,7 @@ Computes t-digest with the specified accuracy.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest(t.c, 100) FROM t
 ```
 
@@ -562,7 +562,7 @@ as many occurrences as determined by the count parameter.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest(t.c, t.a, 100) FROM t
 ```
 
@@ -580,7 +580,7 @@ to force compaction of a digest built with `compact = false`.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest(d) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t GROUP BY t.a
 ) foo
@@ -598,7 +598,7 @@ function, not an aggregate.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_count(d) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
@@ -615,7 +615,7 @@ Computes requested percentile from the pre-computed t-digests.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile(d, 0.99) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
@@ -633,7 +633,7 @@ Computes requested percentiles from the pre-computed t-digests.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile(d, ARRAY[0.95, 0.99]) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
@@ -658,7 +658,7 @@ values.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile_of(d, 349834.1) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
@@ -678,7 +678,7 @@ scalar form.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo
@@ -696,7 +696,7 @@ Performs incremental update of the t-digest by adding a single value.
 
 #### Synopsis
 
-```
+```sql
 UPDATE p SET d = tdigest_add(d, random());
 ```
 
@@ -715,7 +715,7 @@ Performs incremental update of the t-digest by adding values from an array.
 
 #### Synopsis
 
-```
+```sql
 UPDATE p SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
 ```
 
@@ -738,7 +738,7 @@ compression of `digest1`, even if `digest2` has a different compression.
 
 #### Synopsis
 
-```
+```sql
 WITH x AS (SELECT tdigest(random(), 100) AS d FROM generate_series(1,1000))
 UPDATE p SET d = tdigest_union(p.d, x.d) FROM x;
 ```
@@ -761,7 +761,7 @@ compression and the number of centroids, followed by the per-centroid
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_json(d) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo;
@@ -785,7 +785,7 @@ centroids, followed by a `(mean, count)` pair for each centroid.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_double_array(d) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo;
@@ -810,7 +810,7 @@ discarded.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_avg(t.c, 100, 0.1, 0.9) FROM t
 ```
 
@@ -832,7 +832,7 @@ discarded.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_avg(t.c, t.a, 100, 0.1, 0.9) FROM t
 ```
 
@@ -855,7 +855,7 @@ discarded.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_avg(d, 0.05, 0.95) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo;
@@ -878,7 +878,7 @@ discarded.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_sum(t.c, 100, 0.1, 0.9) FROM t
 ```
 
@@ -900,7 +900,7 @@ discarded.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_sum(t.c, t.a, 100, 0.1, 0.9) FROM t
 ```
 
@@ -923,7 +923,7 @@ discarded.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_sum(d, 0.05, 0.95) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo;
@@ -943,7 +943,7 @@ this is a plain function, not an aggregate.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_digest_avg(d, 0.25, 0.75) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo;
@@ -963,7 +963,7 @@ this is a plain function, not an aggregate.
 
 #### Synopsis
 
-```
+```sql
 SELECT tdigest_digest_sum(d, 0.25, 0.75) FROM (
     SELECT tdigest(t.c, 100) AS d FROM t
 ) foo;
@@ -990,7 +990,7 @@ back. This function makes it possible to find such digests.
 
 #### Synopsis
 
-```
+```sql
 SELECT a, b FROM p WHERE NOT tdigest_is_valid(p.d);
 ```
 
