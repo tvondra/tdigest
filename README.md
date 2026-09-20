@@ -1023,7 +1023,7 @@ between the reporter and the maintainers.
 
 If you are absolutely unable to or have strong reasons not to use GitHub's
 vulnerability reporting workflow, please reach out to the maintainer at
-[mailto:tomas@vondra.me](tomas@vondra.me).
+[tomas@vondra.me](mailto:tomas@vondra.me).
 
 Notes:
 
