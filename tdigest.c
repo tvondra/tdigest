@@ -1066,6 +1066,33 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
  * Estimate inverse quantiles for values using a t-digest agg state.
  *
  * Essentially an inverse to tdigest_compute_quantiles.
+ *
+ * XXX I suspect this may not be doing the interpolation quite right when
+ * there are multiple centroids with the same mean (compute_quantiles has
+ * essentially the same issue in the opposite direction, but it's easier
+ * to describe it for rank). The current code walks centroids until we find
+ * a centroid with a higher mean - let's assume the value is between two
+ * centroids (not equal to any centroid mean). It takes the previous and
+ * following centroids, and interpolates those.
+ *
+ * But there can be multiple centroids with the same mean and different
+ * counts. If the value falls before the median, we could see e.g. this:
+ *
+ *    (1.0, 1000), (2.0, 1), (2.0, 999)
+ *
+ * Both means have the same weight, but the interprolation will use only
+ * the (1.0, 1000) and (2.0, 1) centroids, i.e. 2.0 will have much less
+ * weight. And then at 2.0 the CDF jumps up suddenly.
+ *
+ * This may not be very common, due to merging/compaction. We usually merge
+ * the small centroids into the large ones quickly, so the differences
+ * tend to be less extreme, which limits the effect on interpolation. Also,
+ * the merging does floating point math with rounding errors, so means get
+ * to diverge at some point. But it can happen e.g. when merging digests.
+ *
+ * There's also a bit of inconsistency (both here and in the reference
+ * implementation), because we sum all the counts for the case when the
+ * value matches a mean exactly, but not in the other cases.
  */
 static void
 tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
