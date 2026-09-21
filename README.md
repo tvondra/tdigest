@@ -90,6 +90,31 @@ them. A column can use `EXTENDED` storage to permit TOAST compression;
 changing that setting does not itself rewrite existing values. Tuple and
 TOAST overhead are additional to the size of the digest.
 
+Here is a table of sizes for digests with different compression values,
+built on random data:
+
+| compression   | centroids | length (B) | external (B) | extended (B) |
+|--------------:|----------:|-----------:|-------------:|-------------:|
+|            10 |        18 |        305 |          309 |          308 |
+|            50 |        40 |        655 |          659 |          658 |
+|           100 |        61 |        993 |          997 |          997 |
+|           200 |       100 |       1616 |         1620 |         1624 |
+|           500 |       203 |       3275 |         3275 |         2238 |
+|          1000 |       357 |       5732 |         5732 |         3765 |
+|          2000 |       627 |      10058 |        10058 |         6432 |
+|          5000 |      1318 |      21113 |        21113 |        12646 |
+|         10000 |      2265 |      36260 |        36260 |        20177 |
+
+Where `centroids` is the number of centroids in a compacted digest, `length`
+is the "raw" size of the digest. `external` and `extended` are the on-disk
+sizes of centroid, depending on the storage policy set for the column. It's
+clear that `external` is almost the same as `length`, while `extended` is
+often much smaller thanks to compression.
+
+This is merely an example - the actual values depend on the data. For example
+digests on integer values tend to be much more compressible, cutting the
+`extended` size about in half.
+
 
 ## Advanced usage
 
