@@ -1065,7 +1065,7 @@ Notes:
 Known issues
 ------------
 
-## incorrect alignment
+### incorrect alignment
 
 The SQL data type is defined without specifying the `ALIGNMENT` parameter,
 so it uses the default 4-byte alignment. Its C representation contains
@@ -1091,7 +1091,7 @@ The SQL data type retains its original 4-byte alignment for compatibility
 with existing on-disk values.
 
 
-## FINALFUNC_MODIFY = READ_ONLY
+### FINALFUNC_MODIFY = READ_ONLY
 
 The final functions mutate the aggregate state (they sort it, and most of
 them also compact it), which means `FINALFUNC_MODIFY` should not be
@@ -1110,7 +1110,7 @@ a permutation of the centroids, and the state is sorted anyway before it's
 used, so there's nothing to protect and no copy is made.
 
 
-## fused multiply-add (FMA)
+### fused multiply-add (FMA)
 
 Various places in the code use expressions of the form `a * b + c` (e.g.
 when calculating the mean of two merged centroids, or when interpolating
