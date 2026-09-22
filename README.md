@@ -1052,8 +1052,8 @@ vulnerability reporting workflow, please reach out to the maintainer at
 
 Notes:
 
-* The code assumes digests stored on-disk are valid and not corrupted
-  It the suspected vulnerability requires a corrupted digest, without a way
+* The code assumes digests stored on-disk are valid and not corrupted.
+  If the suspected vulnerability requires a corrupted digest, without a way
   to create such digests (using the current version), it's not a security
   issue. This is in line with general assumptions in the Postgres code.
 
