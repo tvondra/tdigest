@@ -10,7 +10,7 @@
 -- q0 round to 1 for everything following it. The size limit then became zero
 -- and compaction returned with ncentroids unchanged, still at BUFFER_SIZE.
 -- The current code uses exact integer remainders for these factors, and
--- retains a forced-compaction fallback if the buffer remains full.
+-- raises an error if a compaction still leaves the buffer full.
 --
 -- Note that nothing here overflows - all the counts are perfectly valid and
 -- the digests are well-formed. The old code assumed compaction always freed

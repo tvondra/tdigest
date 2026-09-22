@@ -529,9 +529,10 @@ tdigest_sort(tdigest_aggstate_t *state)
  * the sort between compactions, and also when computing the quantiles.
  *
  * The regular compaction is not guaranteed to make any progress. The size
- * limits are calculated in double, may end up too low to allow merging any
- * centroids. If that happens, we force a compaction that simply merges
- * neighbor centroids.
+ * limits are calculated in double, and may end up too low to allow merging any
+ * centroids. The limits are computed from exact integer remainders, which
+ * makes this very unlikely, but if a compaction still leaves the buffer full,
+ * we raise an error rather than continue with a digest that has no room left.
  *
  * XXX Switch the direction regularly, to eliminate possible bias and improve
  * accuracy, as mentioned in the paper.
