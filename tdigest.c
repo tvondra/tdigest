@@ -733,6 +733,71 @@ tdigest_compact(tdigest_aggstate_t *state)
 }
 
 /*
+ * Interpolate between ordered finite endpoints without losing monotonicity.
+ *
+ * For endpoints of the same sign, separately rounded weighted products can
+ * make (1 - q) * a + q * b decrease as q increases. Interpolating the
+ * difference avoids that.
+ *
+ * Anchor negative endpoints at b to avoid subtracting nearly equal large
+ * magnitudes when q is close to 1. That's necessary because of widely
+ * separated negative means, like centroids at -2^54 and -1. Subtracting
+ * almost equal large magnitudes exposes the rounding error in (b - a).
+ * The right-anchored formula (b - (1 - q) * (b - a)) solves that. It's
+ * monotone and does not have the cancellation issue.
+ *
+ * Positive intervals keep the existing left-anchored formula.
+ *
+ * For opposite signs, use the overflow-safe weighted sum. The difference may
+ * overflow, but both weighted terms are nondecreasing, so use that.
+ *
+ * Return the endpoints explicitly when q is zero or one. A rounded difference
+ * may not reconstruct either endpoint, and clamping cannot repair a result
+ * that remains inside the bracket.
+ */
+static double
+tdigest_interpolate(double a, double b, double q)
+{
+	double	result;
+
+	Assert(isfinite(a) && isfinite(b) && a <= b);
+	Assert(q >= 0.0 && q <= 1.0);
+
+	/* Rounded differences need not reproduce the endpoints exactly. */
+	if (q == 0.0)
+		return a;
+	if (q == 1.0)
+		return b;
+
+	/*
+	 * There are two approaches to calculating linear interpolation:
+	 *
+	 *      (1 - q) * a + q * b     and         a + q * (b - a)
+	 *
+	 * The first formula is monotonic only when (a * b < 0). We know that
+	 * (a <= b), so this means (a < 0) and (b > 0). We use it also when
+	 * either value is 0.
+	 *
+	 * The second formula is monotonic, but does not guarantee the result
+	 * to be "b" when "q = 1", due to floating-point arithmetic errors. It
+	 * also has a risk of cancellation when subtracting almost equal large
+	 * magnitudes. To deal with that, we use a variation anchored to the
+	 * right endpoint.
+	 *
+	 * We switch between the options, to pick the better one.
+	 */
+	if (a <= 0.0 && b >= 0.0)
+		result = (1 - q) * a + q * b;
+	else if (b < 0.0)	/* anchored to right endpoint */
+		result = b - (1 - q) * (b - a);
+	else				/* anchored to left endpoint */
+		result = a + q * (b - a);
+
+	/* Final rounding must not move the result outside the endpoints. */
+	return Max(a, Min(b, result));
+}
+
+/*
  * Estimate requested quantiles from the t-digest agg state.
  */
 static void
@@ -925,30 +990,10 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 		 */
 		distance = Max(0.0, Min(total_distance, distance));
 
-		/*
-		 * the actual linear interpolation, using the formula
-		 *
-		 *   (1 - q) * v1 + q * v2
-		 *
-		 * XXX The "q" should not overflow/underflow or misbehave in other
-		 * ways, as distance is in [0.0, total_distance]. But clamp anyway,
-		 * to deal with unexpected rounding / precision errors.
-		 *
-		 * XXX Not sure this is needed with the clamped distance.
-		 */
+		/* Keep the interpolation fraction within the centroid bracket. */
 		q = Max(0.0, Min(1.0, distance / total_distance));
 
-		result[i] = (1 - q) * prev->mean + q * next->mean;
-
-		/*
-		 * Clamping "q" is not sufficient to keep the result in the bracket.
-		 * Both products are rounded before they are added, and the sum is
-		 * rounded again, so the convex combination can land an ULP outside
-		 * [prev->mean, next->mean] even for a perfectly clamped "q". Clamp
-		 * the result too - the centroids are sorted, so we know the bracket
-		 * is well ordered.
-		 */
-		result[i] = Max(prev->mean, Min(next->mean, result[i]));
+		result[i] = tdigest_interpolate(prev->mean, next->mean, q);
 	}
 }
 
@@ -1006,7 +1051,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		int			j;
 		double		count;
 		double		value = state->values[i];
-		double		c, d, q, q1, q2, r;
+		double		c, d, q, q1, q2;
 
 		/* next and previous centroids */
 		centroid_t *curr = NULL;
@@ -1162,24 +1207,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 			q = (value / 2.0 - prev->mean / 2.0) / (curr->mean / 2.0 - prev->mean / 2.0);
 		}
 
-		/* calculate the linear interpolation */
-		r = (1 - q) * q1 + q * q2;
-
-		/*
-		 * In principle, the result should be in between the percentiles for
-		 * the two centroids (we're between them)
-		 *
-		 * Assert((q1 <= r) && (r <= q2));
-		 *
-		 * But for extreme values (close to 1.0, which can happen for values
-		 * on the right tail of a massive digest), we can end up rounding to
-		 * a value outside the [q1,q2] range. So clamp the value to defend
-		 * against that.
-		 *
-		 * XXX Try uncommenting the assert, there's a test triggering it.
-		 */
-
-		result[i] = Max(q1, Min(q2, r));
+		result[i] = tdigest_interpolate(q1, q2, q);
 	}
 }
 
