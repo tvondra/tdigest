@@ -2,6 +2,7 @@ Revision history for PostgreSQL extension tdigest.
 
 1.4.7
     - Keep percentile interpolation monotone for closely spaced means and ranks.
+    - Use consistent inverse-percentile ranks at centroid boundaries with large counts.
     - Disable FP contraction for LLVM bitcode as well as native code.
     - Reject text input that underflows to zero, while accepting nonzero subnormals.
     - Restrict uninstall cleanup to this extension's control and SQL files.

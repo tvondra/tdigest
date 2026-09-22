@@ -998,6 +998,29 @@ tdigest_compute_quantiles(tdigest_aggstate_t *state, double *result)
 }
 
 /*
+ * Calculate the rank at the midpoint of a centroid or equal-mean group.
+ *
+ * Form twice the midpoint exactly before converting to double. Rounding the
+ * prefix and half-weight separately can reverse the order of nearby ranks.
+ * Since count_before + count_at <= total_count <= INT64_MAX, the doubled
+ * midpoint fits in uint64, even when it would overflow int64.
+ */
+static double
+tdigest_compute_rank(int64 count_before, int64 count_at, int64 total_count)
+{
+	uint64	count_twice;
+	double	rank;
+
+	Assert(count_at > 0 && count_at <= total_count);
+	Assert(count_before >= 0 && count_before <= total_count - count_at);
+
+	count_twice = 2 * (uint64) count_before + (uint64) count_at;
+	rank = ((double) count_twice / 2.0) / (double) total_count;
+
+	return Max(0.0, Min(1.0, rank));
+}
+
+/*
  * Estimate inverse quantiles for values using a t-digest agg state.
  *
  * Essentially an inverse to tdigest_compute_quantiles.
@@ -1049,9 +1072,9 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 	for (i = 0; i < state->nvalues; i++)
 	{
 		int			j;
-		double		count;
+		int64		count;
 		double		value = state->values[i];
-		double		c, d, q, q1, q2;
+		double		d, q, q1, q2;
 
 		/* next and previous centroids */
 		centroid_t *curr = NULL;
@@ -1109,18 +1132,7 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 				j++;
 			}
 
-			result[i] = (count + (count_at_value / 2.0)) / state->count;
-
-			/*
-			 * The accumulated "count" is a double, so for digests with more
-			 * than 2^53 items it can round up past the exact sum while the
-			 * (double) state->count divisor rounds down. That would yield a
-			 * quantile slightly above 1.0, so clamp it.
-			 *
-			 * XXX All the values are positive, so we probably can't get below
-			 * 0.0, but clamp it anyway for symmetry.
-			 */
-			result[i] = Max(0.0, Min(1.0, result[i]));
+			result[i] = tdigest_compute_rank(count, count_at_value, state->count);
 
 			/* the next centroid has a higher mean, so we're done */
 			continue;
@@ -1162,31 +1174,11 @@ tdigest_compute_quantiles_of(tdigest_aggstate_t *state, double *result)
 		 * works well.
 		 */
 
-		count -= (prev->count / 2.0);
-
-		/*
-		 * We assume for both prev/curr centroids, half the count is on each side,
-		 * so between them we have (prev->count/2 + curr->count/2). At zero we
-		 * are in prev->mean and at (prev->count/2 + curr->count/2) we're at
-		 * curr->mean.
-		 *
-		 * XXX Because (count >= 1), each centroid contributes at least 0.5, so
-		 * we know (c >= 1.0). It can get a bit imprecise for extreme values, due
-		 * to (int64 -> double) conversion. The double ULP is ~512.
-		 */
-		c = (curr->count / 2.0 + prev->count / 2.0);
 		d = (curr->mean - prev->mean);
 
-		/*
-		 * Quantiles for the prev/next mean.
-		 *
-		 * These are also the bounds of the clamp applied to the interpolated
-		 * result below, so they have to be valid quantiles themselves. The
-		 * "count" accumulator is a double, and above 2^53 it can round up
-		 * past the exact sum while the divisor rounds down, so clamp both.
-		 */
-		q1 = Max(0.0, Min(1.0, count / (double) state->count));
-		q2 = Max(0.0, Min(1.0, (count + c) / (double) state->count));
+		/* Use the same exact midpoint arithmetic as the exact-mean branch. */
+		q1 = tdigest_compute_rank(count - prev->count, prev->count, state->count);
+		q2 = tdigest_compute_rank(count, curr->count, state->count);
 
 		Assert(q1 <= q2);
 
