@@ -1241,10 +1241,17 @@ tdigest_aggstate_shrink(tdigest_aggstate_t *state)
 	if (state->maxcentroids * sizeof(centroid_t) <= 8192)
 		return;
 
-	/* find the first power-of-2 capacity above ncentroids */
+	/*
+	 * Find the first power-of-2 capacity above ncentroids. It has to be
+	 * strictly above, so that the buffer we just resized is not immediately
+	 * full again - the next centroid would have to grow it right back.
+	 */
 	state->maxcentroids = BUFFER_INITIAL_SIZE;
-	while (state->maxcentroids < state->ncentroids)
+	while (state->maxcentroids <= state->ncentroids)
 		state->maxcentroids *= 2;
+
+	Assert(state->ncentroids < state->maxcentroids);
+	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
 
 	state->centroids = repalloc(state->centroids,
 								state->maxcentroids * sizeof(centroid_t));
