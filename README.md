@@ -1129,8 +1129,10 @@ float8 output - fail.
 
 For now, the `Makefile` builds with `-ffp-contract=off`, if the compiler
 understands the option, so that the results do not depend on which
-instructions happen to be available. Compilers spelling the option
-differently (or not having it at all) may still produce digests that
+instructions happen to be available. The option is added to both `CFLAGS`
+and `BITCODE_CFLAGS`, because the LLVM bitcode used for JIT inlining is
+compiled separately and does not inherit `CFLAGS`. Compilers spelling the
+option differently (or not having it at all) may still produce digests that
 differ in the last digit or two.
 
 This is merely a workaround to make the tests pass. Ideally, we want to
