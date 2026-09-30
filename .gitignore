@@ -14,3 +14,14 @@ lcov_test.info
 coverage/
 coverage-html-stamp
 tdigest-*.zip
+# fuzzing (see FUZZING.md)
+/fuzz_tdigest_in
+/fuzz_tdigest_recv
+/fuzz_backend.rsp
+/fuzz-out/
+/fuzz-*.log
+/crash-*
+/leak-*
+/oom-*
+/slow-unit-*
+/timeout-*

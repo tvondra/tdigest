@@ -189,9 +189,6 @@ PG_FUNCTION_INFO_V1(tdigest_recv);
 
 PG_FUNCTION_INFO_V1(tdigest_is_valid);
 
-PG_FUNCTION_INFO_V1(tdigest_in_fuzz);
-PG_FUNCTION_INFO_V1(tdigest_recv_fuzz);
-
 PG_FUNCTION_INFO_V1(tdigest_count);
 PG_FUNCTION_INFO_V1(tdigest_to_json);
 PG_FUNCTION_INFO_V1(tdigest_to_array);
@@ -240,9 +237,6 @@ Datum tdigest_send(PG_FUNCTION_ARGS);
 Datum tdigest_recv(PG_FUNCTION_ARGS);
 
 Datum tdigest_is_valid(PG_FUNCTION_ARGS);
-
-Datum tdigest_in_fuzz(PG_FUNCTION_ARGS);
-Datum tdigest_recv_fuzz(PG_FUNCTION_ARGS);
 
 Datum tdigest_count(PG_FUNCTION_ARGS);
 
@@ -3842,29 +3836,6 @@ tdigest_in(PG_FUNCTION_ARGS)
 }
 
 Datum
-tdigest_in_fuzz(PG_FUNCTION_ARGS)
-{
-	tdigest_t *digest;
-	tdigest_aggstate_t *state;
-
-	digest = (tdigest_t *) DatumGetPointer(tdigest_in(fcinfo));
-
-	state = tdigest_digest_to_aggstate(digest);
-
-	for (int i = 0; i < 1000; i++)
-	{
-		tdigest_add(state, (i / 1000.0));
-		//state = (tdigest_aggstate_t *) DatumGetPointer(DirectFunctionCall2(tdigest_add_double,
-		//											PointerGetDatum(state),
-		//											Float8GetDatum(i / 1000.0)));
-	}
-
-	digest = tdigest_aggstate_to_digest(state, true);
-
-	PG_RETURN_POINTER(digest);
-}
-
-Datum
 tdigest_out(PG_FUNCTION_ARGS)
 {
 	int			i;
@@ -3999,29 +3970,6 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	tdigest_update_format(digest);
 
 	AssertCheckTDigest(digest);
-
-	PG_RETURN_POINTER(digest);
-}
-
-Datum
-tdigest_recv_fuzz(PG_FUNCTION_ARGS)
-{
-	tdigest_t *digest;
-	tdigest_aggstate_t *state;
-
-	digest = (tdigest_t *) DatumGetPointer(tdigest_recv(fcinfo));
-
-	state = tdigest_digest_to_aggstate(digest);
-
-	for (int i = 0; i < 1000; i++)
-	{
-		tdigest_add(state, (i / 1000.0));
-		//state = (tdigest_aggstate_t *) DatumGetPointer(DirectFunctionCall2(tdigest_add_double,
-		//											PointerGetDatum(state),
-		//											Float8GetDatum(i / 1000.0)));
-	}
-
-	digest = tdigest_aggstate_to_digest(state, true);
 
 	PG_RETURN_POINTER(digest);
 }
@@ -5083,3 +5031,45 @@ double_array_allocate(int nitems)
 
 	return array;
 }
+
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+
+/*
+ * Functions called by the libFuzzer harnesses (see FUZZING.md). The macro is
+ * defined only when building the fuzzers, so these are not included in the
+ * regular build.
+ *
+ * The wrappers call an input function, and if it accepts the input, add some
+ * values to the digest and compact it. So the fuzzers check not only that
+ * the parsing is safe, but also that the accepted digests are safe to use.
+ */
+Datum tdigest_in_fuzz(PG_FUNCTION_ARGS);
+Datum tdigest_recv_fuzz(PG_FUNCTION_ARGS);
+
+static Datum
+tdigest_fuzz_use_digest(Datum datum)
+{
+	tdigest_aggstate_t *state;
+	int			i;
+
+	state = tdigest_digest_to_aggstate((tdigest_t *) DatumGetPointer(datum));
+
+	for (i = 0; i < 1000; i++)
+		tdigest_add(state, i / 1000.0);
+
+	return PointerGetDatum(tdigest_aggstate_to_digest(state, true));
+}
+
+Datum
+tdigest_in_fuzz(PG_FUNCTION_ARGS)
+{
+	return tdigest_fuzz_use_digest(tdigest_in(fcinfo));
+}
+
+Datum
+tdigest_recv_fuzz(PG_FUNCTION_ARGS)
+{
+	return tdigest_fuzz_use_digest(tdigest_recv(fcinfo));
+}
+
+#endif							/* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */

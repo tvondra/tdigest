@@ -1,0 +1,7 @@
+# Fuzzing is for development only (see FUZZING.md). Keep it out of the release
+# archives, created using "git archive" (by "make dist" and pgxn-bundle).
+/FUZZING.md         export-ignore
+/corpus             export-ignore
+/fuzz_in.c          export-ignore
+/fuzz_recv.c        export-ignore
+/generate-corpus.sh export-ignore

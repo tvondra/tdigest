@@ -16,6 +16,13 @@ DATA = tdigest--1.0.0.sql tdigest--1.0.0--1.0.1.sql tdigest--1.0.1--1.2.0.sql \
 REGRESS      = --schedule=$(srcdir)/test/parallel_schedule
 REGRESS_OPTS = --inputdir=test
 
+# libFuzzer harnesses (see FUZZING.md), built by "make fuzz" from instrumented
+# copies of $(OBJS). Defined before including PGXS, which only looks at
+# EXTRA_CLEAN when it is included.
+FUZZ_TARGETS = fuzz_tdigest_in fuzz_tdigest_recv
+FUZZ_OBJS    = $(OBJS:.o=_fuzz.o)
+EXTRA_CLEAN  = $(FUZZ_TARGETS) $(FUZZ_TARGETS:=.o) $(FUZZ_OBJS) fuzz_backend.rsp
+
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -42,44 +49,6 @@ uninstall-stale:
 	rm -f '$(DESTDIR)$(datadir)/extension/$(EXTENSION).control' \
 		'$(DESTDIR)$(datadir)/extension/$(EXTENSION)--'*.sql
 
-FUZZ_CFLAGS = -fsanitize=fuzzer-no-link
-FUZZ_LDFLAGS = -fsanitize=fuzzer -Wl,--allow-multiple-definition
-
-FUZZ_RECV_TARGETS = fuzz_tdigest_recv
-FUZZ_IN_TARGETS = fuzz_tdigest_in
-fuzz_tdigest_recv_SYMBOL = tdigest_recv_fuzz
-fuzz_tdigest_in_SYMBOL = tdigest_in_fuzz
-FUZZ_TARGETS = $(FUZZ_RECV_TARGETS) $(FUZZ_IN_TARGETS)
-
-FUZZ_RECV_OBJS = $(FUZZ_RECV_TARGETS:%=%.o)
-FUZZ_IN_OBJS = $(FUZZ_IN_TARGETS:%=%.o)
-FUZZ_OBJS = $(FUZZ_RECV_OBJS) $(FUZZ_IN_OBJS)
-
-# FIXME hardcoded location for the static .a libraries etc.
-top_builddir=/home/user/work/postgres
-
-# The static server-side archives, linked as plain objects (not via -lpg*).
-SRV_LIBS = \
-	$(top_builddir)/src/common/libpgcommon_srv.a \
-	$(top_builddir)/src/port/libpgport_srv.a
-
-BACKEND_OBJFILES = \
-	$(top_builddir)/src/backend/*/objfiles.txt \
-	$(top_builddir)/src/timezone/objfiles.txt
-
-BACKEND_ARCHIVE = libpostgres_fuzz.a
-
-# Backend link libraries, mirroring src/backend/Makefile: libpgport and
-# libpgcommon come in as the _srv.a archives above, and the backend needs a
-# few libraries that ordinary frontend programs don't (and none of the
-# line-editing ones).
-BE_LIBS := $(filter-out -lpgport -lpgcommon, $(LIBS))
-BE_LIBS += $(LDAP_LIBS_BE) $(ICU_LIBS) $(LIBURING_LIBS)
-BE_LIBS := $(filter-out -lreadline -ledit -ltermcap -lncurses -lcurses, $(BE_LIBS))
-ifeq ($(with_systemd),yes)
-BE_LIBS += -lsystemd
-endif
-
 dist:
 	git archive --format zip --prefix=$(EXTENSION)-$(DISTVERSION)/ -o $(EXTENSION)-$(DISTVERSION).zip HEAD
 
@@ -89,36 +58,51 @@ dist:
 latest-changes.md: Changes META.json
 	perl -e 'while (<>) {last if /^(v?\Q${DISTVERSION}\E)/; } print "Changes for v${DISTVERSION}:\n"; while (<>) { last if /^\s*$$/; s/^\s+//; print }' Changes > $@
 
+# The fuzzers link the backend objects from the build tree of the PostgreSQL
+# installation, which must be kept after "make install". Its location is
+# recorded in the installed Makefile.global, but PGXS does not set
+# abs_top_builddir, so read it from the file. Set PG_BUILDDIR to override it.
+ifndef PG_BUILDDIR
+PG_BUILDDIR := $(shell sed -n 's/^abs_top_builddir = //p' '$(top_builddir)/src/Makefile.global' 2>/dev/null)
+endif
+
+# FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION is the usual macro for fuzzing
+# builds, it enables the wrappers called by the harnesses in tdigest.c.
+FUZZ_CFLAGS  = -fsanitize=fuzzer-no-link -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+# The backend objects include a main(), but libFuzzer's (linked first) wins.
+FUZZ_LDFLAGS = -fsanitize=fuzzer -Wl,--allow-multiple-definition
+
+# The objfiles.txt lists are touched whenever the backend objects change.
+FUZZ_OBJFILES = $(wildcard $(PG_BUILDDIR)/src/backend/*/objfiles.txt) \
+	$(PG_BUILDDIR)/src/timezone/objfiles.txt
+FUZZ_SRV_LIBS = $(PG_BUILDDIR)/src/common/libpgcommon_srv.a \
+	$(PG_BUILDDIR)/src/port/libpgport_srv.a
+
+# The backend's libraries, as in src/backend/Makefile.
+FUZZ_LIBS = $(filter-out -lpgport -lpgcommon -lreadline -ledit -ltermcap -lncurses -lcurses, \
+	$(LIBS) $(LDAP_LIBS_BE) $(ICU_LIBS) $(LIBURING_LIBS)) \
+	$(if $(filter yes,$(with_systemd)),-lsystemd)
+
+.PHONY: fuzz
 fuzz: $(FUZZ_TARGETS)
 
-# Compile the harness once per target, selecting the receive function.
-# Compile the receive harness once per target, selecting the receive function.
-$(FUZZ_RECV_OBJS): fuzz_%.o: fuzz_recv.c
-	$(CC) $(CFLAGS) $(FUZZ_CFLAGS) $(CPPFLAGS) \
-		-DFUZZ_RECV_SYMBOL=$(fuzz_$*_SYMBOL) -c -o $@ $<
+fuzz_tdigest_in.o: fuzz_in.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FUZZ_CFLAGS) -DFUZZ_IN_SYMBOL=tdigest_in_fuzz -c -o $@ $<
 
-# Compile the input harness once per target, selecting the input function.
-$(FUZZ_IN_OBJS): fuzz_%.o: fuzz_in.c
-	$(CC) $(CFLAGS) $(FUZZ_CFLAGS) $(CPPFLAGS) \
-		-DFUZZ_IN_SYMBOL=$(fuzz_$*_SYMBOL) -c -o $@ $<
+fuzz_tdigest_recv.o: fuzz_recv.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FUZZ_CFLAGS) -DFUZZ_RECV_SYMBOL=tdigest_recv_fuzz -c -o $@ $<
 
-$(FUZZ_TARGETS): fuzz_%: fuzz_%.o $(OBJS) $(BACKEND_ARCHIVE) $(SRV_LIBS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(LDFLAGS_EX_BE) \
-		$< $(OBJS) $(BACKEND_ARCHIVE) $(SRV_LIBS) $(BE_LIBS) \
-		$(FUZZ_LDFLAGS) -o $@
+%_fuzz.o: %.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FUZZ_CFLAGS) -c -o $@ $<
 
-%.o: %.c
-	$(CC) $(CFLAGS) $(FUZZ_CFLAGS) $(CPPFLAGS) -c -o $@ $<
+# Hundreds of absolute paths may exceed the command line length limit, so the
+# backend objects are passed to the linker in a response file.
+fuzz_backend.rsp: $(FUZZ_OBJFILES)
+	sed 's,[^ ][^ ]*,$(PG_BUILDDIR)/&,g' $^ > $@
 
-$(BACKEND_ARCHIVE): | submake-backend
-	rm -f $@
-	cat $(BACKEND_OBJFILES) | xargs -n1 | sed 's,^,$(top_builddir)/,' \
-		| xargs $(AR) $(AROPT) $@
+$(FUZZ_TARGETS): %: %.o $(FUZZ_OBJS) fuzz_backend.rsp $(FUZZ_SRV_LIBS)
+	$(CC) $(CFLAGS) $< $(FUZZ_OBJS) @fuzz_backend.rsp $(FUZZ_SRV_LIBS) \
+		$(LDFLAGS) $(LDFLAGS_EX_BE) $(FUZZ_LIBS) $(FUZZ_LDFLAGS) -o $@
 
-# The instrumented objects need the generated backend headers; the final link
-# needs the whole backend built.
-$(OBJS) $(FUZZ_OBJS): | submake-generated-headers
-
-.PHONY: submake-backend
-submake-backend: | submake-generated-headers
-	$(MAKE) -C $(top_builddir)/src/backend
+$(FUZZ_OBJFILES) $(FUZZ_SRV_LIBS):
+	$(error $@ not found, set PG_BUILDDIR to the PostgreSQL build tree (see FUZZING.md))

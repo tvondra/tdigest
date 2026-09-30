@@ -2,8 +2,7 @@
  *
  * fuzz_in.c
  *	  A libFuzzer harness for exercising type "input" (text input)
- *	  functions of PostgreSQL data types, including those provided by
- *	  extensions such as contrib/ltree.
+ *	  functions of PostgreSQL data types, such as tdigest_in.
  *
  * An input function has the signature
  *
@@ -20,25 +19,25 @@
  * binary "receive" functions; the two share the same minimal, no-backend
  * setup and top-level error handling.
  *
- * The concrete function to fuzz is selected at compile time.  The build
- * system defines FUZZ_IN_SYMBOL to the C name of the input function and
- * links the object files that implement it (plus the whole backend, from
- * which the input function resolves its dependencies).  See meson.build and
- * README for the list of ready-made targets and instructions for adding new
- * ones.
+ * The concrete function to fuzz is selected at compile time.  The Makefile
+ * defines FUZZ_IN_SYMBOL to the C name of the function (tdigest_in_fuzz, a
+ * wrapper of tdigest_in in tdigest.c) and links the object files that
+ * implement it (plus the whole backend, from which the function resolves
+ * its dependencies).  See FUZZING.md for how to build and run the fuzzers,
+ * and how to add new ones.
  *
  * The harness deliberately keeps the amount of backend state it initializes
  * to a minimum: just enough (memory contexts, error handling and the stack
  * depth reference point) for a self-contained input function to run.  It
  * does *not* start a real backend, so it must only be used with input
  * functions that do not require catalog access or a live transaction.  The
- * ltree/lquery/ltxtquery input functions satisfy this requirement.
+ * tdigest input function satisfies this requirement.
  *
  * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/test/fuzz/fuzz_in.c
+ *	  fuzz_in.c
  *
  *-------------------------------------------------------------------------
  */
@@ -63,15 +62,36 @@ extern Datum FUZZ_IN_SYMBOL(FunctionCallInfo fcinfo);
 /*
  * libFuzzer entry points.  libFuzzer's runtime provides main(); it calls
  * LLVMFuzzerInitialize() once and LLVMFuzzerTestOneInput() for every test
- * case.  (The backend static library we link against also defines a main(),
- * so the executable is linked with --allow-multiple-definition, which keeps
- * libFuzzer's; see meson.build.)
+ * case.  (The backend objects we link with also define a main(), so the
+ * executable is linked with --allow-multiple-definition, which keeps
+ * libFuzzer's; see the Makefile.)
  */
 int			LLVMFuzzerInitialize(int *argc, char ***argv);
 int			LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 /* Long-lived context that owns everything allocated while fuzzing. */
 static MemoryContext FuzzContext = NULL;
+
+/*
+ * fuzz_emit_log_hook
+ *
+ * Treat WARNINGs as failures.  With --enable-cassert, the memory contexts
+ * detect some corruption that AddressSanitizer does not (e.g. a write past
+ * the end of a palloc'd chunk, which is part of a larger malloc'd block),
+ * but they report it only as a WARNING, which the fuzzer would not notice.
+ * The fuzzed functions are not expected to emit WARNINGs otherwise, so print
+ * the message and abort, which libFuzzer reports as a crash.
+ */
+static void
+fuzz_emit_log_hook(ErrorData *edata)
+{
+	if (edata->elevel != WARNING)
+		return;
+
+	fprintf(stderr, "WARNING:  %s\n",
+			edata->message ? edata->message : "missing error text");
+	abort();
+}
 
 /*
  * LLVMFuzzerInitialize
@@ -91,6 +111,9 @@ LLVMFuzzerInitialize(int *argc, char ***argv)
 
 	/* Set up the memory context subsystem (TopMemoryContext, ErrorContext). */
 	MemoryContextInit();
+
+	/* Crash on WARNINGs, so that the fuzzer notices them. */
+	emit_log_hook = fuzz_emit_log_hook;
 
 	/*
 	 * A dedicated context for everything a single test case allocates.  We
