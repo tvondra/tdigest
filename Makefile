@@ -81,8 +81,8 @@ fuzz: $(FUZZ_TARGETS)
 # The backend's main.o defines main(), but can't be left out because it also
 # defines other symbols the backend needs. The harness is linked first, so its
 # main() is the one that's used.
-$(FUZZ_TARGETS): fuzz_tdigest_%: fuzz_%.c tdigest.c $(PG_BUILD)/src/backend/postgres
-	$(FUZZ_CC) $(CFLAGS) $(CPPFLAGS) $(FUZZ_DEFINES) $< tdigest.c $(FUZZ_BACKEND) \
+$(FUZZ_TARGETS): fuzz.c tdigest.c $(PG_BUILD)/src/backend/postgres
+	$(FUZZ_CC) $(CFLAGS) $(CPPFLAGS) $(FUZZ_DEFINES) fuzz.c tdigest.c $(FUZZ_BACKEND) \
 		$(LDFLAGS) $(LDFLAGS_EX) $(LDFLAGS_EX_BE) -Wl,--allow-multiple-definition \
 		$(FUZZ_LIBS) -o $@
 

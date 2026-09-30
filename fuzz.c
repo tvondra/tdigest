@@ -1,15 +1,24 @@
 /*-------------------------------------------------------------------------
  *
- * fuzz_recv.c
- *	  Generic fuzzing harness for the binary receive (and send) functions
+ * fuzz.c
+ *	  Generic fuzzing harness for the text input or binary receive function
  *	  of a user-defined data type.
  *
- * This driver is meant to be compiled once per target type together with the
- * type's implementation and the whole backend (see the "fuzz" target in the
- * Makefile).  The receive function to exercise is selected at compile time
- * through the FUZZ_RECV_SYMBOL macro; optionally FUZZ_SEND_SYMBOL names the
- * matching send function, which is then called on every value that the
- * receive function accepts, so that a round-trip through send is fuzzed too.
+ * Input and receive functions parse untrusted data, which makes them a natural
+ * fuzzing target.  The harness is compiled together with the type's
+ * implementation and the whole backend (see the "fuzz" target in the
+ * Makefile).  The function to exercise is selected at compile time, by
+ * defining exactly one of these macros:
+ *
+ *	FUZZ_IN_SYMBOL - the input function, which gets the test case as a
+ *	NUL-terminated string
+ *
+ *	FUZZ_RECV_SYMBOL - the receive function, which gets the test case in a
+ *	message buffer and has to consume all of it
+ *
+ * With FUZZ_RECV_SYMBOL, FUZZ_SEND_SYMBOL may name the matching send function,
+ * which is then called on every value that the receive function accepts, so
+ * that a round-trip through send is fuzzed too.
  *
  * The harness supports two modes:
  *
@@ -23,8 +32,8 @@
  *	   is handy for reproducing crashes found by AFL++ and for quickly
  *	   checking that the harness itself builds and works.
  *
- * A malformed input is expected to make the receive function raise an error
- * via ereport(ERROR); such errors are caught and treated as a normal (non
+ * A malformed input is expected to make the type function raise an error via
+ * ereport(ERROR); such errors are caught and treated as a normal (non
  * crashing) outcome.  Only genuine memory-safety problems - reads/writes out
  * of bounds, assertion failures, etc. - are reported as crashes by the fuzzer.
  *
@@ -32,7 +41,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  fuzz_recv.c
+ *	  fuzz.c
  *
  *-------------------------------------------------------------------------
  */
@@ -46,12 +55,20 @@
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 
-#ifndef FUZZ_RECV_SYMBOL
-#error "FUZZ_RECV_SYMBOL must be defined to the name of the receive function"
+#if defined(FUZZ_IN_SYMBOL) == defined(FUZZ_RECV_SYMBOL)
+#error "exactly one of FUZZ_IN_SYMBOL and FUZZ_RECV_SYMBOL must be defined"
 #endif
 
-/* The receive (and optional send) function are ordinary fmgr functions. */
+#if defined(FUZZ_SEND_SYMBOL) && !defined(FUZZ_RECV_SYMBOL)
+#error "FUZZ_SEND_SYMBOL requires FUZZ_RECV_SYMBOL"
+#endif
+
+/* The type functions are ordinary fmgr functions. */
+#ifdef FUZZ_IN_SYMBOL
+extern PGDLLIMPORT Datum FUZZ_IN_SYMBOL(PG_FUNCTION_ARGS);
+#else
 extern PGDLLIMPORT Datum FUZZ_RECV_SYMBOL(PG_FUNCTION_ARGS);
+#endif
 
 #ifdef FUZZ_SEND_SYMBOL
 extern PGDLLIMPORT Datum FUZZ_SEND_SYMBOL(PG_FUNCTION_ARGS);
@@ -101,8 +118,71 @@ fuzz_setup(void)
 	MemoryContextSwitchTo(fuzz_ctx);
 }
 
+#ifdef FUZZ_IN_SYMBOL
+
 /*
- * Run the receive (and optionally send) function on a single test case.
+ * Parse a test case with the input function.
+ */
+static Datum
+fuzz_input(const char *data, size_t len)
+{
+	char	   *str;
+
+	/*
+	 * Input functions take a NUL-terminated C string.  The fuzzer supplies
+	 * arbitrary bytes with an explicit length, so copy them into a freshly
+	 * allocated, NUL-terminated buffer.  Any embedded NUL simply truncates the
+	 * string, exactly as it would for a client-supplied value.
+	 */
+	str = palloc(len + 1);
+	if (len > 0)
+		memcpy(str, data, len);
+	str[len] = '\0';
+
+	/*
+	 * The type OID is not known, and there is no typmod.  Input functions
+	 * that don't need them simply ignore these arguments.
+	 */
+	return DirectFunctionCall3(FUZZ_IN_SYMBOL,
+							   CStringGetDatum(str),
+							   ObjectIdGetDatum(InvalidOid),
+							   Int32GetDatum(-1));
+}
+
+#else							/* FUZZ_RECV_SYMBOL */
+
+/*
+ * Parse a test case with the receive function.
+ */
+static Datum
+fuzz_input(const char *data, size_t len)
+{
+	StringInfoData buf;
+	Datum		result;
+
+	/* Wrap the fuzzer-supplied bytes in a StringInfo message buffer. */
+	initStringInfo(&buf);
+	appendBinaryStringInfo(&buf, data, (int) len);
+
+	/*
+	 * The type OID is not known, and there is no typmod.  Receive functions
+	 * that don't need them simply ignore these arguments.
+	 */
+	result = DirectFunctionCall3(FUZZ_RECV_SYMBOL,
+								 PointerGetDatum(&buf),
+								 ObjectIdGetDatum(InvalidOid),
+								 Int32GetDatum(-1));
+
+	/* Reject inputs that left unconsumed trailing bytes, like the server. */
+	pq_getmsgend(&buf);
+
+	return result;
+}
+
+#endif							/* FUZZ_IN_SYMBOL */
+
+/*
+ * Run a single test case.
  *
  * All work happens inside fuzz_ctx, which is reset afterwards so that memory
  * usage stays bounded across the many iterations of persistent mode.  Errors
@@ -118,34 +198,17 @@ fuzz_one(const char *data, size_t len)
 
 	if (sigsetjmp(local_sigjmp_buf, 1) == 0)
 	{
-		StringInfoData buf;
-		Datum		result;
+		Datum		value;
 
 		PG_exception_stack = &local_sigjmp_buf;
 
-		/* Wrap the fuzzer-supplied bytes in a StringInfo message buffer. */
-		initStringInfo(&buf);
-		appendBinaryStringInfo(&buf, data, (int) len);
-
-		/*
-		 * Call the receive function.  We pass a valid-looking type OID and
-		 * typmod so that receive functions which read those arguments (for
-		 * example array or record receive) behave sanely; scalar receive
-		 * functions such as ltree_recv simply ignore them.
-		 */
-		result = DirectFunctionCall3(FUZZ_RECV_SYMBOL,
-									 PointerGetDatum(&buf),
-									 ObjectIdGetDatum(InvalidOid),
-									 Int32GetDatum(-1));
-
-		/* Reject inputs that left unconsumed trailing bytes, like the server. */
-		pq_getmsgend(&buf);
+		value = fuzz_input(data, len);
 
 #ifdef FUZZ_SEND_SYMBOL
 		/* Round-trip the accepted value back out through the send function. */
-		(void) DirectFunctionCall1(FUZZ_SEND_SYMBOL, result);
+		(void) DirectFunctionCall1(FUZZ_SEND_SYMBOL, value);
 #else
-		(void) result;
+		(void) value;
 #endif
 	}
 	else

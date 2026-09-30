@@ -1,11 +1,11 @@
 # Fuzzing t-digest with AFL++
 
 There are two [AFL++](https://aflplus.plus/) harnesses for the functions that
-parse untrusted input:
+parse untrusted input, both built from `fuzz.c`:
 
-* `fuzz_tdigest_in` (`fuzz_in.c`) - the text input function `tdigest_in`
-* `fuzz_tdigest_recv` (`fuzz_recv.c`) - the binary receive function
-  `tdigest_recv`, followed by `tdigest_send` for accepted values
+* `fuzz_tdigest_in` - the text input function `tdigest_in`
+* `fuzz_tdigest_recv` - the binary receive function `tdigest_recv`, followed
+  by `tdigest_send` for accepted values
 
 The harnesses are standalone executables, linking `tdigest.c` with the backend
 object files of a PostgreSQL build tree - no server or database is needed.
