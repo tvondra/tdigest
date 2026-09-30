@@ -1,0 +1,51 @@
+diff --git a/src/backend/utils/adt/pg_locale.c b/src/backend/utils/adt/pg_locale.c
+index db851bf15b9..b4f13e2e680 100644
+--- a/src/backend/utils/adt/pg_locale.c
++++ b/src/backend/utils/adt/pg_locale.c
+@@ -1169,8 +1169,33 @@ init_database_collation(void)
+ }
+ 
+ /*
+- * Get database default locale.
++ * Initialize default_locale with a plain C/POSIX locale, without consulting
++ * the system catalogs.
++ *
++ * A normal backend uses init_database_collation() instead, which reads the
++ * database's locale settings from pg_database.  This variant exists for
++ * standalone programs -- such as the fuzzing harnesses in src/test/fuzz --
++ * that need to run type input/output code (which may classify characters via
++ * the default collation) without access to a live catalog.
+  */
++void
++init_database_collation_standalone(void)
++{
++	pg_locale_t result;
++
++	Assert(default_locale == NULL);
++
++	result = MemoryContextAllocZero(TopMemoryContext,
++									sizeof(struct pg_locale_struct));
++	result->deterministic = true;
++	result->collate_is_c = true;
++	result->ctype_is_c = true;
++	result->is_default = true;
++
++	default_locale = result;
++}
++
++
+ pg_locale_t
+ pg_database_locale(void)
+ {
+diff --git a/src/include/utils/pg_locale.h b/src/include/utils/pg_locale.h
+index 3c3184725dc..6dd0637dcc3 100644
+--- a/src/include/utils/pg_locale.h
++++ b/src/include/utils/pg_locale.h
+@@ -193,6 +193,7 @@ struct pg_locale_struct
+ };
+ 
+ extern void init_database_collation(void);
++extern void init_database_collation_standalone(void);
+ extern pg_locale_t pg_database_locale(void);
+ extern pg_locale_t pg_newlocale_from_collation(Oid collid);
+ 
