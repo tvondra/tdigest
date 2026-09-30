@@ -1,0 +1,47 @@
+#
+# AFL++ dictionary for the fuzz_tdigest_in harness (see FUZZING.md)
+#
+# The text format is "flags F count N compression C centroids K", followed by
+# K centroids " (mean, count)". Without the dictionary, the fuzzer rarely
+# produces the special and out-of-range numbers, and misses the error paths
+# of tdigest_in handling them.
+#
+
+# keywords and separators
+"flags "
+" count "
+" compression "
+" centroids "
+" ("
+", "
+")"
+
+# compression has to be in [10, 10000], with at most 10 * compression centroids
+"10"
+"10000"
+"10001"
+"100000"
+"100001"
+
+# int32 and int64 limits
+"2147483647"
+"2147483648"
+"-2147483648"
+"9223372036854775807"
+"9223372036854775808"
+"-9223372036854775808"
+
+# special, out-of-range and subnormal doubles
+"inf"
+"-inf"
+"infinity"
+"nan"
+"-nan"
+"1.7976931348623157e+308"
+"1e309"
+"2.2250738585072014e-308"
+"5e-324"
+"1e-400"
+"0x1p-1074"
+"e+"
+"e-"

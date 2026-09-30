@@ -115,10 +115,15 @@ so AddressSanitizer detects overflows (see Limitations).
 ## Run the fuzzer
 
 ```sh
-afl-fuzz -i seeds-in -o out-in -- $TDIGEST/fuzz_tdigest_in
+afl-fuzz -i seeds-in -o out-in -x $TDIGEST/fuzz_tdigest_in.dict -- $TDIGEST/fuzz_tdigest_in
 afl-fuzz -i seeds-recv -o out-recv -- $TDIGEST/fuzz_tdigest_recv
 ```
 
+* `fuzz_tdigest_in.dict` is a dictionary of keywords and interesting numbers
+  of the text format (`inf`, `nan`, out-of-range and subnormal values, integer
+  limits). Without it, the fuzzer hardly ever produces the special values, and
+  misses the code handling them. The binary format does not need a dictionary,
+  the fuzzer finds its special values by flipping bits.
 * The harnesses get the inputs through shared memory (persistent mode), so
   don't use `@@`.
 * If `afl-fuzz` refuses to start (e.g. because of `core_pattern`), follow the
