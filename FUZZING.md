@@ -73,8 +73,7 @@ AFL_USE_ASAN=1 make fuzz PG_CONFIG=$PGFUZZ/bin/pg_config
 ```
 
 This builds `fuzz_tdigest_in` and `fuzz_tdigest_recv` with AddressSanitizer.
-The `-Wdeclaration-after-statement` and `-Wmissing-variable-declarations`
-warnings come from AFL++ macros and are harmless. Make variables:
+Make variables:
 
 * `PG_BUILD` - the PostgreSQL build tree, read from the `Makefile.global` of
   the installation. Set this if the build tree was moved.

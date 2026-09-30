@@ -227,6 +227,16 @@ fuzz_one(const char *data, size_t len)
 
 #ifdef __AFL_FUZZ_TESTCASE_LEN
 
+/*
+ * The AFL++ macros define variables without a prior declaration, and mix
+ * declarations and code, which would trigger warnings with our CFLAGS.  Older
+ * GCC versions don't know -Wmissing-variable-declarations, hence -Wpragmas.
+ */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
+#pragma GCC diagnostic ignored "-Wmissing-variable-declarations"
+
 /* Reserve space for the shared test-case buffer used by persistent mode. */
 __AFL_FUZZ_INIT();
 
@@ -253,6 +263,8 @@ main(int argc, char **argv)
 
 	return 0;
 }
+
+#pragma GCC diagnostic pop
 
 #else							/* !__AFL_FUZZ_TESTCASE_LEN */
 
