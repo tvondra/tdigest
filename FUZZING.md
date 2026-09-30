@@ -33,11 +33,9 @@ the distribution or build it from https://github.com/AFLplusplus/AFLplusplus.
 
 ## Build PostgreSQL
 
-PostgreSQL needs `postgres-collation.patch` from this repository. The patch
-adds `init_database_collation_standalone()`, which the harnesses use to set up
-the default collation without catalogs (without the patch, the harness build
-fails with "call to undeclared function"). It was tested with master at commit
-`b69356cd789` (2026-09-30); check out that commit if it does not apply.
+The harnesses are linked with the object files of a PostgreSQL build tree, so
+PostgreSQL has to be built from source. This was tested with master at commit
+`b69356cd789` (2026-09-30).
 
 ```sh
 TDIGEST=$HOME/tdigest          # this repository
@@ -46,7 +44,7 @@ PGFUZZ=$HOME/fuzz/pg           # PostgreSQL installation
 
 git clone https://git.postgresql.org/git/postgresql.git $PGSRC
 cd $PGSRC
-git apply $TDIGEST/postgres-collation.patch
+git apply $TDIGEST/postgres-collation.patch    # optional, see below
 ./configure --prefix=$PGFUZZ --enable-debug --enable-cassert \
     --without-icu --without-readline --without-zlib CC=clang
 make -j$(nproc)
@@ -54,6 +52,11 @@ make install
 ```
 
 * Keep the build tree - the harnesses are linked with its object files.
+* `postgres-collation.patch` adds `init_database_collation_standalone()`,
+  which the harnesses call (if available) to set up the default collation
+  without catalogs. tdigest does not use collations, so the patch is not
+  required - but the harness is not specific to tdigest, and other data types
+  may need it.
 * `--enable-cassert` enables assertions and memory context checks, which catch
   bugs AddressSanitizer does not see (see Limitations).
 * The `--without-*` options only reduce the number of required packages.

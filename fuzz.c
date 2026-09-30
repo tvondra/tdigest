@@ -105,12 +105,16 @@ fuzz_setup(void)
 	(void) set_stack_base();
 	emit_log_hook = fuzz_emit_log_hook;
 
+#ifdef HAVE_INIT_DATABASE_COLLATION_STANDALONE
 	/*
 	 * Type input/output code may classify characters using the default
 	 * collation, which normally comes from the catalogs.  Since we run without
-	 * a live catalog, install a plain C locale instead.
+	 * a live catalog, install a plain C locale instead.  This requires a
+	 * patched PostgreSQL (see postgres-collation.patch), but tdigest does not
+	 * use collations, so it's optional.
 	 */
 	init_database_collation_standalone();
+#endif
 
 	fuzz_ctx = AllocSetContextCreate(TopMemoryContext,
 									 "fuzz",

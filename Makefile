@@ -72,6 +72,12 @@ FUZZ_LIBS = \
 	$(LDAP_LIBS_BE) $(ICU_LIBS) $(LIBURING_LIBS) \
 	$(if $(filter yes,$(with_systemd)),-lsystemd)
 
+# init_database_collation_standalone() is added by postgres-collation.patch.
+# tdigest does not use collations, so call it only if it's available.
+FUZZ_CPPFLAGS = \
+	$(if $(shell grep -s init_database_collation_standalone \
+		$(includedir_server)/utils/pg_locale.h),-DHAVE_INIT_DATABASE_COLLATION_STANDALONE)
+
 fuzz_tdigest_in: FUZZ_DEFINES = -DFUZZ_IN_SYMBOL=tdigest_in
 fuzz_tdigest_recv: FUZZ_DEFINES = -DFUZZ_RECV_SYMBOL=tdigest_recv -DFUZZ_SEND_SYMBOL=tdigest_send
 
@@ -82,7 +88,8 @@ fuzz: $(FUZZ_TARGETS)
 # defines other symbols the backend needs. The harness is linked first, so its
 # main() is the one that's used.
 $(FUZZ_TARGETS): fuzz.c tdigest.c $(PG_BUILD)/src/backend/postgres
-	$(FUZZ_CC) $(CFLAGS) $(CPPFLAGS) $(FUZZ_DEFINES) fuzz.c tdigest.c $(FUZZ_BACKEND) \
+	$(FUZZ_CC) $(CFLAGS) $(CPPFLAGS) $(FUZZ_CPPFLAGS) $(FUZZ_DEFINES) \
+		fuzz.c tdigest.c $(FUZZ_BACKEND) \
 		$(LDFLAGS) $(LDFLAGS_EX) $(LDFLAGS_EX_BE) -Wl,--allow-multiple-definition \
 		$(FUZZ_LIBS) -o $@
 
