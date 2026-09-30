@@ -11,8 +11,8 @@
  * functions, are a natural fuzzing target.
  *
  * The driver is compiled once per target type together with the type's
- * implementation and the whole backend (see the meson.build and Makefile in
- * this directory).  The input function to exercise is selected at compile time
+ * implementation and the whole backend (see the "fuzz" target in the
+ * Makefile).  The input function to exercise is selected at compile time
  * through the FUZZ_IN_SYMBOL macro.
  *
  * The harness supports two modes:
@@ -36,7 +36,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/test/fuzz/fuzz_in.c
+ *	  fuzz_in.c
  *
  *-------------------------------------------------------------------------
  */
@@ -60,6 +60,22 @@ extern PGDLLIMPORT Datum FUZZ_IN_SYMBOL(PG_FUNCTION_ARGS);
 static MemoryContext fuzz_ctx = NULL;
 
 /*
+ * The input function is not expected to emit warnings, but the memory context
+ * checks in assert-enabled builds report problems like writes past the end of
+ * a chunk only as a WARNING, which the fuzzer would not notice.  Report those
+ * (and anything more severe that is not caught as an ERROR) as crashes.
+ */
+static void
+fuzz_emit_log_hook(ErrorData *edata)
+{
+	if (edata->elevel >= WARNING)
+	{
+		fprintf(stderr, "unexpected message: %s\n", edata->message);
+		abort();
+	}
+}
+
+/*
  * One-time set up of the minimal backend environment needed to run type
  * input/output code: process id, memory contexts and the stack-depth base.
  */
@@ -69,6 +85,7 @@ fuzz_setup(void)
 	MyProcPid = getpid();
 	MemoryContextInit();
 	(void) set_stack_base();
+	emit_log_hook = fuzz_emit_log_hook;
 
 	/*
 	 * Type input/output code may classify characters using the default

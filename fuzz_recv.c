@@ -5,8 +5,8 @@
  *	  of a user-defined data type.
  *
  * This driver is meant to be compiled once per target type together with the
- * type's implementation and the whole backend (see the meson.build in this
- * directory).  The receive function to exercise is selected at compile time
+ * type's implementation and the whole backend (see the "fuzz" target in the
+ * Makefile).  The receive function to exercise is selected at compile time
  * through the FUZZ_RECV_SYMBOL macro; optionally FUZZ_SEND_SYMBOL names the
  * matching send function, which is then called on every value that the
  * receive function accepts, so that a round-trip through send is fuzzed too.
@@ -32,7 +32,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/test/fuzz/fuzz_recv.c
+ *	  fuzz_recv.c
  *
  *-------------------------------------------------------------------------
  */
@@ -61,6 +61,22 @@ extern PGDLLIMPORT Datum FUZZ_SEND_SYMBOL(PG_FUNCTION_ARGS);
 static MemoryContext fuzz_ctx = NULL;
 
 /*
+ * The type functions are not expected to emit warnings, but the memory context
+ * checks in assert-enabled builds report problems like writes past the end of
+ * a chunk only as a WARNING, which the fuzzer would not notice.  Report those
+ * (and anything more severe that is not caught as an ERROR) as crashes.
+ */
+static void
+fuzz_emit_log_hook(ErrorData *edata)
+{
+	if (edata->elevel >= WARNING)
+	{
+		fprintf(stderr, "unexpected message: %s\n", edata->message);
+		abort();
+	}
+}
+
+/*
  * One-time set up of the minimal backend environment needed to run type
  * input/output code: process id, memory contexts and the stack-depth base.
  */
@@ -70,6 +86,7 @@ fuzz_setup(void)
 	MyProcPid = getpid();
 	MemoryContextInit();
 	(void) set_stack_base();
+	emit_log_hook = fuzz_emit_log_hook;
 
 	/*
 	 * Type input/output code may classify characters using the default

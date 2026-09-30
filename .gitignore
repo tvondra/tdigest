@@ -14,3 +14,5 @@ lcov_test.info
 coverage/
 coverage-html-stamp
 tdigest-*.zip
+/fuzz_tdigest_in
+/fuzz_tdigest_recv
