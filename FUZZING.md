@@ -4,16 +4,18 @@ There are two [AFL++](https://aflplus.plus/) harnesses for the functions that
 parse untrusted input, both built from `fuzz.c`:
 
 * `fuzz_tdigest_in` - the text input function `tdigest_in`
-* `fuzz_tdigest_recv` - the binary receive function `tdigest_recv`, followed
-  by `tdigest_send` for accepted values
+* `fuzz_tdigest_recv` - the binary receive function `tdigest_recv`
 
 The harnesses are standalone executables, linking `tdigest.c` with the backend
 object files of a PostgreSQL build tree - no server or database is needed.
-Rejecting an input with an `ERROR` is the expected outcome. Crashes, failed
-assertions and AddressSanitizer errors are reported by the fuzzer, and so is
-any `WARNING` or more severe message - the harnesses abort on those, because
-the memory context checks in assert-enabled builds report problems like writes
-past the end of a chunk as a `WARNING`.
+
+Rejecting an input with an `ERROR` is the expected outcome. An accepted value
+has to survive a round trip: its output (`tdigest_out` or `tdigest_send`) has
+to be accepted again, and produce the same output. Crashes, failed assertions,
+AddressSanitizer errors and failed round trips are reported by the fuzzer, and
+so is any `WARNING` or more severe message - the harnesses abort on those,
+because the memory context checks in assert-enabled builds report problems
+like writes past the end of a chunk as a `WARNING`.
 
 Only Linux is supported, and PostgreSQL has to be built with configure/make
 (meson builds don't produce the `objfiles.txt` files the build relies on).
@@ -138,6 +140,9 @@ use a pipe, because the harness reads the input with a single `read()`:
 $TDIGEST/fuzz_tdigest_in < out-in/default/crashes/id:000000,...
 ```
 
+A failed round trip prints `output changed by a round trip`, or the error
+raised by the output or input function (as `unexpected message: ...`).
+
 To minimize a crashing input:
 
 ```sh
@@ -157,5 +162,5 @@ package or set `ASAN_SYMBOLIZER_PATH`.
 * In assert-enabled builds, a write to the first byte after a chunk (if the
   chunk has any unused space) is reported by the memory context checks. But a
   write further past the end of a small chunk may go unnoticed.
-* Only the input, receive and send functions are fuzzed, not the aggregates or
-  other functions working with the digests.
+* Only the input, output, receive and send functions are fuzzed, not the
+  aggregates or other functions working with the digests.

@@ -16,9 +16,10 @@
  *	FUZZ_RECV_SYMBOL - the receive function, which gets the test case in a
  *	message buffer and has to consume all of it
  *
- * With FUZZ_RECV_SYMBOL, FUZZ_SEND_SYMBOL may name the matching send function,
- * which is then called on every value that the receive function accepts, so
- * that a round-trip through send is fuzzed too.
+ * Optionally, FUZZ_OUT_SYMBOL (with FUZZ_IN_SYMBOL) or FUZZ_SEND_SYMBOL (with
+ * FUZZ_RECV_SYMBOL) may name the matching output or send function.  Every
+ * accepted value then has to survive a round trip: its output has to be
+ * accepted by the input function, and produce the same output again.
  *
  * The harness supports two modes:
  *
@@ -34,8 +35,9 @@
  *
  * A malformed input is expected to make the type function raise an error via
  * ereport(ERROR); such errors are caught and treated as a normal (non
- * crashing) outcome.  Only genuine memory-safety problems - reads/writes out
- * of bounds, assertion failures, etc. - are reported as crashes by the fuzzer.
+ * crashing) outcome.  Only genuine problems - reads/writes out of bounds,
+ * assertion failures, failed round trips, etc. - are reported as crashes by
+ * the fuzzer.
  *
  * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
@@ -54,13 +56,24 @@
 #include "miscadmin.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
+#if PG_VERSION_NUM >= 160000
+#include "varatt.h"
+#endif
 
 #if defined(FUZZ_IN_SYMBOL) == defined(FUZZ_RECV_SYMBOL)
 #error "exactly one of FUZZ_IN_SYMBOL and FUZZ_RECV_SYMBOL must be defined"
 #endif
 
+#if defined(FUZZ_OUT_SYMBOL) && !defined(FUZZ_IN_SYMBOL)
+#error "FUZZ_OUT_SYMBOL requires FUZZ_IN_SYMBOL"
+#endif
+
 #if defined(FUZZ_SEND_SYMBOL) && !defined(FUZZ_RECV_SYMBOL)
 #error "FUZZ_SEND_SYMBOL requires FUZZ_RECV_SYMBOL"
+#endif
+
+#if defined(FUZZ_OUT_SYMBOL) || defined(FUZZ_SEND_SYMBOL)
+#define FUZZ_ROUNDTRIP
 #endif
 
 /* The type functions are ordinary fmgr functions. */
@@ -68,6 +81,10 @@
 extern PGDLLIMPORT Datum FUZZ_IN_SYMBOL(PG_FUNCTION_ARGS);
 #else
 extern PGDLLIMPORT Datum FUZZ_RECV_SYMBOL(PG_FUNCTION_ARGS);
+#endif
+
+#ifdef FUZZ_OUT_SYMBOL
+extern PGDLLIMPORT Datum FUZZ_OUT_SYMBOL(PG_FUNCTION_ARGS);
 #endif
 
 #ifdef FUZZ_SEND_SYMBOL
@@ -153,6 +170,24 @@ fuzz_input(const char *data, size_t len)
 							   Int32GetDatum(-1));
 }
 
+#ifdef FUZZ_OUT_SYMBOL
+
+/*
+ * Convert a value back to a string with the output function.
+ */
+static char *
+fuzz_output(Datum value, size_t *len)
+{
+	char	   *str;
+
+	str = DatumGetCString(DirectFunctionCall1(FUZZ_OUT_SYMBOL, value));
+	*len = strlen(str);
+
+	return str;
+}
+
+#endif							/* FUZZ_OUT_SYMBOL */
+
 #else							/* FUZZ_RECV_SYMBOL */
 
 /*
@@ -183,15 +218,64 @@ fuzz_input(const char *data, size_t len)
 	return result;
 }
 
+#ifdef FUZZ_SEND_SYMBOL
+
+/*
+ * Convert a value back to the binary format with the send function.
+ */
+static char *
+fuzz_output(Datum value, size_t *len)
+{
+	bytea	   *result;
+
+	result = DatumGetByteaPP(DirectFunctionCall1(FUZZ_SEND_SYMBOL, value));
+	*len = VARSIZE_ANY_EXHDR(result);
+
+	return VARDATA_ANY(result);
+}
+
+#endif							/* FUZZ_SEND_SYMBOL */
+
 #endif							/* FUZZ_IN_SYMBOL */
+
+#ifdef FUZZ_ROUNDTRIP
+
+/*
+ * Check that an accepted value survives a round trip through the output and
+ * input functions.
+ *
+ * The first output may differ from the test case, which does not need to be
+ * in the canonical form.  But the input function has to accept it, and the
+ * resulting value has to produce the same output again.
+ */
+static void
+fuzz_roundtrip(Datum value)
+{
+	char	   *output1,
+			   *output2;
+	size_t		len1,
+				len2;
+
+	output1 = fuzz_output(value, &len1);
+	value = fuzz_input(output1, len1);
+	output2 = fuzz_output(value, &len2);
+
+	if (len1 != len2 || memcmp(output1, output2, len1) != 0)
+	{
+		fprintf(stderr, "output changed by a round trip\n");
+		abort();
+	}
+}
+
+#endif							/* FUZZ_ROUNDTRIP */
 
 /*
  * Run a single test case.
  *
  * All work happens inside fuzz_ctx, which is reset afterwards so that memory
  * usage stays bounded across the many iterations of persistent mode.  Errors
- * raised by the type functions are caught and ignored - they simply mean the
- * input was rejected as invalid, which is not a bug.
+ * raised while parsing the test case are caught and ignored - they simply mean
+ * the input was rejected as invalid, which is not a bug.
  */
 static void
 fuzz_one(const char *data, size_t len)
@@ -208,9 +292,15 @@ fuzz_one(const char *data, size_t len)
 
 		value = fuzz_input(data, len);
 
-#ifdef FUZZ_SEND_SYMBOL
-		/* Round-trip the accepted value back out through the send function. */
-		(void) DirectFunctionCall1(FUZZ_SEND_SYMBOL, value);
+#ifdef FUZZ_ROUNDTRIP
+
+		/*
+		 * The value was accepted, so the round trip must not fail.  Remove
+		 * the exception handler, so that an ERROR is promoted to FATAL, which
+		 * fuzz_emit_log_hook reports as a crash.
+		 */
+		PG_exception_stack = NULL;
+		fuzz_roundtrip(value);
 #else
 		(void) value;
 #endif

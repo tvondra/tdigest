@@ -78,7 +78,7 @@ FUZZ_CPPFLAGS = \
 	$(if $(shell grep -s init_database_collation_standalone \
 		$(includedir_server)/utils/pg_locale.h),-DHAVE_INIT_DATABASE_COLLATION_STANDALONE)
 
-fuzz_tdigest_in: FUZZ_DEFINES = -DFUZZ_IN_SYMBOL=tdigest_in
+fuzz_tdigest_in: FUZZ_DEFINES = -DFUZZ_IN_SYMBOL=tdigest_in -DFUZZ_OUT_SYMBOL=tdigest_out
 fuzz_tdigest_recv: FUZZ_DEFINES = -DFUZZ_RECV_SYMBOL=tdigest_recv -DFUZZ_SEND_SYMBOL=tdigest_send
 
 .PHONY: fuzz
