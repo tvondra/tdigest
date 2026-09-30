@@ -60,8 +60,9 @@ make install
 * `--enable-cassert` enables assertions and memory context checks, which catch
   bugs AddressSanitizer does not see (see Limitations).
 * The `--without-*` options only reduce the number of required packages.
-* A gcc build works too, but the harnesses are compiled by clang with the same
-  `CFLAGS`, which results in warnings about unknown warning options.
+* A gcc build works too, but the harnesses are compiled by clang with the
+  `CFLAGS` and headers of that build, which results in many harmless warnings
+  (unknown warning options, unsupported `gnu_printf` format attribute).
 * PostgreSQL itself is not instrumented, only the harness and `tdigest.c` are.
   Instrumenting the whole backend (`CC=afl-clang-fast`) works too, but the
   fuzzing is about half as fast, and `afl-showmap` or `afl-tmin` then require
