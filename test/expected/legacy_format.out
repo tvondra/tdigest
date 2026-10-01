@@ -1,0 +1,264 @@
+-- Exercise stored sum/count digests, not just legacy text or binary input:
+-- tdigest_in() and tdigest_recv() already convert those inputs to mean/count.
+-- Clear the flags of a valid digest whose "means" contain centroid sums.
+-- The zero flag is endian-independent; the other fields keep their native
+-- representation. All fixtures remain valid digests.
+\set VERBOSITY terse
+CREATE FUNCTION tdigest_legacy_from_sums(sums tdigest) RETURNS tdigest
+LANGUAGE sql IMMUTABLE STRICT AS $$
+    SELECT overlay(sums::bytea PLACING '\x00000000'::bytea FROM 1 FOR 4)::tdigest;
+$$;
+-- The bigint first column also gives the full-header inline fixture an
+-- aligned location, exercising conversion of a borrowed, non-detoasted value.
+CREATE TABLE tdigest_legacy_values (
+    id bigint,
+    legacy tdigest,
+    modern tdigest,
+    original bytea
+);
+ALTER TABLE tdigest_legacy_values ALTER COLUMN legacy SET STORAGE EXTERNAL;
+-- Single centroid, unequal weights, unsorted/repeated means, and a value
+-- large enough not to use a short varlena header. Counts greater than one
+-- make treating sums as means observably wrong.
+INSERT INTO tdigest_legacy_values
+SELECT id, tdigest_legacy_from_sums(sums), modern,
+       tdigest_legacy_from_sums(sums)::bytea
+  FROM (VALUES
+    (1, 'flags 1 count 5 compression 10000 centroids 1 (50, 5)'::tdigest,
+        'flags 1 count 5 compression 10000 centroids 1 (10, 5)'::tdigest),
+    (2, 'flags 1 count 10 compression 10000 centroids 3 (4, 2) (30, 3) (150, 5)'::tdigest,
+        'flags 1 count 10 compression 10000 centroids 3 (2, 2) (10, 3) (30, 5)'::tdigest),
+    (3, 'flags 1 count 15 compression 10000 centroids 4 (90, 9) (-10, 2) (60, 3) (10, 1)'::tdigest,
+        'flags 1 count 15 compression 10000 centroids 4 (10, 9) (-5, 2) (20, 3) (10, 1)'::tdigest),
+    (4, 'flags 1 count 44 compression 10000 centroids 8 (-8, 2) (-9, 3) (-8, 4) (-5, 5) (0, 6) (7, 7) (16, 8) (27, 9)'::tdigest,
+        'flags 1 count 44 compression 10000 centroids 8 (-4, 2) (-3, 3) (-2, 4) (-1, 5) (0, 6) (1, 7) (2, 8) (3, 9)'::tdigest)
+  ) AS v(id, sums, modern);
+-- An out-of-line uncompressed legacy value.
+INSERT INTO tdigest_legacy_values
+SELECT 5, tdigest_legacy_from_sums(sums), modern,
+       tdigest_legacy_from_sums(sums)::bytea
+  FROM (
+    SELECT format('flags 1 count %s compression 10000 centroids 256 %s',
+                  sum(n), string_agg(format('(%s, %s)', v * n, n), ' ' ORDER BY i))::tdigest AS sums,
+           format('flags 1 count %s compression 10000 centroids 256 %s',
+                  sum(n), string_agg(format('(%s, %s)', v, n), ' ' ORDER BY i))::tdigest AS modern
+      FROM (SELECT i, i - 128 AS v, 2 + i % 5 AS n
+              FROM generate_series(1, 256) AS s(i)) AS inputs
+  ) AS digests;
+-- Rebuild the value so the new storage policy can compress it, rather than
+-- reusing an existing external TOAST pointer.
+ALTER TABLE tdigest_legacy_values ALTER COLUMN legacy SET STORAGE EXTENDED;
+INSERT INTO tdigest_legacy_values
+SELECT 6, tdigest_legacy_from_sums(legacy), modern, original
+  FROM tdigest_legacy_values WHERE id = 5;
+-- Prove the stored fixtures really retain flags = 0 before any consumer
+-- runs. Reading the flag through a JSON/array conversion would hide it.
+SELECT id, substring(legacy::bytea FROM 1 FOR 4) = '\x00000000'::bytea AS old_format,
+       tdigest_is_valid(legacy) AS valid, tdigest_count(legacy) AS count
+  FROM tdigest_legacy_values ORDER BY id;
+ id | old_format | valid | count 
+----+------------+-------+-------
+  1 | t          | t     |     5
+  2 | t          | t     |    10
+  3 | t          | t     |    15
+  4 | t          | t     |    44
+  5 | t          | t     |  1023
+  6 | t          | t     |  1023
+(6 rows)
+
+SELECT id, pg_column_size(legacy) < octet_length(original) AS compressed
+  FROM tdigest_legacy_values WHERE id >= 5 ORDER BY id;
+ id | compressed 
+----+------------
+  5 | f
+  6 | t
+(2 rows)
+
+-- Compare every scalar consumer with the independently specified mean/count
+-- digest. NULL-safe comparisons also check empty trimmed ranges.
+WITH probes AS (
+    SELECT ARRAY[0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]::double precision[] AS percentiles,
+           ARRAY[-1000, -5, 0, 2, 10, 20, 30, 100, 1000]::double precision[] AS vals
+)
+SELECT operation, bool_and(matches) AS matches
+  FROM tdigest_legacy_values, probes,
+       LATERAL (VALUES
+         (1, 'tdigest_count',
+             tdigest_count(legacy) IS NOT DISTINCT FROM tdigest_count(modern)),
+         (2, 'tdigest_percentile scalar',
+             ARRAY(SELECT tdigest_percentile(legacy, p) FROM unnest(percentiles) AS p)
+             IS NOT DISTINCT FROM
+             ARRAY(SELECT tdigest_percentile(modern, p) FROM unnest(percentiles) AS p)),
+         (3, 'tdigest_percentile array',
+             tdigest_percentile(legacy, percentiles)
+             IS NOT DISTINCT FROM tdigest_percentile(modern, percentiles)),
+         (4, 'tdigest_percentile_of scalar',
+             ARRAY(SELECT tdigest_percentile_of(legacy, v) FROM unnest(vals) AS v)
+             IS NOT DISTINCT FROM
+             ARRAY(SELECT tdigest_percentile_of(modern, v) FROM unnest(vals) AS v)),
+         (5, 'tdigest_percentile_of array',
+             tdigest_percentile_of(legacy, vals)
+             IS NOT DISTINCT FROM tdigest_percentile_of(modern, vals)),
+         (6, 'tdigest_sum default',
+             tdigest_sum(legacy) IS NOT DISTINCT FROM tdigest_sum(modern)),
+         (7, 'tdigest_avg default',
+             tdigest_avg(legacy) IS NOT DISTINCT FROM tdigest_avg(modern)),
+         (8, 'tdigest_sum trimmed',
+             tdigest_sum(legacy, 0.2, 0.8) IS NOT DISTINCT FROM tdigest_sum(modern, 0.2, 0.8)),
+         (9, 'tdigest_avg trimmed',
+             tdigest_avg(legacy, 0.2, 0.8) IS NOT DISTINCT FROM tdigest_avg(modern, 0.2, 0.8)),
+         (10, 'tdigest_json',
+              tdigest_json(legacy)::jsonb IS NOT DISTINCT FROM tdigest_json(modern)::jsonb),
+         (11, 'json cast',
+              legacy::json::jsonb IS NOT DISTINCT FROM modern::json::jsonb),
+         (12, 'tdigest_double_array',
+              tdigest_double_array(legacy) IS NOT DISTINCT FROM tdigest_double_array(modern)),
+         (13, 'float8[] cast',
+              legacy::double precision[] IS NOT DISTINCT FROM modern::double precision[])
+       ) AS checks(ord, operation, matches)
+ GROUP BY ord, operation ORDER BY ord;
+          operation           | matches 
+------------------------------+---------
+ tdigest_count                | t
+ tdigest_percentile scalar    | t
+ tdigest_percentile array     | t
+ tdigest_percentile_of scalar | t
+ tdigest_percentile_of array  | t
+ tdigest_sum default          | t
+ tdigest_avg default          | t
+ tdigest_sum trimmed          | t
+ tdigest_avg trimmed          | t
+ tdigest_json                 | t
+ json cast                    | t
+ tdigest_double_array         | t
+ float8[] cast                | t
+(13 rows)
+
+-- Incremental operations must produce the same mean/count representation,
+-- including flags, with and without final compaction. Test both union inputs
+-- independently, as well as two legacy inputs.
+SELECT operation, compact,
+       bool_and(actual IS NOT NULL AND actual::bytea = expected::bytea) AS matches
+  FROM tdigest_legacy_values, (VALUES (false), (true)) AS options(compact),
+       LATERAL (VALUES
+         (1, 'tdigest_add scalar',
+             tdigest_add(legacy, 7.5, NULL, compact),
+             tdigest_add(modern, 7.5, NULL, compact)),
+         (2, 'tdigest_add array',
+             tdigest_add(legacy, ARRAY[7.5, 8.25]::double precision[], NULL, compact),
+             tdigest_add(modern, ARRAY[7.5, 8.25]::double precision[], NULL, compact)),
+         (3, 'tdigest_union legacy/current',
+             tdigest_union(legacy, modern, compact),
+             tdigest_union(modern, modern, compact)),
+         (4, 'tdigest_union current/legacy',
+             tdigest_union(modern, legacy, compact),
+             tdigest_union(modern, modern, compact)),
+         (5, 'tdigest_union legacy/legacy',
+             tdigest_union(legacy, legacy, compact),
+             tdigest_union(modern, modern, compact))
+       ) AS results(ord, operation, actual, expected)
+ GROUP BY ord, operation, compact ORDER BY ord, compact;
+          operation           | compact | matches 
+------------------------------+---------+---------
+ tdigest_add scalar           | f       | t
+ tdigest_add scalar           | t       | t
+ tdigest_add array            | f       | t
+ tdigest_add array            | t       | t
+ tdigest_union legacy/current | f       | t
+ tdigest_union legacy/current | t       | t
+ tdigest_union current/legacy | f       | t
+ tdigest_union current/legacy | t       | t
+ tdigest_union legacy/legacy  | f       | t
+ tdigest_union legacy/legacy  | t       | t
+(10 rows)
+
+-- Exercise the merge transition with a new state and an existing state,
+-- including mixed formats and skipped NULL inputs.
+WITH merged AS (
+    SELECT id,
+           tdigest(CASE WHEN i IN (1, 3) THEN legacy END ORDER BY i) AS all_legacy,
+           tdigest(CASE WHEN i = 1 THEN modern WHEN i = 3 THEN legacy END ORDER BY i) AS mixed,
+           tdigest(CASE WHEN i IN (1, 3) THEN modern END ORDER BY i) AS expected
+      FROM tdigest_legacy_values, generate_series(0, 3) AS s(i)
+     GROUP BY id
+)
+SELECT id, all_legacy::bytea = expected::bytea AS all_legacy,
+       mixed::bytea = expected::bytea AS mixed_formats
+  FROM merged ORDER BY id;
+ id | all_legacy | mixed_formats 
+----+------------+---------------
+  1 | t          | t
+  2 | t          | t
+  3 | t          | t
+  4 | t          | t
+  5 | t          | t
+  6 | t          | t
+(6 rows)
+
+-- The documented no-op incremental calls return the original digest, without
+-- conversion or compaction. Check the actual stored bytes, not a normalized
+-- JSON/array view.
+SELECT compact,
+       bool_and(tdigest_add(legacy, NULL::double precision, NULL, compact)::bytea IS NOT DISTINCT FROM original) AS null_value,
+       bool_and(tdigest_add(legacy, NULL::double precision[], NULL, compact)::bytea IS NOT DISTINCT FROM original) AS null_array,
+       bool_and(tdigest_union(legacy, NULL::tdigest, compact)::bytea IS NOT DISTINCT FROM original) AS null_right,
+       bool_and(tdigest_union(NULL::tdigest, legacy, compact)::bytea IS NOT DISTINCT FROM original) AS null_left
+  FROM tdigest_legacy_values, (VALUES (false), (true)) AS options(compact)
+ GROUP BY compact ORDER BY compact;
+ compact | null_value | null_array | null_right | null_left 
+---------+------------+------------+------------+-----------
+ f       | t          | t          | t          | t
+ t       | t          | t          | t          | t
+(2 rows)
+
+-- Type output must label its representation consistently, and text input
+-- must upgrade it. Compare raw bytes so even an unconverted flags=0 result
+-- cannot masquerade as a current-format value.
+SELECT id, legacy::text::tdigest::bytea = modern::bytea AS text_roundtrip
+  FROM tdigest_legacy_values ORDER BY id;
+ id | text_roundtrip 
+----+----------------
+  1 | t
+  2 | t
+  3 | t
+  4 | t
+  5 | t
+  6 | t
+(6 rows)
+
+-- The same check for tdigest_send()/tdigest_recv().
+CREATE TABLE tdigest_legacy_copy (id bigint, d tdigest);
+COPY (SELECT id, legacy FROM tdigest_legacy_values ORDER BY id)
+  TO '/tmp/tdigest_legacy_format.bin' WITH (FORMAT binary);
+COPY tdigest_legacy_copy
+  FROM '/tmp/tdigest_legacy_format.bin' WITH (FORMAT binary);
+SELECT v.id, c.d::bytea = v.modern::bytea AS binary_roundtrip
+  FROM tdigest_legacy_values AS v JOIN tdigest_legacy_copy AS c USING (id)
+ ORDER BY v.id;
+ id | binary_roundtrip 
+----+------------------
+  1 | t
+  2 | t
+  3 | t
+  4 | t
+  5 | t
+  6 | t
+(6 rows)
+
+-- None of the consumers may convert their borrowed input in place.
+SELECT id, legacy::bytea = original AS unchanged,
+       substring(legacy::bytea FROM 1 FOR 4) = '\x00000000'::bytea AS old_format
+  FROM tdigest_legacy_values ORDER BY id;
+ id | unchanged | old_format 
+----+-----------+------------
+  1 | t         | t
+  2 | t         | t
+  3 | t         | t
+  4 | t         | t
+  5 | t         | t
+  6 | t         | t
+(6 rows)
+
+DROP TABLE tdigest_legacy_copy;
+DROP TABLE tdigest_legacy_values;
+DROP FUNCTION tdigest_legacy_from_sums(tdigest);

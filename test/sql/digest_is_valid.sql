@@ -16,10 +16,6 @@
 
 \set VERBOSITY terse
 
--- casts allowing us to inspect and forge the on-disk representation
-CREATE CAST (tdigest AS bytea) WITHOUT FUNCTION;
-CREATE CAST (bytea AS tdigest) WITHOUT FUNCTION;
-
 -- The fields of the on-disk representation use the host byte order, while
 -- the send functions produce network byte order (big endian), so we may need
 -- to reverse the bytes. Determine the host byte order by looking at the flags
@@ -279,6 +275,3 @@ DROP FUNCTION be_int8(bigint);
 DROP FUNCTION be_int4(int);
 DROP FUNCTION swap_bytes(bytea);
 DROP FUNCTION is_little_endian();
-
-DROP CAST (bytea AS tdigest);
-DROP CAST (tdigest AS bytea);
