@@ -1408,6 +1408,17 @@ tdigest_update_format(tdigest_t *digest)
  * Reuse an owned detoasted/aligned copy for conversion and sorting. Otherwise
  * copy only before the first modification. The returned value is either the
  * original datum or one owned allocation, releasable with PG_FREE_IF_COPY.
+ *
+ * If the digest is already in the expected order, this is a no-op. Otherwise a
+ * sorted copy of the digest is returned - we must not sort the digest in place,
+ * it might be just a pointer to a data buffer, or something like that.
+ *
+ * Expects a digest in the new format, i.e. with centroids storing means (see
+ * tdigest_update_format).
+ *
+ * XXX It's a bit wasteful to do the sort over and over, even for on-disk digests
+ * that are perfectly sorted. It should be possible to have a TDIGEST_SORTED flag
+ * tracking when a digest is already sorted, and skip the sort.
  */
 static tdigest_t *
 tdigest_prepare(Datum datum, bool sort)
@@ -1432,21 +1443,35 @@ tdigest_prepare(Datum datum, bool sort)
 	if (!sort)
 		return digest;
 
-	/* if the centroids are already sorted, we're done */
+	/*
+	 * Look for a pair of adjacent centroids that is not strictly increasing
+	 * in the mean.
+	 *
+	 * Sorting by mean alone is not enough to define the order: centroids
+	 * sharing a mean are ordered by count below the median and in the
+	 * opposite order above it, which is what the rebalancing in
+	 * tdigest_sort_centroids() takes care of. A digest with such a group
+	 * permuted is still non-decreasing in the mean, so a check that merely
+	 * rejects descending pairs would accept it and leave the group in an
+	 * arbitrary order - and the quantile calculations walk the centroids one
+	 * by one, so they do see the difference.
+	 *
+	 * Demanding a strict increase avoids that. It also makes the test
+	 * sufficient on its own: with no two centroids sharing a mean, every
+	 * group is a single centroid, so the rebalancing has nothing to do and
+	 * the array really is in the order tdigest_sort_centroids() would have
+	 * produced.
+	 */
 	for (i = 1; i < digest->ncentroids; i++)
 	{
 		CHECK_FOR_INTERRUPTS();
 
-		/*
-		 * XXX Not quite right, it needs to consider the count too, if
-		 * the centroids have the same mean (and whether we're below or
-		 * above the mean of the whole digest.
-		 */
-		if (digest->centroids[i - 1].mean > digest->centroids[i].mean)
+		/* demand strictly increasing mean */
+		if (digest->centroids[i - 1].mean >= digest->centroids[i].mean)
 			break;
 	}
 
-	/* if the digest is already sorted, bail out */
+	/* nothing out of order, so the digest is already as we need it */
 	if (i >= digest->ncentroids)
 		return digest;
 

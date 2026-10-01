@@ -52,6 +52,27 @@ LANGUAGE sql SET extra_float_digits = 3 AS $$
       FROM regexp_matches(d::text, ' \([^)]*\)', 'g') WITH ORDINALITY AS x(m, o);
 $$;
 
+-- Rebuild the digest with only the centroids sharing a mean permuted, so that
+-- the means stay non-decreasing.
+--
+-- Being sorted by mean does not pin down the order of the centroids: a group
+-- of centroids with the same mean is ordered by count below the median, and in
+-- the opposite order above it. So a digest with such a group permuted is a
+-- different digest, even though a check looking only for a descending pair of
+-- means sees nothing wrong with it - and the functions below walk the centroids
+-- one by one, so they do see the difference.
+CREATE FUNCTION tdigest_unsorted_permute_groups(d tdigest, seed int)
+RETURNS tdigest
+LANGUAGE sql SET extra_float_digits = 3 AS $$
+    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+            coalesce(string_agg(m, '' ORDER BY mean,
+                                md5(seed::text || ':' || o::text)), ''))::tdigest
+      FROM (SELECT x.m[1] AS m, x.o AS o,
+                   split_part(btrim(x.m[1], ' ()'), ',', 1)::double precision AS mean
+              FROM regexp_matches(d::text, ' \([^)]*\)', 'g')
+                   WITH ORDINALITY AS x(m, o)) y;
+$$;
+
 -- Are the centroids of the digest sorted by mean?
 CREATE FUNCTION tdigest_unsorted_is_sorted(d tdigest)
 RETURNS boolean
@@ -116,6 +137,8 @@ SELECT id, descr FROM tdigest_unsorted_digests
 
 -- Build the variants. Variant 0 is the original (sorted) digest, variant 1 has
 -- the centroids in the reverse order, and variants 2-6 have them shuffled.
+-- Variants 7-11 only permute the centroids sharing a mean, so they stay sorted
+-- by mean while still being a different digest.
 CREATE TABLE tdigest_unsorted_variants (id int, variant int, d tdigest);
 
 INSERT INTO tdigest_unsorted_variants
@@ -125,13 +148,20 @@ INSERT INTO tdigest_unsorted_variants
 SELECT id, k + 1, tdigest_unsorted_reorder(d, k)
   FROM tdigest_unsorted_digests, generate_series(0, 5) s(k);
 
+INSERT INTO tdigest_unsorted_variants
+SELECT id, k + 7, tdigest_unsorted_permute_groups(d, k)
+  FROM tdigest_unsorted_digests, generate_series(0, 4) s(k);
+
 -- The reordering must not change the contents of the digest in any way - the
 -- header has to be the same, and the centroids have to be the very same
 -- multiset, just in a different order. So both the "differs" columns have to
--- be 0. The last column says how many of the variants really ended up with
--- the centroids out of order - it's less than the number of variants for the
--- digests with very few centroids (and it's 0 for the single centroid digest,
--- which can't be unsorted at all).
+-- be 0. The last two columns say how many of the variants really ended up
+-- rearranged - "actually_unsorted" counts those with the means out of order
+-- (it's less than the number of variants for the digests with very few
+-- centroids, and it's 0 for the single centroid digest, which can't be
+-- unsorted at all), "sorted_but_reordered" those still sorted by mean but with
+-- a group of equal means permuted (0 for digests where every mean is unique,
+-- as those have nothing to permute).
 SELECT v.id, g.descr,
        count(*) AS variants,
        count(*) FILTER (WHERE substring(v.d::text FROM '^[^(]*')
@@ -142,7 +172,9 @@ SELECT v.id, g.descr,
                            OR EXISTS (SELECT mean, cnt FROM tdigest_unsorted_centroids(g.d)
                                       EXCEPT ALL
                                       SELECT mean, cnt FROM tdigest_unsorted_centroids(v.d))) AS centroids_differ,
-       count(*) FILTER (WHERE NOT tdigest_unsorted_is_sorted(v.d)) AS actually_unsorted
+       count(*) FILTER (WHERE NOT tdigest_unsorted_is_sorted(v.d)) AS actually_unsorted,
+       count(*) FILTER (WHERE tdigest_unsorted_is_sorted(v.d)
+                          AND v.d::text IS DISTINCT FROM g.d::text) AS sorted_but_reordered
   FROM tdigest_unsorted_variants v JOIN tdigest_unsorted_digests g ON (g.id = v.id)
  WHERE v.variant > 0
  GROUP BY v.id, g.descr ORDER BY v.id;
@@ -253,6 +285,23 @@ SELECT descr,
        tdigest_avg(d, 0.1, 0.9) AS "avg 0.1-0.9"
   FROM d ORDER BY descr;
 
+-- The same for a group of centroids sharing a mean. Both digests below are
+-- sorted by mean and hold exactly the same centroids, only the (50, 1) and
+-- (50, 9) pair is swapped, so all the results have to be identical - and equal
+-- to what the tdigest() aggregate, which always sorts from scratch, returns.
+WITH d(descr, d) AS (
+    VALUES ('group as sorted', 'flags 1 count 12 compression 100 centroids 4 (0, 1) (50, 1) (50, 9) (100, 1)'::tdigest),
+           ('group permuted',  'flags 1 count 12 compression 100 centroids 4 (0, 1) (50, 9) (50, 1) (100, 1)'::tdigest)
+)
+SELECT descr,
+       tdigest_unsorted_is_sorted(d) AS "sorted by mean",
+       tdigest_percentile(d, 0.3) AS "percentile 0.3",
+       tdigest_percentile(d, 0.8) AS "percentile 0.8",
+       tdigest_percentile_of(d, 50.0) AS "percentile of 50",
+       tdigest_sum(d, 0.1, 0.9) AS "sum 0.1-0.9",
+       tdigest_avg(d, 0.1, 0.9) AS "avg 0.1-0.9"
+  FROM d ORDER BY descr;
+
 -- The old on-disk format, where the centroids store sums instead of means, is
 -- accepted with the centroids unsorted too. And the sums being sorted does not
 -- mean the means are - all three digests below hold the very same centroids
@@ -281,5 +330,6 @@ DROP TABLE tdigest_unsorted_variants;
 DROP TABLE tdigest_unsorted_digests;
 
 DROP FUNCTION tdigest_unsorted_is_sorted(tdigest);
+DROP FUNCTION tdigest_unsorted_permute_groups(tdigest, int);
 DROP FUNCTION tdigest_unsorted_reorder(tdigest, int);
 DROP FUNCTION tdigest_unsorted_centroids(tdigest);
