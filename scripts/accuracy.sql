@@ -85,13 +85,13 @@ begin
 
             select percentile_cont(percs) within group (order by v) into perc_cont_percs from (select * from t) d;
 
-            select tdigest_percentile(v, 100, percs) into simple_random_percs from (select * from t order by random()) d;
-            select tdigest_percentile(v, 100, percs) into simple_asc_percs from (select * from t order by v) d;
-            select tdigest_percentile(v, 100, percs) into simple_desc_percs from (select * from t order by v desc) d;
+            select tdigest_percentile(tdigest(v, 100), percs) into simple_random_percs from (select * from t order by random()) d;
+            select tdigest_percentile(tdigest(v, 100), percs) into simple_asc_percs from (select * from t order by v) d;
+            select tdigest_percentile(tdigest(v, 100), percs) into simple_desc_percs from (select * from t order by v desc) d;
 
-            select tdigest_percentile(v, c, 100, percs) into preagg_random_percs from (select v, count(*) as c from t group by v order by random()) d;
-            select tdigest_percentile(v, c, 100, percs) into preagg_asc_percs from (select v, count(*) as c from t group by v order by v) d;
-            select tdigest_percentile(v, c, 100, percs) into preagg_desc_percs from (select v, count(*) as c from t group by v order by v desc) d;
+            select tdigest_percentile(tdigest(v, c, 100), percs) into preagg_random_percs from (select v, count(*) as c from t group by v order by random()) d;
+            select tdigest_percentile(tdigest(v, c, 100), percs) into preagg_asc_percs from (select v, count(*) as c from t group by v order by v) d;
+            select tdigest_percentile(tdigest(v, c, 100), percs) into preagg_desc_percs from (select v, count(*) as c from t group by v order by v desc) d;
 
             select sqrt(sum(pow(a-b,2))) into tmp_simple_random from (select unnest(perc_cont_percs) as a, unnest(simple_random_percs) as b) d;
             select sqrt(sum(pow(a-b,2))) into tmp_simple_asc from (select unnest(perc_cont_percs) as a, unnest(simple_asc_percs) as b) d;

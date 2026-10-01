@@ -11,20 +11,18 @@
 -- first/last mean. Each digest below therefore comes with the range of
 -- percentiles that are inside the interpolated part.
 --
--- The identity does not hold at the moment, because the two functions do not
--- agree on where the mean of a centroid is. tdigest_compute_quantiles_of()
--- computes the offset of the mean with an int64 division
+-- The identity holds. It used to be off by half an item for centroids with
+-- an odd count, because tdigest_compute_quantiles_of() located the mean of a
+-- centroid by subtracting half the previous count with an integer division,
+-- while everything around it (including the running count it subtracted
+-- from) was a double. On the ten item digest below that was a whole 0.05,
+-- e.g. p = 0.9 came back as 0.95. The division is a floating point one now,
+-- and this test guards that.
 --
---     count -= (prev->count / 2);
---
--- (note "count" is a double, and the very next statement uses / 2.0), so for
--- centroids with an odd count it is off by half an item, i.e. the round trip
--- is off by 0.5/count. On the ten item digest below that is a whole 0.05:
---
---     p       tdigest_percentile   round trip     expected
---     0.1     1.5                  0.15           0.1
---     0.5     5.5                  0.55           0.5
---     0.9     9.5                  0.95           0.9
+-- The queries run with extra_float_digits = 0, so that values which are only
+-- a ULP or two away from the expected one (e.g. 0.8999999999999999 for 0.9)
+-- print as the round number. The tolerance of the sweep below is explicit,
+-- and does not depend on that setting.
 
 \set VERBOSITY terse
 
@@ -68,12 +66,12 @@ SELECT i / 100.0 FROM generate_series(1, 99) s(i);
 -- Report one row per digest that fails the round trip, so that a failure
 -- stays readable.
 WITH v AS (
-    SELECT g.id, g.descr, p.p, tdigest_percentile(g.d, p.p) AS value
+    SELECT g.id, g.descr, p.p, tdigest_percentile(tdigest(g.d), p.p) AS value
       FROM tdigest_roundtrip_digests g, tdigest_roundtrip_percentiles p
      WHERE p.p >= g.p_low AND p.p <= g.p_high
      GROUP BY g.id, g.descr, p.p
 ), rt AS (
-    SELECT v.id, v.descr, v.p, v.value, tdigest_percentile_of(g.d, v.value) AS back
+    SELECT v.id, v.descr, v.p, v.value, tdigest_percentile_of(tdigest(g.d), v.value) AS back
       FROM v, tdigest_roundtrip_digests g
      WHERE g.id = v.id
      GROUP BY v.id, v.descr, v.p, v.value
@@ -82,7 +80,8 @@ SELECT id, descr, count(*) AS failures, max(abs(back - p)) AS max_error
   FROM rt WHERE abs(back - p) > 1e-12
  GROUP BY id, descr ORDER BY id;
 
--- The three concrete percentiles from the comment at the top.
+-- The ten item digest from the comment at the top, at the three percentiles
+-- the old int64 division got wrong.
 WITH v AS (
     SELECT p, tdigest_percentile('flags 1 count 10 compression 10000 centroids 10 (1, 1) (2, 1) (3, 1) (4, 1) (5, 1) (6, 1) (7, 1) (8, 1) (9, 1) (10, 1)'::tdigest, p) AS value
       FROM unnest(ARRAY[0.1, 0.5, 0.9]::double precision[]) AS p
@@ -95,20 +94,20 @@ SELECT p, value,
 -- The same identity has to hold for the aggregates building the digest from
 -- data. Ten items, so the interpolated range is [0.05, 0.95].
 WITH v AS (
-    SELECT p, tdigest_percentile(i::double precision, 10000, p) AS value
+    SELECT p, tdigest_percentile(tdigest(i::double precision, 10000), p) AS value
       FROM generate_series(1, 10) s(i), unnest(ARRAY[0.1, 0.5, 0.9]::double precision[]) AS p
      GROUP BY p
 )
-SELECT v.p, v.value, tdigest_percentile_of(i::double precision, 10000, v.value) AS round_trip
+SELECT v.p, v.value, tdigest_percentile_of(tdigest(i::double precision, 10000), v.value) AS round_trip
   FROM v, generate_series(1, 10) s(i)
  GROUP BY v.p, v.value ORDER BY v.p;
 
 WITH v AS (
-    SELECT p, tdigest_percentile(i::double precision, 2::bigint, 10000, p) AS value
+    SELECT p, tdigest_percentile(tdigest(i::double precision, 2::bigint, 10000), p) AS value
       FROM generate_series(1, 5) s(i), unnest(ARRAY[0.2, 0.5, 0.8]::double precision[]) AS p
      GROUP BY p
 )
-SELECT v.p, v.value, tdigest_percentile_of(i::double precision, 2::bigint, 10000, v.value) AS round_trip
+SELECT v.p, v.value, tdigest_percentile_of(tdigest(i::double precision, 2::bigint, 10000), v.value) AS round_trip
   FROM v, generate_series(1, 5) s(i)
  GROUP BY v.p, v.value ORDER BY v.p;
 

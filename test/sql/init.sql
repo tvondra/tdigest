@@ -4,6 +4,7 @@
 SET client_min_messages = 'WARNING';
 CREATE EXTENSION tdigest VERSION '1.0.0';
 ALTER EXTENSION tdigest UPDATE TO '1.4.7';
+ALTER EXTENSION tdigest UPDATE TO '2.0.0-dev';
 SET client_min_messages = 'NOTICE';
 SET extra_float_digits = 0;
 
