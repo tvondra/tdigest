@@ -13,12 +13,14 @@
 --     tdigest_percentile_of()   (both the scalar and the array variant)
 --     tdigest_sum()
 --     tdigest_avg()
---     tdigest_digest_sum()
---     tdigest_digest_avg()
 --
 -- to the results for the original (sorted) digest. The results have to match
 -- exactly, not just approximately - reordering the centroids does not lose any
 -- information, so the sort has to reconstruct exactly the same digest.
+--
+-- All of these are plain functions taking a single digest, so they have to be
+-- called directly on the (unsorted) digest. Wrapping the value in tdigest()
+-- would sort and compact it first, and the test would prove nothing.
 
 \set VERBOSITY terse
 
@@ -179,42 +181,36 @@ CREATE TABLE tdigest_unsorted_results (func text, id int, variant int,
                                        probe int, res double precision);
 
 INSERT INTO tdigest_unsorted_results
-SELECT 'tdigest_percentile', v.id, v.variant, p.id, tdigest_percentile(tdigest(v.d), p.p)
-  FROM tdigest_unsorted_variants v, tdigest_unsorted_percentiles p
- GROUP BY v.id, v.variant, p.id, p.p;
+SELECT 'tdigest_percentile', v.id, v.variant, p.id, tdigest_percentile(v.d, p.p)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_percentiles p;
 
 INSERT INTO tdigest_unsorted_results
 SELECT 'tdigest_percentile (array)', r.id, r.variant, o::int, x
-  FROM (SELECT v.id, v.variant, tdigest_percentile(tdigest(v.d), p.arr) AS res
+  FROM (SELECT v.id, v.variant, tdigest_percentile(v.d, p.arr) AS res
           FROM tdigest_unsorted_variants v,
                (SELECT array_agg(p ORDER BY id) AS arr
-                  FROM tdigest_unsorted_percentiles) p
-         GROUP BY v.id, v.variant, p.arr) r,
+                  FROM tdigest_unsorted_percentiles) p) r,
        unnest(r.res) WITH ORDINALITY AS u(x, o);
 
 INSERT INTO tdigest_unsorted_results
-SELECT 'tdigest_percentile_of', v.id, v.variant, p.id, tdigest_percentile_of(tdigest(v.d), p.v)
-  FROM tdigest_unsorted_variants v, tdigest_unsorted_values p
- GROUP BY v.id, v.variant, p.id, p.v;
+SELECT 'tdigest_percentile_of', v.id, v.variant, p.id, tdigest_percentile_of(v.d, p.v)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_values p;
 
 INSERT INTO tdigest_unsorted_results
 SELECT 'tdigest_percentile_of (array)', r.id, r.variant, o::int, x
-  FROM (SELECT v.id, v.variant, tdigest_percentile_of(tdigest(v.d), p.arr) AS res
+  FROM (SELECT v.id, v.variant, tdigest_percentile_of(v.d, p.arr) AS res
           FROM tdigest_unsorted_variants v,
                (SELECT array_agg(v ORDER BY id) AS arr
-                  FROM tdigest_unsorted_values) p
-         GROUP BY v.id, v.variant, p.arr) r,
+                  FROM tdigest_unsorted_values) p) r,
        unnest(r.res) WITH ORDINALITY AS u(x, o);
 
 INSERT INTO tdigest_unsorted_results
-SELECT 'tdigest_sum', v.id, v.variant, t.id, tdigest_sum(tdigest(v.d), t.low, t.high)
-  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t
- GROUP BY v.id, v.variant, t.id, t.low, t.high;
+SELECT 'tdigest_sum', v.id, v.variant, t.id, tdigest_sum(v.d, t.low, t.high)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t;
 
 INSERT INTO tdigest_unsorted_results
-SELECT 'tdigest_avg', v.id, v.variant, t.id, tdigest_avg(tdigest(v.d), t.low, t.high)
-  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t
- GROUP BY v.id, v.variant, t.id, t.low, t.high;
+SELECT 'tdigest_avg', v.id, v.variant, t.id, tdigest_avg(v.d, t.low, t.high)
+  FROM tdigest_unsorted_variants v, tdigest_unsorted_trims t;
 
 
 -- How many results did we compare, and how many of them do not match the
@@ -249,22 +245,13 @@ WITH d(descr, d) AS (
            ('reversed', 'flags 1 count 12 compression 10000 centroids 3 (100, 5) (50, 4) (0, 3)'::tdigest)
 )
 SELECT descr,
-       tdigest_percentile(tdigest(d), 0.25) AS "percentile 0.25",
-       tdigest_percentile(tdigest(d), 0.75) AS "percentile 0.75",
-       tdigest_percentile_of(tdigest(d), 25.0) AS "percentile of 25",
-       tdigest_percentile_of(tdigest(d), 75.0) AS "percentile of 75",
-       tdigest_sum(tdigest(d), 0.1, 0.9) AS "sum 0.1-0.9",
-       tdigest_avg(tdigest(d), 0.1, 0.9) AS "avg 0.1-0.9"
-  FROM d GROUP BY descr ORDER BY descr;
-
-WITH d(descr, d) AS (
-    VALUES ('sorted',   'flags 1 count 12 compression 10000 centroids 3 (0, 3) (50, 4) (100, 5)'::tdigest),
-           ('reversed', 'flags 1 count 12 compression 10000 centroids 3 (100, 5) (50, 4) (0, 3)'::tdigest)
-)
-SELECT descr,
-       tdigest_sum(tdigest(d), 0.1, 0.9) AS "digest_sum 0.1-0.9",
-       tdigest_avg(tdigest(d), 0.1, 0.9) AS "digest_avg 0.1-0.9"
-  FROM d GROUP BY descr ORDER BY descr;
+       tdigest_percentile(d, 0.25) AS "percentile 0.25",
+       tdigest_percentile(d, 0.75) AS "percentile 0.75",
+       tdigest_percentile_of(d, 25.0) AS "percentile of 25",
+       tdigest_percentile_of(d, 75.0) AS "percentile of 75",
+       tdigest_sum(d, 0.1, 0.9) AS "sum 0.1-0.9",
+       tdigest_avg(d, 0.1, 0.9) AS "avg 0.1-0.9"
+  FROM d ORDER BY descr;
 
 -- The old on-disk format, where the centroids store sums instead of means, is
 -- accepted with the centroids unsorted too. And the sums being sorted does not
@@ -279,9 +266,11 @@ WITH d(descr, d) AS (
                 'flags 0 count 12 compression 10000 centroids 3 (100, 5) (200, 1) (300, 6)'::tdigest)
 )
 SELECT descr,
-       tdigest_sum(tdigest(d), 0.1, 0.9) AS "digest_sum 0.1-0.9",
-       tdigest_avg(tdigest(d), 0.1, 0.9) AS "digest_avg 0.1-0.9"
-  FROM d GROUP BY descr ORDER BY descr;
+       tdigest_percentile(d, 0.5) AS "percentile 0.5",
+       tdigest_percentile_of(d, 30.0) AS "percentile of 30",
+       tdigest_sum(d, 0.1, 0.9) AS "sum 0.1-0.9",
+       tdigest_avg(d, 0.1, 0.9) AS "avg 0.1-0.9"
+  FROM d ORDER BY descr;
 
 
 DROP TABLE tdigest_unsorted_results;
