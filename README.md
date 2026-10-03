@@ -22,6 +22,21 @@ The accuracy of estimates produced by t-digests can be orders of magnitude
 more accurate than those produced by previous digest algorithms in spite of
 the fact that t-digests are much more compact when stored on disk.
 
+## Contents
+
+* [Basic usage](#basic-usage)
+* [Accuracy](#accuracy)
+* [Advanced usage](#advanced-usage)
+* [Pre-aggregated data](#pre-aggregated-data)
+* [Incremental updates](#incremental-updates)
+* [Trimmed statistics](#trimmed-statistics)
+* [Upgrading to 2.0.0](#upgrading-to-200)
+* [Functions](#functions)
+* [Notes](#notes)
+* [Security](#security)
+* [Known issues](#known-issues)
+* [License](#license)
+
 
 ## Basic usage
 
