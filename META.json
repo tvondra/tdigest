@@ -7,7 +7,7 @@
      "Tomas Vondra <tomas@vondra.me>",
      "Nils Dijk <nils@citusdata.com>"
    ],
-   "license": "bsd",
+   "license": "postgresql",
    "prereqs": {
       "runtime": {
          "requires": {
