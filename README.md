@@ -154,10 +154,10 @@ those work with the centroids they are given:
   query returns an estimate.
 
 * An aggregate over several pre-aggregated digests used to see all the
-  centroids of all of them. The rewritten query first merges them into one
-  digest of a single compression, which can easily cost a few times the
-  relative error. Raise the compression of the stored digests if the
-  difference matters.
+  centroids of all of them, as long as they fit into the buffer without a
+  compaction. The rewritten query first merges them into one compacted
+  digest, which can easily cost a few times the relative error. Raise the
+  compression of the stored digests if the difference matters.
 
 Aggregate modifiers belong on `tdigest()`, not on the consuming function.
 Move `DISTINCT` and aggregate `ORDER BY` inside the builder call, and attach
@@ -180,8 +180,8 @@ grouping rules; they are no longer taken from the first contributing input row.
 The six functions that replace the aggregates - `tdigest_percentile`,
 `tdigest_percentile_of`, `tdigest_sum` and `tdigest_avg` - are `STRICT`, so a
 NULL in any argument produces a NULL result. The aggregates they replace
-raised an error for a NULL percentile or trim threshold on the first
-contributing input row:
+raised an error for a NULL percentile, hypothetical value or trim threshold
+on the first contributing input row:
 
 ```sql
 -- 1.x: ERROR:  percentile must not be NULL
@@ -191,9 +191,9 @@ SELECT tdigest_percentile(d, NULL::double precision) FROM p;
 SELECT tdigest_percentile(tdigest(d), NULL::double precision) FROM p;
 ```
 
-Queries relying on that error to catch a bad percentile or trim threshold
-must now validate the argument explicitly. This does not permit NULL elements
-inside percentile/value arrays: those arrays must be nonempty,
+Queries relying on that error to catch a bad percentile, value or trim
+threshold must now validate the argument explicitly. This does not permit
+NULL elements inside percentile/value arrays: those arrays must be nonempty,
 one-dimensional, and contain no NULL elements.
 
 The incremental API is unchanged and is not `STRICT`. `tdigest_add` and
@@ -316,13 +316,13 @@ ones can be seen as a replacement of the `percentile_cont` aggregate, while
 the `tdigest_percentile_of` ones perform the inverse operation,
 estimating the relative rank of a given value:
 
-* `tdigest_percentile(digest tdigest, percentile double precision) -> double precision`
+* `tdigest_percentile(p_digest tdigest, p_percentile double precision) -> double precision`
 
-* `tdigest_percentile(digest tdigest, percentile double precision[]) -> double precision[]`
+* `tdigest_percentile(p_digest tdigest, p_percentiles double precision[]) -> double precision[]`
 
-* `tdigest_percentile_of(digest tdigest, value double precision) -> double precision`
+* `tdigest_percentile_of(p_digest tdigest, p_value double precision) -> double precision`
 
-* `tdigest_percentile_of(digest tdigest, values double precision[]) -> double precision[]`
+* `tdigest_percentile_of(p_digest tdigest, p_values double precision[]) -> double precision[]`
 
 That is, instead of running
 
@@ -359,7 +359,7 @@ against exact results on representative data.
 Each bucket is represented by a `double precision` mean and a 64-bit count
 (i.e. 16B per bucket), and the buffer holds `10 * compression` buckets, so
 the maximum of 10000 for the compression means the largest possible t-digest
-has 100000 buckets and is ~1.5MB. For columns using `extended` storage,
+has 100000 buckets and is ~1.5 MiB. For columns using `extended` storage,
 PostgreSQL attempts compression before moving large values out of line, so
 the on-disk footprint may be much smaller. Version 2.0.0 changes the type's
 default to `extended` on PostgreSQL 13 and later only. See
@@ -403,12 +403,13 @@ The results are estimates computed from the centroids the digest happens to
 hold. That is worth spelling out because it changed in 2.0.0 for the trimmed
 functions: `tdigest_sum` and `tdigest_avg` used to be aggregates computing
 from the raw aggregate state, which buffers up to ten times `compression`
-values before compacting. Setting `compression` above the number of input
-rows therefore meant no compaction ever happened and the trimmed results came
-out exact. Building the digest is a separate step now, and the `tdigest()`
-aggregate compacts before returning, so `tdigest_sum(tdigest(v, 100), ...)`
-sees a compacted digest and returns an estimate like every other function.
-Queries relying on the old behaviour will see their results shift.
+values before compacting. Setting `compression` to at least a tenth of the
+number of input values therefore meant no compaction ever happened and the
+trimmed results came out exact. Building the digest is a separate step now,
+and the `tdigest()` aggregate compacts before returning, so
+`tdigest_sum(tdigest(v, 100), ...)` sees a compacted digest and returns an
+estimate like every other function. Queries relying on the old behaviour
+will see their results shift.
 
 Note this is a property of how the digest was built, not of the trimmed
 functions - those summarize the centroids the digest happens to have. A
@@ -433,11 +434,12 @@ built on random data:
 |          5000 |      1318 |      21113 |        21113 |        12646 |
 |         10000 |      2265 |      36260 |        36260 |        20177 |
 
-Where `centroids` is the number of centroids in a compacted digest, `length`
-is the "raw" size of the digest. `external` and `extended` are the on-disk
-sizes of centroid, depending on the storage policy set for the column. It's
-clear that `external` is almost the same as `length`, while `extended` is
-often much smaller thanks to compression.
+Where `centroids` is the number of centroids in a compacted digest, and
+`length` is the "raw" size of the digest, without the 4-byte varlena header.
+`external` and `extended` are the on-disk sizes of the digest, depending on
+the storage policy set for the column. It's clear that `external` is almost
+the same as `length`, while `extended` is often much smaller thanks to
+compression.
 
 This is merely an example - the actual values depend on the data. For example
 digests on integer values tend to be much more compressible, cutting the
@@ -475,11 +477,12 @@ functions (with `tdigest` as the first argument).
 The `tdigest(digest tdigest)` variant is an aggregate merging multiple
 pre-computed digests into a single digest, which can be stored again.
 
-Digest-input aggregates accept digests with different compression settings.
-Each aggregate state takes its compression from its first non-`NULL` digest;
-with parallel aggregation, the final choice can depend on worker and combine
-order. Use a consistent compression across input digests when that choice
-matters. Merging cannot recover detail already lost by compaction.
+The `tdigest(digest tdigest)` aggregate accepts digests with different
+compression settings. Each aggregate state takes its compression from its
+first non-`NULL` digest; with parallel aggregation, the final choice can
+depend on worker and combine order. Use a consistent compression across
+input digests when that choice matters. Merging cannot recover detail
+already lost by compaction.
 
 So for example you may do this:
 
@@ -609,7 +612,7 @@ UPDATE p SET d = tdigest_union(p.d, batch.d) FROM batch;
 ```
 
 It may be undesirable to perform compaction after every incremental update,
-especially when adding values one by one. Setting `compact` to `false` skips
+especially when adding values one by one. Setting `p_compact` to `false` skips
 compaction at the end of the call; compaction still occurs when adding to a
 full centroid buffer. The result may be unsorted and larger than a compacted
 digest, but remains subject to the `10 * compression` centroid limit.
@@ -626,9 +629,9 @@ digest unchanged. A non-`NULL` value or array with a `NULL` digest instead
 creates a new digest and requires a compression value.
 
 When either input to `tdigest_union` is `NULL`, it returns the other digest
-unchanged, without compaction; two `NULL` digests produce `NULL`. In all
-incremental functions, the `compact` flag itself must not be `NULL`, even
-for calls that otherwise do nothing.
+unchanged, so `tdigest_union(NULL, d)` does *not* compact `d`; two `NULL`
+digests produce `NULL`. In all incremental functions, the `p_compact` flag
+itself must not be `NULL`, even for calls that otherwise do nothing.
 
 The functions taking a digest name their arguments with a `p_` prefix, so
 they may also be called using named arguments. (The `tdigest()` aggregates
@@ -640,11 +643,6 @@ example:
 SELECT tdigest_add(NULL::tdigest, 42.0,
                    p_compression => 100, p_compact => false);
 ```
-
-`tdigest_union` returns the other digest unchanged when one is NULL, so
-`tdigest_union(NULL, d)` does *not* compact it. `tdigest_add(d, NULL)` likewise
-returns `d` unchanged. In contrast, `tdigest_add(NULL, value, compression)`
-creates a new digest for a non-NULL value and requires a compression value.
 
 
 ## Trimmed statistics
@@ -663,6 +661,10 @@ and `p_high = 0.9` means the lowest and highest 10% of the values are
 discarded. The thresholds are optional, defaulting to `p_low = 0.0` and
 `p_high = 1.0`.
 
+When no values fall between the thresholds - for example with
+`p_low = p_high = 0.0`, or `p_low = p_high = 0.5` and an even number of
+values - both functions return `NULL`.
+
 
 ## Functions
 
@@ -675,8 +677,8 @@ is the compression used when building the t-digest, as described in the
 The `tdigest` is an aggregate (a parallel safe one), while `tdigest_percentile`,
 `tdigest_percentile_of`, `tdigest_avg`, `tdigest_sum`, `tdigest_count`,
 `tdigest_add`, `tdigest_union`, `tdigest_json`, `tdigest_double_array` and
-`tdigest_is_valid` are plain functions operating on a single `tdigest` value.
-All of them are parallel safe.
+`tdigest_is_valid` are plain functions, taking a single `tdigest` value (or
+two, in the case of `tdigest_union`). All of them are parallel safe.
 
 The examples use a table `t` with the values in column `c`, and - for the
 variants with a `count` parameter - the number of occurrences of each value
@@ -688,6 +690,9 @@ from [Advanced usage](#advanced-usage).
 ### `tdigest(value, accuracy)`
 
 Computes t-digest with the specified accuracy.
+
+The accuracy is taken from the first row with a non-`NULL` value, and ignored
+in later rows, so keep it the same for all rows.
 
 #### Synopsis
 
@@ -705,6 +710,9 @@ SELECT tdigest(t.c, 100) FROM t
 
 Computes t-digest with the specified accuracy. The values are added with
 as many occurrences as determined by the count parameter.
+
+The accuracy is taken from the first row with a non-`NULL` value, and ignored
+in later rows, so keep it the same for all rows.
 
 #### Synopsis
 
@@ -802,6 +810,10 @@ returns `0.5` at that value, not the fraction of rows strictly below it
 (`0.0`). This is a smoothed rank estimate, not an exact count of smaller
 values.
 
+A value below the smallest centroid mean (including `-Infinity`) returns
+`0.0`, a value above the largest one (including `Infinity`) returns `1.0`,
+and `NaN` returns `NaN`.
+
 #### Synopsis
 
 ```sql
@@ -819,8 +831,8 @@ SELECT tdigest_percentile_of(d, 349834.1) FROM (
 ### `tdigest_percentile_of(p_digest tdigest, p_values double precision[])`
 
 Estimates relative ranks of hypothetical values using a pre-computed
-t-digest, with the same half-weight convention at centroid means as the
-scalar form.
+t-digest, with the same conventions for centroid means, values outside the
+digest and non-finite values as the scalar form.
 
 #### Synopsis
 
@@ -849,7 +861,8 @@ UPDATE p SET d = tdigest_add(d, random());
 #### Parameters
 
 - `p_digest` - t-digest to update (may be `NULL`)
-- `p_element` - value to add; `NULL` leaves the digest unchanged
+- `p_element` - value to add, which must be finite; `NULL` leaves the digest
+  unchanged
 - `p_compression` - required to initialize a digest from a non-`NULL` value;
   ignored for an existing digest (default: `NULL`)
 - `p_compact` - compact at the end of the call (default: true; must not be `NULL`)
@@ -868,8 +881,8 @@ UPDATE p SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
 #### Parameters
 
 - `p_digest` - t-digest to update (may be `NULL`)
-- `p_elements` - nonempty, one-dimensional array of non-`NULL` values;
-  a `NULL` array leaves the digest unchanged
+- `p_elements` - nonempty, one-dimensional array of finite, non-`NULL`
+  values; a `NULL` array leaves the digest unchanged
 - `p_compression` - required to initialize a digest from a non-`NULL` array;
   ignored for an existing digest (default: `NULL`)
 - `p_compact` - compact at the end of the call (default: true; must not be `NULL`)
@@ -880,7 +893,7 @@ UPDATE p SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
 Performs incremental update of the t-digest by merging-in another digest.
 When either of the digests is `NULL`, the other one is returned unchanged
 (without compaction). When both are non-`NULL`, the result uses the
-compression of `digest1`, even if `digest2` has a different compression.
+compression of `p_digest1`, even if `p_digest2` has a different compression.
 
 #### Synopsis
 
@@ -892,7 +905,7 @@ UPDATE p SET d = tdigest_union(p.d, x.d) FROM x;
 #### Parameters
 
 - `p_digest1` - t-digest to update
-- `p_digest2` - t-digest to merge into `digest1`
+- `p_digest2` - t-digest to merge into `p_digest1`
 - `p_compact` - compact at the end of the call (default: true; must not be `NULL`)
 
 
@@ -901,9 +914,9 @@ UPDATE p SET d = tdigest_union(p.d, x.d) FROM x;
 Returns the t-digest as a JSON value. The function is also exposed as a
 cast from `tdigest` to `json`.
 
-The document has the flags, the total number of items (`count`), the
-compression and the number of centroids, followed by the per-centroid
-`means` and `counts` arrays.
+The document has the keys `flags`, `count` (the total number of items),
+`compression` and `centroids` (the number of centroids), followed by the
+per-centroid `means` and `counts` arrays.
 
 #### Synopsis
 
@@ -952,7 +965,8 @@ Computes trimmed mean of values, discarding values at the low and high end.
 The `p_low` and `p_high` values are percentiles in [0, 1] (with
 `p_low <= p_high`) specifying which part of the sample should be included in
 the mean, so e.g. `p_low = 0.1` and `p_high = 0.9` means 10% low and high
-values will be discarded.
+values will be discarded. Returns `NULL` when no values fall between the
+thresholds.
 
 #### Synopsis
 
@@ -975,7 +989,8 @@ Computes trimmed sum of values, discarding values at the low and high end.
 The `p_low` and `p_high` values are percentiles in [0, 1] (with
 `p_low <= p_high`) specifying which part of the sample should be included in
 the sum, so e.g. `p_low = 0.1` and `p_high = 0.9` means 10% low and high
-values will be discarded.
+values will be discarded. Returns `NULL` when no values fall between the
+thresholds.
 
 #### Synopsis
 
@@ -1019,9 +1034,14 @@ Notes
 -----
 
 Input values and centroid means use `double precision`. PostgreSQL can
-convert other numeric types to it, as in the integer-valued examples, but
-those conversions can lose precision. The digest does not retain the native
-precision of `bigint` or `numeric` inputs.
+convert other numeric types to it implicitly, but those conversions can lose
+precision. The digest does not retain the native precision of `bigint` or
+`numeric` inputs.
+
+Input values must also be finite. The `tdigest()` aggregates and
+`tdigest_add` raise an error for `NaN`, `Infinity` and `-Infinity`, so
+filter such values out if the data may contain them. `NULL` values are
+skipped.
 
 The estimates do depend on the order of incoming data, and so may differ
 between runs. This applies especially to parallel queries, for which the
@@ -1033,8 +1053,8 @@ Security
 --------
 
 If you believe you have found a security vulnerability in this repository,
-please report [this form](https://github.com/tvondra/tdigest/security/advisories/new)
-of this GitHub project. This creates a private communication channel
+please report it using [this form](https://github.com/tvondra/tdigest/security/advisories/new)
+[5] of this GitHub project. This creates a private communication channel
 between the reporter and the maintainers.
 
 If you are absolutely unable to or have strong reasons not to use GitHub's
@@ -1099,11 +1119,13 @@ a window function, or when several aggregates share a single transition
 state. So the results are correct in those cases, at the cost of copying the
 state.
 
-Before 2.0.0 there were two more aggregates, for the trimmed `tdigest_sum()`
-and `tdigest_avg()`, whose final functions only sorted the state and did not
-need the copy. They are plain functions taking a digest now, so they have no
-aggregate state to protect - they sort a copy of the digest, like every
-other function consuming one.
+Before 2.0.0, the percentile aggregates had final functions of their own,
+which compacted the state too, and copied it in the same way when shared.
+The final functions of the trimmed `tdigest_sum()` and `tdigest_avg()`
+aggregates only sorted the state, and did not need the copy. All of these
+are plain functions taking a digest now, so they have no aggregate state to
+protect. Like every other function consuming a digest, they never modify it
+in place - they work on a copy when they need to sort or compact it.
 
 
 ### fused multiply-add (FMA)
@@ -1150,5 +1172,3 @@ more details.
 [3] https://github.com/ajwerner/tdigestc
 
 [4] https://github.com/ajwerner/tdigest
-
-[5] https://github.com/tvondra/tdigest/security/advisories/new
