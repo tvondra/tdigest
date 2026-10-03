@@ -673,6 +673,52 @@ and above produces digests of several kB, which do reach TOAST. The storage
 change matters for those.
 
 
+## Installation
+
+The extension supports PostgreSQL 13 and newer, and is built using PGXS.
+That requires the server development files (e.g. the
+`postgresql-server-dev-NN` package on Debian and Ubuntu). To build and
+install the extension, run
+
+```sh
+make
+make install
+```
+
+This uses the PostgreSQL installation with `pg_config` found in `PATH`.
+A different installation may be specified using `PG_CONFIG`, e.g.
+`make PG_CONFIG=/path/to/pg_config install`. Installing usually requires
+root privileges (e.g. `sudo make install`).
+
+The extension then has to be created in each database by a superuser:
+
+```sql
+CREATE EXTENSION tdigest;
+```
+
+The extension is also available on [PGXN](https://pgxn.org/dist/tdigest/),
+and may be installed using the
+[PGXN client](https://pgxn.github.io/pgxnclient/) (e.g. the `pgxnclient`
+package on Debian and Ubuntu), which downloads, builds and installs it:
+
+```sh
+pgxn install [--unstable] tdigest
+```
+By default, the client installs only stable releases.
+
+The build has the same requirements as above. The client also uses the
+`pg_config` found in `PATH`, and a different installation may be specified
+using `--pg_config /path/to/pg_config`. If installing requires root
+privileges, add `--sudo` after the extension name
+(e.g. `pgxn install --unstable tdigest --sudo`), to run just the
+installation step using `sudo`.
+
+The regression tests are executed by `make installcheck`, against a
+running server with the extension installed (the server is specified by
+the usual libpq environment variables, e.g. `PGHOST` and `PGPORT`). The
+tests have to connect as a superuser.
+
+
 ## Functions
 
 The following list covers the aggregates and utility functions provided
