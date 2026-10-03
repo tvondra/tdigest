@@ -677,7 +677,7 @@ change matters for those.
 
 The following list covers the aggregates and utility functions provided
 by this extension. Type I/O functions and internal aggregate support
-functions are not listed. The `accuracy` parameter in these descriptions
+functions are not listed. The `compression` parameter in these descriptions
 is the compression used when building the t-digest, as described in the
 [Accuracy](#accuracy) section.
 
@@ -694,7 +694,7 @@ occurrence. The incremental-update examples use the digest column `p.d`
 from [Advanced usage](#advanced-usage).
 
 
-### `tdigest(value, accuracy)`
+### `tdigest(p_value, p_compression)`
 
 Computes t-digest with the specified accuracy.
 
@@ -709,11 +709,15 @@ SELECT tdigest(t.c, 100) FROM t
 
 #### Parameters
 
-- `value` - values to aggregate
-- `accuracy` - accuracy of the t-digest
+- `p_value` (`double precision`) - values to aggregate
+- `p_compression` (`integer`) - accuracy of the t-digest
+
+#### Return value
+
+- t-digest (`tdigest` type) built on the input data
 
 
-### `tdigest(value, count, accuracy)`
+### `tdigest(p_value, p_count, p_compression)`
 
 Computes t-digest with the specified accuracy. The values are added with
 as many occurrences as determined by the count parameter.
@@ -729,12 +733,16 @@ SELECT tdigest(t.c, t.a, 100) FROM t
 
 #### Parameters
 
-- `value` - values to aggregate
-- `count` - number of occurrences for each value (NULL means one)
-- `accuracy` - accuracy of the t-digest
+- `p_value` (`double precision`) - values to aggregate
+- `p_count` (`bigint`) - number of occurrences for each value (NULL means one)
+- `p_compression` (`double precision`) - accuracy of the t-digest
+
+#### Return value
+
+- t-digest (`tdigest` type) built on the input data
 
 
-### `tdigest(digest)`
+### `tdigest(p_digest)`
 
 Merges pre-computed t-digests into a single t-digest. This is also the way
 to force compaction of a digest built with `p_compact = false`.
@@ -749,10 +757,14 @@ SELECT tdigest(d) FROM (
 
 #### Parameters
 
-- `digest` - t-digests to merge
+- `p_digest` (`tdigest`) - t-digests to merge
+
+#### Return value
+
+- t-digest (`tdigest` type) built on the input digests
 
 
-### `tdigest_count(p_digest tdigest)`
+### `tdigest_count(p_digest)`
 
 Returns the number of items represented by the t-digest. This is a plain
 function, not an aggregate.
@@ -767,10 +779,14 @@ SELECT tdigest_count(d) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to inspect
+- `p_digest` (`tdigest`) - t-digest to inspect
+
+#### Return value
+
+- number of elements (`bigint` type) added to the digest
 
 
-### `tdigest_percentile(p_digest tdigest, p_percentile double precision)`
+### `tdigest_percentile(p_digest, p_percentile)`
 
 Computes the requested percentile from a pre-computed t-digest.
 
@@ -784,11 +800,15 @@ SELECT tdigest_percentile(d, 0.99) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to process
-- `p_percentile` - value in [0, 1] specifying the percentile
+- `p_digest` (`tdigest`) - t-digest to process
+- `p_percentile` (`double precision`) - value in [0, 1] specifying the percentile
+
+#### Return value
+
+- percentile estimate (`double precision` type)
 
 
-### `tdigest_percentile(p_digest tdigest, p_percentiles double precision[])`
+### `tdigest_percentile(p_digest, p_percentiles)`
 
 Computes the requested percentiles from a pre-computed t-digest.
 
@@ -802,11 +822,15 @@ SELECT tdigest_percentile(d, ARRAY[0.95, 0.99]) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to process
-- `p_percentiles` - values in [0, 1] specifying the percentiles
+- `p_digest` (`tdigest`) - t-digest to process
+- `p_percentiles` (`double precision[]`) - values in [0, 1] specifying the percentiles
+
+#### Return value
+
+- array of percentile estimates (`double precision[]` type)
 
 
-### `tdigest_percentile_of(p_digest tdigest, p_value double precision)`
+### `tdigest_percentile_of(p_digest, p_value)`
 
 Estimates the relative rank of a hypothetical value using a pre-computed
 t-digest.
@@ -831,11 +855,15 @@ SELECT tdigest_percentile_of(d, 349834.1) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to process
-- `p_value` - hypothetical value
+- `p_digest` (`tdigest`) - t-digest to process
+- `p_value` (`double precision`) - hypothetical value
+
+#### Return value
+
+- relative rank of a value (`double precision` type)
 
 
-### `tdigest_percentile_of(p_digest tdigest, p_values double precision[])`
+### `tdigest_percentile_of(p_digest, p_values)`
 
 Estimates relative ranks of hypothetical values using a pre-computed
 t-digest, with the same conventions for centroid means, values outside the
@@ -851,11 +879,15 @@ SELECT tdigest_percentile_of(d, ARRAY[438.256, 349834.1]) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to process
-- `p_values` - hypothetical values
+- `p_digest` (`tdigest`) - t-digest to process
+- `p_values` (`double precision[]`) - hypothetical values
+
+#### Return value
+
+- array of relative rank estimates (`double precision[]` type)
 
 
-### `tdigest_add(p_digest tdigest, p_element double precision, p_compression int, p_compact bool)`
+### `tdigest_add(p_digest, p_element, p_compression, p_compact)`
 
 Performs incremental update of the t-digest by adding a single value.
 
@@ -867,15 +899,19 @@ UPDATE p SET d = tdigest_add(d, random());
 
 #### Parameters
 
-- `p_digest` - t-digest to update (may be `NULL`)
-- `p_element` - value to add, which must be finite; `NULL` leaves the digest
+- `p_digest` (`tdigest`) - t-digest to update (may be `NULL`)
+- `p_element` (`double precision`) - value to add, which must be finite; `NULL` leaves the digest
   unchanged
-- `p_compression` - required to initialize a digest from a non-`NULL` value;
+- `p_compression` (`int`) - required to initialize a digest from a non-`NULL` value;
   ignored for an existing digest (default: `NULL`)
-- `p_compact` - compact at the end of the call (default: true; must not be `NULL`)
+- `p_compact` (`bool`) - compact at the end of the call (default: true; must not be `NULL`)
+
+#### Return value
+
+- a digest (`tdigest`) with the value added
 
 
-### `tdigest_add(p_digest tdigest, p_elements double precision[], p_compression int, p_compact bool)`
+### `tdigest_add(p_digest, p_elements, p_compression, p_compact)`
 
 Performs incremental update of the t-digest by adding values from an array.
 
@@ -887,15 +923,19 @@ UPDATE p SET d = tdigest_add(d, ARRAY[random(), random(), random()]);
 
 #### Parameters
 
-- `p_digest` - t-digest to update (may be `NULL`)
-- `p_elements` - nonempty, one-dimensional array of finite, non-`NULL`
+- `p_digest` (`tdigest`) - t-digest to update (may be `NULL`)
+- `p_elements` (`double precision[]`) - nonempty, one-dimensional array of finite, non-`NULL`
   values; a `NULL` array leaves the digest unchanged
-- `p_compression` - required to initialize a digest from a non-`NULL` array;
+- `p_compression` (`int`) - required to initialize a digest from a non-`NULL` array;
   ignored for an existing digest (default: `NULL`)
-- `p_compact` - compact at the end of the call (default: true; must not be `NULL`)
+- `p_compact` (`bool`) - compact at the end of the call (default: true; must not be `NULL`)
+
+#### Return value
+
+- a digest (`tdigest`) with the values added
 
 
-### `tdigest_union(p_digest1 tdigest, p_digest2 tdigest, p_compact bool)`
+### `tdigest_union(p_digest1, p_digest2, p_compact)`
 
 Performs incremental update of the t-digest by merging-in another digest.
 When either of the digests is `NULL`, the other one is returned unchanged
@@ -911,12 +951,16 @@ UPDATE p SET d = tdigest_union(p.d, x.d) FROM x;
 
 #### Parameters
 
-- `p_digest1` - t-digest to update
-- `p_digest2` - t-digest to merge into `p_digest1`
-- `p_compact` - compact at the end of the call (default: true; must not be `NULL`)
+- `p_digest1` (`tdigest`) - t-digest to update
+- `p_digest2` (`tdigest`) - t-digest to merge into `p_digest1`
+- `p_compact` (`bool`) - compact at the end of the call (default: true; must not be `NULL`)
+
+#### Return value
+
+- a digest (`tdigest`) representing the two input digests merged (and compacted)
 
 
-### `tdigest_json(p_digest tdigest)`
+### `tdigest_json(p_digest)`
 
 Returns the t-digest as a JSON value. The function is also exposed as a
 cast from `tdigest` to `json`.
@@ -939,10 +983,14 @@ SELECT CAST(d AS json) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to cast to a `json` value
+- `p_digest` (`tdigest`) - t-digest to cast to a `json` value
+
+#### Return value
+
+- a JSON document representing the digest (`json` type)
 
 
-### `tdigest_double_array(p_digest tdigest) -> double precision[]`
+### `tdigest_double_array(p_digest)`
 
 Returns the t-digest as a `double precision[]` array. The function is also
 exposed as a cast from `tdigest` to `double precision[]`. The array contains
@@ -963,10 +1011,14 @@ SELECT CAST(d AS double precision[]) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to cast to a `double precision[]` value
+- `p_digest` (`tdigest`) - t-digest to cast to a `double precision[]` value
+
+#### Return value
+
+- an array (`double precision[]`) representing the digest
 
 
-### `tdigest_avg(p_digest tdigest, p_low double precision, p_high double precision)`
+### `tdigest_avg(p_digest, p_low, p_high)`
 
 Computes trimmed mean of values, discarding values at the low and high end.
 The `p_low` and `p_high` values are percentiles in [0, 1] (with
@@ -985,12 +1037,16 @@ SELECT tdigest_avg(d, 0.05, 0.95) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to calculate mean from
-- `p_low` - low threshold percentile (default: 0.0)
-- `p_high` - high threshold percentile (default: 1.0)
+- `p_digest` (`tdigest`) - t-digest to calculate mean from
+- `p_low` (`double precision`) - low threshold percentile (default: 0.0)
+- `p_high` (`double precision`) - high threshold percentile (default: 1.0)
+
+#### Return value
+
+- the average value (`double precision`) estimated from the digest
 
 
-### `tdigest_sum(p_digest tdigest, p_low double precision, p_high double precision)`
+### `tdigest_sum(p_digest, p_low, p_high)`
 
 Computes trimmed sum of values, discarding values at the low and high end.
 The `p_low` and `p_high` values are percentiles in [0, 1] (with
@@ -1009,12 +1065,16 @@ SELECT tdigest_sum(d, 0.05, 0.95) FROM (
 
 #### Parameters
 
-- `p_digest` - t-digest to calculate sum from
-- `p_low` - low threshold percentile (default: 0.0)
-- `p_high` - high threshold percentile (default: 1.0)
+- `p_digest` (`tdigest`) - t-digest to calculate sum from
+- `p_low` (`double precision`) - low threshold percentile (default: 0.0)
+- `p_high` (`double precision`) - high threshold percentile (default: 1.0)
+
+#### Return value
+
+- the sum value (`double precision`) estimated from the digest
 
 
-### `tdigest_is_valid(p_digest tdigest)`
+### `tdigest_is_valid(p_digest)`
 
 Checks whether the t-digest is valid, i.e. that it passes the same sanity checks
 as the input functions (parsing the text or binary representation). Returns
@@ -1034,7 +1094,12 @@ SELECT a, b FROM p WHERE NOT tdigest_is_valid(p.d);
 
 #### Parameters
 
-- `p_digest` - t-digest to check
+- `p_digest` (`tdigest`) - t-digest to check
+
+#### Return value
+
+- `true` if the digest is valid, `false` if it contains invalid data
+
 
 
 Notes

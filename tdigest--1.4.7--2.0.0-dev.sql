@@ -101,3 +101,42 @@ BEGIN
     END IF;
 END;
 $$;
+
+-- add parameter names to existing aggregates
+-- Older servers cannot alter aggregates; skip the old parameter names there.
+DO $$
+BEGIN
+    IF current_setting('server_version_num')::integer >= 120000 THEN
+        EXECUTE '
+CREATE OR REPLACE AGGREGATE tdigest(p_value double precision, p_compression int) (
+    SFUNC = tdigest_add_double,
+    STYPE = internal,
+    FINALFUNC = tdigest_digest,
+    SERIALFUNC = tdigest_serial,
+    DESERIALFUNC = tdigest_deserial,
+    COMBINEFUNC = tdigest_combine,
+    PARALLEL = SAFE
+);
+
+CREATE OR REPLACE AGGREGATE tdigest(p_value double precision, p_count bigint, p_compression int) (
+    SFUNC = tdigest_add_double_count,
+    STYPE = internal,
+    FINALFUNC = tdigest_digest,
+    SERIALFUNC = tdigest_serial,
+    DESERIALFUNC = tdigest_deserial,
+    COMBINEFUNC = tdigest_combine,
+    PARALLEL = SAFE
+);
+
+CREATE OR REPLACE AGGREGATE tdigest(p_digest tdigest) (
+    SFUNC = tdigest_add_digest,
+    STYPE = internal,
+    FINALFUNC = tdigest_digest,
+    SERIALFUNC = tdigest_serial,
+    DESERIALFUNC = tdigest_deserial,
+    COMBINEFUNC = tdigest_combine,
+    PARALLEL = SAFE
+);';
+    END IF;
+END;
+$$;
