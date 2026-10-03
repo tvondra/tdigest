@@ -11,7 +11,10 @@ DROP TABLE IF EXISTS t_int;
 CREATE TABLE t_random (c int, d_external tdigest, d_extended tdigest);
 CREATE TABLE t_int    (c int, d_external tdigest, d_extended tdigest);
 
+ALTER TABLE t_random ALTER COLUMN d_external SET STORAGE external;
 ALTER TABLE t_random ALTER COLUMN d_extended SET STORAGE extended;
+
+ALTER TABLE t_int    ALTER COLUMN d_external SET STORAGE external;
 ALTER TABLE t_int    ALTER COLUMN d_extended SET STORAGE extended;
 
 INSERT INTO t_int SELECT    10, d FROM (SELECT mod(i,10), tdigest(i, 10) d, NULL     FROM generate_series(1, 1000000) s(i) GROUP BY mod(i, 10));
