@@ -2,6 +2,13 @@
 
 [![make installcheck](https://github.com/tvondra/tdigest/actions/workflows/ci.yml/badge.svg)](https://github.com/tvondra/tdigest/actions/workflows/ci.yml)
 
+> :warning: **Warning**: Version 2.0.0 reworks the API in a significant way,
+> to make it closer to make it simpler, more convenient to use, and similar to
+> [postgresql-hll](https://github.com/citusdata/postgresql-hll). The changes
+> may break some queries, or silently change the behavior. See the section
+> [Upgrading to 2.0.0](#upgrading-to-200) for details about the changes, and
+> how to rewrite the queries to continue working.
+
 This PostgreSQL extension implements t-digest, a data structure for on-line
 accumulation of rank-based statistics such as quantiles and trimmed means.
 The algorithm is also very friendly to parallel programs.
@@ -14,294 +21,6 @@ of the code was inspired by tdigestc [3] and tdigest [4] by ajwerner.
 The accuracy of estimates produced by t-digests can be orders of magnitude
 more accurate than those produced by previous digest algorithms in spite of
 the fact that t-digests are much more compact when stored on disk.
-
-
-## Upgrading to 2.0.0
-
-Version 2.0.0 replaces the twenty-odd aggregate variants of earlier releases
-with a single `tdigest()` aggregate that builds a digest, plus plain functions
-that consume one. Queries using the removed aggregates have to be rewritten;
-the existing `tdigest()` builder and merge calls are unchanged.
-
-This development branch installs version `2.0.0-dev`, which is the version
-to use when specifying an explicit upgrade target.
-
-Most of the removed aggregates no longer exist under any signature, so those
-queries fail with `function ... does not exist` and are easy to find. Six do
-not, and those are the dangerous ones.
-
-### Running the upgrade
-
-Install the new version as usual, and then run
-
-```sql
-ALTER EXTENSION tdigest UPDATE;
-```
-
-in **every** database that has the extension installed. Installing the files
-replaces the shared library for the whole instance, but the SQL definitions
-are per-database and only change when you run the statement above.
-
-Between the two steps a database still has the old SQL definitions pointing
-at C functions the rework removed. Calling one of the removed aggregates in
-that window reports
-
-```sql
-ERROR:  function is no longer supported by the tdigest extension
-HINT:  The shared library has been upgraded but the SQL definitions have not.
-       Run "ALTER EXTENSION tdigest UPDATE".
-```
-
-rather than failing to resolve the symbol. Once the update has run, calls to
-the removed raw-value signatures give the usual `function ... does not
-exist`. The six digest-taking signatures below still resolve, but as plain
-functions, and can silently change the meaning of existing queries.
-
-### The silent change
-
-These six kept their exact signatures but turned from aggregates into plain
-functions:
-
-```sql
-tdigest_percentile(tdigest, double precision)
-tdigest_percentile(tdigest, double precision[])
-tdigest_percentile_of(tdigest, double precision)
-tdigest_percentile_of(tdigest, double precision[])
-tdigest_sum(tdigest, double precision, double precision)
-tdigest_avg(tdigest, double precision, double precision)
-```
-
-A query with `GROUP BY` can fail loudly:
-
-```sql
-SELECT a, tdigest_percentile(d, 0.5) FROM p GROUP BY a;
-ERROR:  column "p.d" must appear in the GROUP BY clause or be used in an aggregate function
-```
-
-Do not follow that advice. `tdigest` has no equality operator, so it cannot be
-grouped on, and adding the column to `GROUP BY` only trades one error for
-another:
-
-```sql
-SELECT a, tdigest_percentile(d, 0.5) FROM p GROUP BY a, d;
-ERROR:  could not identify an equality operator for type tdigest
-```
-
-What the query needs is the `tdigest()` wrapper described below, which turns
-the digests of each group back into one digest:
-
-```sql
-SELECT a, tdigest_percentile(tdigest(d), 0.5) FROM p GROUP BY a;
-```
-
-A query without a `GROUP BY` keeps working and quietly means something else. It
-used to merge every digest into a single result; now it returns one row per
-digest:
-
-```sql
--- 1.x: one row, the 0.5 percentile of all the digests combined
--- 2.0.0: one row per digest, each with its own 0.5 percentile
-SELECT tdigest_percentile(d, 0.5) FROM p;
-```
-
-Wrap the digest in `tdigest()` to get the old behaviour back:
-
-```sql
-SELECT tdigest_percentile(tdigest(d), 0.5) FROM p;
-```
-
-Review all uses of these six names before upgrading, including grouped
-queries. Any call intended to combine multiple digest rows needs the
-`tdigest()` wrapper; the plain function itself processes only one digest.
-
-### Rewriting the removed aggregates
-
-The aggregates taking raw values built a digest and consumed it in one step.
-Split that into `tdigest()` plus the matching function:
-
-| 1.x | 2.0.0 |
-| --- | --- |
-| `tdigest_percentile(v, c, p)` | `tdigest_percentile(tdigest(v, c), p)` |
-| `tdigest_percentile(v, n, c, p)` | `tdigest_percentile(tdigest(v, n, c), p)` |
-| `tdigest_percentile_of(v, c, x)` | `tdigest_percentile_of(tdigest(v, c), x)` |
-| `tdigest_percentile_of(v, n, c, x)` | `tdigest_percentile_of(tdigest(v, n, c), x)` |
-| `tdigest_percentile(d, p)` | `tdigest_percentile(tdigest(d), p)` |
-| `tdigest_percentile_of(d, x)` | `tdigest_percentile_of(tdigest(d), x)` |
-| `tdigest_sum(v, c, low, high)` | `tdigest_sum(tdigest(v, c), low, high)` |
-| `tdigest_sum(v, n, c, low, high)` | `tdigest_sum(tdigest(v, n, c), low, high)` |
-| `tdigest_sum(d, low, high)` | `tdigest_sum(tdigest(d), low, high)` |
-| `tdigest_avg(v, c, low, high)` | `tdigest_avg(tdigest(v, c), low, high)` |
-| `tdigest_avg(v, n, c, low, high)` | `tdigest_avg(tdigest(v, n, c), low, high)` |
-| `tdigest_avg(d, low, high)` | `tdigest_avg(tdigest(d), low, high)` |
-| `tdigest_digest_sum(d, low, high)` | `tdigest_sum(d, low, high)` |
-| `tdigest_digest_avg(d, low, high)` | `tdigest_avg(d, low, high)` |
-
-The array variants follow the same pattern. `tdigest_digest_sum` and
-`tdigest_digest_avg` were already plain functions and were simply renamed,
-since the names they wanted are now free. The upgrade renames these two
-functions in place, preserving stored views and other tracked dependencies,
-as well as their grants and comments. SQL text using the old names still
-needs to be rewritten.
-
-The rewrites are not exact: `tdigest()` compacts the digest it returns, and
-the removed aggregates computed from the raw aggregate state. For the
-percentile functions that makes no practical difference, since they compact
-their input anyway. For `tdigest_sum` and `tdigest_avg` it does, because
-those work with the centroids they are given:
-
-* An aggregate over few enough raw values to fit into the buffer without a
-  compaction used to return the exact trimmed sum or mean. The rewritten
-  query returns an estimate.
-
-* An aggregate over several pre-aggregated digests used to see all the
-  centroids of all of them, as long as they fit into the buffer without a
-  compaction. The rewritten query first merges them into one compacted
-  digest, which can easily cost a few times the relative error. Raise the
-  compression of the stored digests if the difference matters.
-
-Aggregate modifiers belong on `tdigest()`, not on the consuming function.
-Move `DISTINCT` and aggregate `ORDER BY` inside the builder call, and attach
-`FILTER` or `OVER` to that call. For example:
-
-```sql
--- 1.x
-SELECT tdigest_percentile(v, 100, 0.95) FILTER (WHERE v >= 0) FROM t;
-
--- 2.0.0
-SELECT tdigest_percentile(tdigest(v, 100) FILTER (WHERE v >= 0), 0.95) FROM t;
-```
-
-Percentiles, hypothetical values, and trim thresholds are now ordinary
-function arguments. In grouped queries they must satisfy the usual PostgreSQL
-grouping rules; they are no longer taken from the first contributing input row.
-
-### NULL handling
-
-The six functions that replace the aggregates - `tdigest_percentile`,
-`tdigest_percentile_of`, `tdigest_sum` and `tdigest_avg` - are `STRICT`, so a
-NULL in any argument produces a NULL result. The aggregates they replace
-raised an error for a NULL percentile, hypothetical value or trim threshold
-on the first contributing input row:
-
-```sql
--- 1.x: ERROR:  percentile must not be NULL
-SELECT tdigest_percentile(d, NULL::double precision) FROM p;
-
--- 2.0.0: NULL
-SELECT tdigest_percentile(tdigest(d), NULL::double precision) FROM p;
-```
-
-Queries relying on that error to catch a bad percentile, value or trim
-threshold must now validate the argument explicitly. This does not permit
-NULL elements inside percentile/value arrays: those arrays must be nonempty,
-one-dimensional, and contain no NULL elements.
-
-The incremental API is unchanged and is not `STRICT`. `tdigest_add` and
-`tdigest_union` treat a NULL digest or a NULL value as something to skip or
-to start from, not as a reason to return NULL - see
-[Incremental updates](#incremental-updates).
-
-### Applying the upgrade
-
-The update drops the removed aggregate objects. PostgreSQL will refuse to
-drop one if a view, materialized view, or another tracked database object
-depends on it. Rewriting application queries alone is therefore not enough:
-inventory those dependencies and save their definitions, owners, and grants
-before upgrading.
-
-Quiesce sessions using the extension before replacing the shared library,
-install the 2.0.0 files, and use a fresh database connection for the update
-so it does not retain a previously loaded library. In each database, run:
-
-```
-ALTER EXTENSION tdigest UPDATE TO '2.0.0-dev';
-```
-
-If there are dependencies on removed aggregates, perform a planned migration
-in one transaction: explicitly drop the affected dependent objects, update
-the extension, then recreate those objects with the rewritten queries and
-restore their ownership and grants. Recreate any dependent objects in
-dependency order and repopulate materialized views as needed. Do not use broad
-`DROP ... CASCADE` commands as a shortcut, since those can remove application
-objects and data.
-
-The scalar `tdigest_digest_sum` and `tdigest_digest_avg` renames preserve
-tracked dependencies, as described above. Function bodies and dynamic SQL
-stored as text still need to be searched and rewritten, even when PostgreSQL
-does not record a dependency on the old name.
-
-The API rework does not change the on-disk digest format, so the new SQL API
-reads existing digest columns exactly as they are.
-
-They do need attention for the storage change, though. Up to 1.4.7 the
-`tdigest` type used `external` storage, which pushes large values out to
-TOAST without attempting compression. On PostgreSQL 13 and later, the upgrade
-switches the type's default to `extended`:
-
-```
-ALTER TYPE tdigest SET (STORAGE = extended);
-```
-
-`extended` permits PostgreSQL to try compression before moving a large value
-out of line. Compression is not guaranteed: a value that does not compress
-well enough can still be stored out of line uncompressed.
-
-PostgreSQL 11 and 12 do not support changing type storage this way, so the
-upgrade leaves their type default as `external`. The per-column `ALTER TABLE`
-command below works on those versions too; use it for existing columns and
-for new columns that should allow compression.
-
-The `ALTER TYPE` statement changes the default recorded for the type, which
-is what new columns pick up. Columns that already exist keep the storage
-they were created with; an `external` column does not start requesting
-compression automatically. Check for those with
-
-```sql
-SELECT c.relname, a.attname, a.attstorage
-  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
- WHERE a.atttypid = 'tdigest'::regtype
-   AND a.attnum > 0 AND NOT a.attisdropped
-   AND c.relkind IN ('r', 'm', 'p')
-   AND a.attstorage <> 'x';
-```
-
-and switch the ones worth converting:
-
-```sql
-ALTER TABLE p ALTER COLUMN d SET STORAGE EXTENDED;
-```
-
-`SET STORAGE` does not rewrite existing values. A table rewrite with
-`VACUUM FULL` or `CLUSTER` can apply the new policy to them, but requires an
-`ACCESS EXCLUSIVE` table lock. A no-op update such as `UPDATE p SET d = d`
-can reuse the old TOAST value without compressing it. To reconstruct the
-values without compacting their centroids, use a text round trip with
-sufficient floating-point output precision:
-
-```sql
-BEGIN;
-SET LOCAL extra_float_digits = 3;
-UPDATE p SET d = d::text::tdigest;
-COMMIT;
-```
-
-This also converts digests in the old sum-based format to the mean-based
-format, just as the input functions normally do.
-
-`ALTER TABLE ... SET STORAGE` has no version restriction, so it is also the
-way to get compressed digests on PostgreSQL 11 and 12, where the type keeps
-its `external` default. The query above lists every `tdigest` column there,
-including ones created after the upgrade.
-
-The change is optional. Nothing breaks if a column is left on `external`
-storage - both representations are readable, and a table can hold a mix of
-them. A digest is 24B of header plus 16B per centroid, and how many centroids
-a compaction leaves behind is not bounded by `compression` - it depends on
-the data, and ranges from a fraction of `compression` to somewhat above it
-(compression 10 typically gives about 17 centroids). A digest built with
-compression 100 is around 1kB and stays in the tuple, while compression 500
-and above produces digests of several kB, which do reach TOAST. The storage
-change matters for those.
 
 
 ## Basic usage
@@ -664,6 +383,294 @@ discarded. The thresholds are optional, defaulting to `p_low = 0.0` and
 When no values fall between the thresholds - for example with
 `p_low = p_high = 0.0`, or `p_low = p_high = 0.5` and an even number of
 values - both functions return `NULL`.
+
+
+## Upgrading to 2.0.0
+
+Version 2.0.0 replaces the twenty-odd aggregate variants of earlier releases
+with a single `tdigest()` aggregate that builds a digest, plus plain functions
+that consume one. Queries using the removed aggregates have to be rewritten;
+the existing `tdigest()` builder and merge calls are unchanged.
+
+This development branch installs version `2.0.0-dev`, which is the version
+to use when specifying an explicit upgrade target.
+
+Most of the removed aggregates no longer exist under any signature, so those
+queries fail with `function ... does not exist` and are easy to find. Six do
+not, and those are the dangerous ones.
+
+### Running the upgrade
+
+Install the new version as usual, and then run
+
+```sql
+ALTER EXTENSION tdigest UPDATE;
+```
+
+in **every** database that has the extension installed. Installing the files
+replaces the shared library for the whole instance, but the SQL definitions
+are per-database and only change when you run the statement above.
+
+Between the two steps a database still has the old SQL definitions pointing
+at C functions the rework removed. Calling one of the removed aggregates in
+that window reports
+
+```sql
+ERROR:  function is no longer supported by the tdigest extension
+HINT:  The shared library has been upgraded but the SQL definitions have not.
+       Run "ALTER EXTENSION tdigest UPDATE".
+```
+
+rather than failing to resolve the symbol. Once the update has run, calls to
+the removed raw-value signatures give the usual `function ... does not
+exist`. The six digest-taking signatures below still resolve, but as plain
+functions, and can silently change the meaning of existing queries.
+
+### The silent change
+
+These six kept their exact signatures but turned from aggregates into plain
+functions:
+
+```sql
+tdigest_percentile(tdigest, double precision)
+tdigest_percentile(tdigest, double precision[])
+tdigest_percentile_of(tdigest, double precision)
+tdigest_percentile_of(tdigest, double precision[])
+tdigest_sum(tdigest, double precision, double precision)
+tdigest_avg(tdigest, double precision, double precision)
+```
+
+A query with `GROUP BY` can fail loudly:
+
+```sql
+SELECT a, tdigest_percentile(d, 0.5) FROM p GROUP BY a;
+ERROR:  column "p.d" must appear in the GROUP BY clause or be used in an aggregate function
+```
+
+Do not follow that advice. `tdigest` has no equality operator, so it cannot be
+grouped on, and adding the column to `GROUP BY` only trades one error for
+another:
+
+```sql
+SELECT a, tdigest_percentile(d, 0.5) FROM p GROUP BY a, d;
+ERROR:  could not identify an equality operator for type tdigest
+```
+
+What the query needs is the `tdigest()` wrapper described below, which turns
+the digests of each group back into one digest:
+
+```sql
+SELECT a, tdigest_percentile(tdigest(d), 0.5) FROM p GROUP BY a;
+```
+
+A query without a `GROUP BY` keeps working and quietly means something else. It
+used to merge every digest into a single result; now it returns one row per
+digest:
+
+```sql
+-- 1.x: one row, the 0.5 percentile of all the digests combined
+-- 2.0.0: one row per digest, each with its own 0.5 percentile
+SELECT tdigest_percentile(d, 0.5) FROM p;
+```
+
+Wrap the digest in `tdigest()` to get the old behaviour back:
+
+```sql
+SELECT tdigest_percentile(tdigest(d), 0.5) FROM p;
+```
+
+Review all uses of these six names before upgrading, including grouped
+queries. Any call intended to combine multiple digest rows needs the
+`tdigest()` wrapper; the plain function itself processes only one digest.
+
+### Rewriting the removed aggregates
+
+The aggregates taking raw values built a digest and consumed it in one step.
+Split that into `tdigest()` plus the matching function:
+
+| 1.x | 2.0.0 |
+| --- | --- |
+| `tdigest_percentile(v, c, p)` | `tdigest_percentile(tdigest(v, c), p)` |
+| `tdigest_percentile(v, n, c, p)` | `tdigest_percentile(tdigest(v, n, c), p)` |
+| `tdigest_percentile_of(v, c, x)` | `tdigest_percentile_of(tdigest(v, c), x)` |
+| `tdigest_percentile_of(v, n, c, x)` | `tdigest_percentile_of(tdigest(v, n, c), x)` |
+| `tdigest_percentile(d, p)` | `tdigest_percentile(tdigest(d), p)` |
+| `tdigest_percentile_of(d, x)` | `tdigest_percentile_of(tdigest(d), x)` |
+| `tdigest_sum(v, c, low, high)` | `tdigest_sum(tdigest(v, c), low, high)` |
+| `tdigest_sum(v, n, c, low, high)` | `tdigest_sum(tdigest(v, n, c), low, high)` |
+| `tdigest_sum(d, low, high)` | `tdigest_sum(tdigest(d), low, high)` |
+| `tdigest_avg(v, c, low, high)` | `tdigest_avg(tdigest(v, c), low, high)` |
+| `tdigest_avg(v, n, c, low, high)` | `tdigest_avg(tdigest(v, n, c), low, high)` |
+| `tdigest_avg(d, low, high)` | `tdigest_avg(tdigest(d), low, high)` |
+| `tdigest_digest_sum(d, low, high)` | `tdigest_sum(d, low, high)` |
+| `tdigest_digest_avg(d, low, high)` | `tdigest_avg(d, low, high)` |
+
+The array variants follow the same pattern. `tdigest_digest_sum` and
+`tdigest_digest_avg` were already plain functions and were simply renamed,
+since the names they wanted are now free. The upgrade renames these two
+functions in place, preserving stored views and other tracked dependencies,
+as well as their grants and comments. SQL text using the old names still
+needs to be rewritten.
+
+The rewrites are not exact: `tdigest()` compacts the digest it returns, and
+the removed aggregates computed from the raw aggregate state. For the
+percentile functions that makes no practical difference, since they compact
+their input anyway. For `tdigest_sum` and `tdigest_avg` it does, because
+those work with the centroids they are given:
+
+* An aggregate over few enough raw values to fit into the buffer without a
+  compaction used to return the exact trimmed sum or mean. The rewritten
+  query returns an estimate.
+
+* An aggregate over several pre-aggregated digests used to see all the
+  centroids of all of them, as long as they fit into the buffer without a
+  compaction. The rewritten query first merges them into one compacted
+  digest, which can easily cost a few times the relative error. Raise the
+  compression of the stored digests if the difference matters.
+
+Aggregate modifiers belong on `tdigest()`, not on the consuming function.
+Move `DISTINCT` and aggregate `ORDER BY` inside the builder call, and attach
+`FILTER` or `OVER` to that call. For example:
+
+```sql
+-- 1.x
+SELECT tdigest_percentile(v, 100, 0.95) FILTER (WHERE v >= 0) FROM t;
+
+-- 2.0.0
+SELECT tdigest_percentile(tdigest(v, 100) FILTER (WHERE v >= 0), 0.95) FROM t;
+```
+
+Percentiles, hypothetical values, and trim thresholds are now ordinary
+function arguments. In grouped queries they must satisfy the usual PostgreSQL
+grouping rules; they are no longer taken from the first contributing input row.
+
+### NULL handling
+
+The six functions that replace the aggregates - `tdigest_percentile`,
+`tdigest_percentile_of`, `tdigest_sum` and `tdigest_avg` - are `STRICT`, so a
+NULL in any argument produces a NULL result. The aggregates they replace
+raised an error for a NULL percentile, hypothetical value or trim threshold
+on the first contributing input row:
+
+```sql
+-- 1.x: ERROR:  percentile must not be NULL
+SELECT tdigest_percentile(d, NULL::double precision) FROM p;
+
+-- 2.0.0: NULL
+SELECT tdigest_percentile(tdigest(d), NULL::double precision) FROM p;
+```
+
+Queries relying on that error to catch a bad percentile, value or trim
+threshold must now validate the argument explicitly. This does not permit
+NULL elements inside percentile/value arrays: those arrays must be nonempty,
+one-dimensional, and contain no NULL elements.
+
+The incremental API is unchanged and is not `STRICT`. `tdigest_add` and
+`tdigest_union` treat a NULL digest or a NULL value as something to skip or
+to start from, not as a reason to return NULL - see
+[Incremental updates](#incremental-updates).
+
+### Applying the upgrade
+
+The update drops the removed aggregate objects. PostgreSQL will refuse to
+drop one if a view, materialized view, or another tracked database object
+depends on it. Rewriting application queries alone is therefore not enough:
+inventory those dependencies and save their definitions, owners, and grants
+before upgrading.
+
+Quiesce sessions using the extension before replacing the shared library,
+install the 2.0.0 files, and use a fresh database connection for the update
+so it does not retain a previously loaded library. In each database, run:
+
+```
+ALTER EXTENSION tdigest UPDATE TO '2.0.0-dev';
+```
+
+If there are dependencies on removed aggregates, perform a planned migration
+in one transaction: explicitly drop the affected dependent objects, update
+the extension, then recreate those objects with the rewritten queries and
+restore their ownership and grants. Recreate any dependent objects in
+dependency order and repopulate materialized views as needed. Do not use broad
+`DROP ... CASCADE` commands as a shortcut, since those can remove application
+objects and data.
+
+The scalar `tdigest_digest_sum` and `tdigest_digest_avg` renames preserve
+tracked dependencies, as described above. Function bodies and dynamic SQL
+stored as text still need to be searched and rewritten, even when PostgreSQL
+does not record a dependency on the old name.
+
+The API rework does not change the on-disk digest format, so the new SQL API
+reads existing digest columns exactly as they are.
+
+They do need attention for the storage change, though. Up to 1.4.7 the
+`tdigest` type used `external` storage, which pushes large values out to
+TOAST without attempting compression. On PostgreSQL 13 and later, the upgrade
+switches the type's default to `extended`:
+
+```
+ALTER TYPE tdigest SET (STORAGE = extended);
+```
+
+`extended` permits PostgreSQL to try compression before moving a large value
+out of line. Compression is not guaranteed: a value that does not compress
+well enough can still be stored out of line uncompressed.
+
+PostgreSQL 11 and 12 do not support changing type storage this way, so the
+upgrade leaves their type default as `external`. The per-column `ALTER TABLE`
+command below works on those versions too; use it for existing columns and
+for new columns that should allow compression.
+
+The `ALTER TYPE` statement changes the default recorded for the type, which
+is what new columns pick up. Columns that already exist keep the storage
+they were created with; an `external` column does not start requesting
+compression automatically. Check for those with
+
+```sql
+SELECT c.relname, a.attname, a.attstorage
+  FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+ WHERE a.atttypid = 'tdigest'::regtype
+   AND a.attnum > 0 AND NOT a.attisdropped
+   AND c.relkind IN ('r', 'm', 'p')
+   AND a.attstorage <> 'x';
+```
+
+and switch the ones worth converting:
+
+```sql
+ALTER TABLE p ALTER COLUMN d SET STORAGE EXTENDED;
+```
+
+`SET STORAGE` does not rewrite existing values. A table rewrite with
+`VACUUM FULL` or `CLUSTER` can apply the new policy to them, but requires an
+`ACCESS EXCLUSIVE` table lock. A no-op update such as `UPDATE p SET d = d`
+can reuse the old TOAST value without compressing it. To reconstruct the
+values without compacting their centroids, use a text round trip with
+sufficient floating-point output precision:
+
+```sql
+BEGIN;
+SET LOCAL extra_float_digits = 3;
+UPDATE p SET d = d::text::tdigest;
+COMMIT;
+```
+
+This also converts digests in the old sum-based format to the mean-based
+format, just as the input functions normally do.
+
+`ALTER TABLE ... SET STORAGE` has no version restriction, so it is also the
+way to get compressed digests on PostgreSQL 11 and 12, where the type keeps
+its `external` default. The query above lists every `tdigest` column there,
+including ones created after the upgrade.
+
+The change is optional. Nothing breaks if a column is left on `external`
+storage - both representations are readable, and a table can hold a mix of
+them. A digest is 24B of header plus 16B per centroid, and how many centroids
+a compaction leaves behind is not bounded by `compression` - it depends on
+the data, and ranges from a fraction of `compression` to somewhat above it
+(compression 10 typically gives about 17 centroids). A digest built with
+compression 100 is around 1kB and stays in the tuple, while compression 500
+and above produces digests of several kB, which do reach TOAST. The storage
+change matters for those.
 
 
 ## Functions
