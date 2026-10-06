@@ -147,6 +147,13 @@ SELECT tdigest_avg(tdigest(1.0, 100), 0.25, 0.75);
 SELECT tdigest_sum(tdigest(1.0, 100), 0.5, 0.5);
 SELECT tdigest_avg(tdigest(1.0, 100), 0.5, 0.5);
 
+-- empty ranges at the boundaries
+SELECT tdigest_sum(tdigest(1.0, 100), 0.0, 0.0);
+SELECT tdigest_avg(tdigest(1.0, 100), 0.0, 0.0);
+
+SELECT tdigest_sum(tdigest(1.0, 100), 1.0, 1.0);
+SELECT tdigest_avg(tdigest(1.0, 100), 1.0, 1.0);
+
 -- inverted range
 SELECT tdigest_sum(tdigest(1.0, 100), 0.75, 0.25);
 SELECT tdigest_avg(tdigest(1.0, 100), 0.75, 0.25);
@@ -155,9 +162,13 @@ SELECT tdigest_avg(tdigest(1.0, 100), 0.75, 0.25);
 SELECT tdigest_sum(tdigest(1.0, 100), -1.0, 1.0);
 SELECT tdigest_avg(tdigest(1.0, 100), -1.0, 1.0);
 
+-- bogus low threshold
+SELECT tdigest_sum(tdigest(1.0, 100), 2.0, 1.0);
+SELECT tdigest_avg(tdigest(1.0, 100), 2.0, 1.0);
+
 -- bogus high threshold
-SELECT tdigest_sum(tdigest(1.0, 100), -1.0, 1.0);
-SELECT tdigest_avg(tdigest(1.0, 100), -1.0, 1.0);
+SELECT tdigest_sum(tdigest(1.0, 100), 0.0, 2.0);
+SELECT tdigest_avg(tdigest(1.0, 100), 0.0, 2.0);
 
 -- infinity in low threshold
 SELECT tdigest_sum(tdigest(1.0, 100), '-infinity'::double precision, 1.0);

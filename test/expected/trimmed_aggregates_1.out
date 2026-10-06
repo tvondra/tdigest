@@ -303,6 +303,31 @@ SELECT tdigest_avg(tdigest(1.0, 100), 0.5, 0.5);
            1
 (1 row)
 
+-- empty ranges at the boundaries
+SELECT tdigest_sum(tdigest(1.0, 100), 0.0, 0.0);
+ tdigest_sum 
+-------------
+            
+(1 row)
+
+SELECT tdigest_avg(tdigest(1.0, 100), 0.0, 0.0);
+ tdigest_avg 
+-------------
+            
+(1 row)
+
+SELECT tdigest_sum(tdigest(1.0, 100), 1.0, 1.0);
+ tdigest_sum 
+-------------
+            
+(1 row)
+
+SELECT tdigest_avg(tdigest(1.0, 100), 1.0, 1.0);
+ tdigest_avg 
+-------------
+            
+(1 row)
+
 -- inverted range
 SELECT tdigest_sum(tdigest(1.0, 100), 0.75, 0.25);
 ERROR:  invalid low/high percentile values 0.750000/0.250000, should be low <= high
@@ -313,11 +338,16 @@ SELECT tdigest_sum(tdigest(1.0, 100), -1.0, 1.0);
 ERROR:  invalid low percentile value -1.000000, should be in [0.0, 1.0]
 SELECT tdigest_avg(tdigest(1.0, 100), -1.0, 1.0);
 ERROR:  invalid low percentile value -1.000000, should be in [0.0, 1.0]
+-- bogus low threshold
+SELECT tdigest_sum(tdigest(1.0, 100), 2.0, 1.0);
+ERROR:  invalid low percentile value 2.000000, should be in [0.0, 1.0]
+SELECT tdigest_avg(tdigest(1.0, 100), 2.0, 1.0);
+ERROR:  invalid low percentile value 2.000000, should be in [0.0, 1.0]
 -- bogus high threshold
-SELECT tdigest_sum(tdigest(1.0, 100), -1.0, 1.0);
-ERROR:  invalid low percentile value -1.000000, should be in [0.0, 1.0]
-SELECT tdigest_avg(tdigest(1.0, 100), -1.0, 1.0);
-ERROR:  invalid low percentile value -1.000000, should be in [0.0, 1.0]
+SELECT tdigest_sum(tdigest(1.0, 100), 0.0, 2.0);
+ERROR:  invalid high percentile value 2.000000, should be in [0.0, 1.0]
+SELECT tdigest_avg(tdigest(1.0, 100), 0.0, 2.0);
+ERROR:  invalid high percentile value 2.000000, should be in [0.0, 1.0]
 -- infinity in low threshold
 SELECT tdigest_sum(tdigest(1.0, 100), '-infinity'::double precision, 1.0);
 ERROR:  invalid low percentile value -inf, should be in [0.0, 1.0]
