@@ -32,8 +32,17 @@ SELECT 'flags x count 3 compression 10 centroids 1 (1, 3)'::tdigest;
 -- integer field that does not fit into bigint
 SELECT 'flags 1 count 99999999999999999999 compression 10 centroids 1 (1, 3)'::tdigest;
 
--- integer field that fits into bigint but not into integer
+-- integer fields that fit into bigint but not into integer, both above
+-- and below the integer range
 SELECT 'flags 1 count 3 compression 3000000000 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags -3000000000 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 1 count 3 compression -3000000000 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 1 count 3 compression 10 centroids -3000000000 (1, 3)'::tdigest;
+
+-- the boundaries of the integer range pass the range check, the values are
+-- then rejected by the checks of the individual fields
+SELECT 'flags 2147483647 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags -2147483648 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
 
 -- floating point field that is not a number at all
 SELECT 'flags 1 count 3 compression 10 centroids 1 (x, 3)'::tdigest;
@@ -66,6 +75,11 @@ SELECT 'flags 1 count 3 compression 10 centroids 0'::tdigest;
 
 -- more centroids than fit into the buffer (10 * compression)
 SELECT 'flags 1 count 3 compression 10 centroids 101'::tdigest;
+
+-- exactly as many centroids as fit into the buffer is fine
+SELECT tdigest_count(('flags 1 count 100 compression 10 centroids 100 ' ||
+                      (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                         FROM generate_series(1, 100) AS s(i)))::tdigest);
 
 --
 -- sanity checks on the parsed centroids
