@@ -115,7 +115,7 @@ tdigest_detoast(Datum datum)
 	{
 		tdigest_t  *aligned = (tdigest_t *) palloc(VARSIZE(digest));
 
-		memcpy(aligned, digest, VARSIZE(digest));
+		memcpy(aligned, (void *) digest, VARSIZE(digest));
 		digest = aligned;
 	}
 
