@@ -75,6 +75,11 @@ SELECT tdigest_is_valid('flags 1 count 3 compression 10 centroids 2 (2, 2) (1, 1
 SELECT tdigest_is_valid('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest);
 SELECT tdigest_is_valid('flags 1 count 1 compression 10000 centroids 1 (1, 1)'::tdigest);
 
+-- exactly as many centroids as fit into the buffer (10 * compression)
+SELECT tdigest_is_valid(('flags 1 count 100 compression 10 centroids 100 ' ||
+                         (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                            FROM generate_series(1, 100) AS s(i)))::tdigest);
+
 -- digests built by the extension itself
 SELECT tdigest_is_valid(tdigest(i::double precision, 10)) FROM generate_series(1, 1000) AS s(i);
 SELECT tdigest_is_valid(tdigest(i::double precision, 100)) FROM generate_series(1, 1000) AS s(i);
@@ -209,6 +214,14 @@ SELECT tdigest_is_valid((be_int4(1)
                       || be_int4(2)
                       || be_float8(1) || be_int8(1::bigint)
                       || be_float8(2) || be_int8((-1)::bigint))::tdigest);
+
+-- zero centroid count, even if the counts add up to the total count
+SELECT tdigest_is_valid((be_int4(1)
+                      || be_int8(1::bigint)
+                      || be_int4(10)
+                      || be_int4(2)
+                      || be_float8(1) || be_int8(1::bigint)
+                      || be_float8(2) || be_int8(0::bigint))::tdigest);
 
 -- centroid count exceeding the total count
 SELECT tdigest_is_valid((be_int4(1)
