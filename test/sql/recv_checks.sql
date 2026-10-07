@@ -178,4 +178,19 @@ COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
 -- only the valid value should have made it into the table
 SELECT s FROM tdigest_dst;
 
+-- exactly as many centroids as fit into the buffer is fine
+TRUNCATE tdigest_dst;
+
+COPY (SELECT int4send(1)
+          || int8send(100::bigint)
+          || int4send(10)
+          || int4send(100)
+          || (SELECT string_agg(float8send(i) || int8send(1::bigint), ''::bytea ORDER BY i)
+                FROM generate_series(1, 100) AS s(i)))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+SELECT tdigest_count(s), s::json->>'centroids' AS centroids FROM tdigest_dst;
+
 DROP TABLE tdigest_dst;

@@ -160,4 +160,20 @@ SELECT s FROM tdigest_dst;
  flags 1 count 3 compression 10 centroids 2 (4, 1) (3, 2)
 (3 rows)
 
+-- exactly as many centroids as fit into the buffer is fine
+TRUNCATE tdigest_dst;
+COPY (SELECT int4send(1)
+          || int8send(100::bigint)
+          || int4send(10)
+          || int4send(100)
+          || (SELECT string_agg(float8send(i) || int8send(1::bigint), ''::bytea ORDER BY i)
+                FROM generate_series(1, 100) AS s(i)))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+SELECT tdigest_count(s), s::json->>'centroids' AS centroids FROM tdigest_dst;
+ tdigest_count | centroids 
+---------------+-----------
+           100 | 100
+(1 row)
+
 DROP TABLE tdigest_dst;
