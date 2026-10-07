@@ -1,9 +1,10 @@
--- Make sure the functions consuming a digest handle NULL and empty array
--- arguments.
+-- Make sure the functions consuming a digest handle NULL, empty and
+-- multi-dimensional array arguments.
 --
 -- The functions are STRICT, so a NULL digest or a NULL percentile/value
 -- yields a NULL result. An empty array is not NULL though, and there is
 -- nothing sensible to return for it, so it is rejected with an error.
+-- Only one-dimensional arrays are accepted.
 
 \set VERBOSITY terse
 
@@ -47,3 +48,12 @@ SELECT tdigest_percentile_of(tdigest(v, 100), ARRAY[1.0, NULL]::double precision
   FROM (VALUES (1.0::double precision), (2.0)) s(v);
 
 SELECT tdigest_count(tdigest_add(NULL::tdigest, ARRAY[1.0, NULL]::double precision[], 100));
+
+-- multi-dimensional arrays are rejected, even if the elements are fine
+SELECT tdigest_percentile(tdigest(v, 100), ARRAY[[0.5], [0.9]]::double precision[])
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
+SELECT tdigest_percentile_of(tdigest(v, 100), ARRAY[[1.0], [2.0]]::double precision[])
+  FROM (VALUES (1.0::double precision), (2.0)) s(v);
+
+SELECT tdigest_count(tdigest_add(NULL::tdigest, ARRAY[[1.0], [2.0]]::double precision[], 100));
