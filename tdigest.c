@@ -59,9 +59,10 @@ typedef struct tdigest_t {
  * a flag marking the new ones with mean, and we convert the old values.
  */
 #define	TDIGEST_STORES_MEAN		0x0001
+#define TDIGEST_SORTED			0x0002
 
 /* All valid flags, OR-ed. */
-#define	TDIGEST_VALID_FLAGS		(TDIGEST_STORES_MEAN)
+#define	TDIGEST_VALID_FLAGS		(TDIGEST_STORES_MEAN | TDIGEST_SORTED)
 
 /*
  * An aggregate state, representing the t-digest while it is being built.
@@ -80,7 +81,8 @@ typedef struct tdigest_aggstate_t {
 	int			compression;	/* compression parameter */
 	int			maxcentroids;	/* capacity of the centroids buffer */
 	int			ncentroids;		/* number of centroids */
-	int			ncompacted;		/* compacted part */
+	bool		compacted;		/* centroids are compacted */
+	bool		sorted;			/* centroids are sorter */
 	centroid_t *centroids;		/* centroids for the digest */
 } tdigest_aggstate_t;
 
@@ -289,7 +291,7 @@ AssertCheckTDigest(tdigest_t *digest)
 	int	i;
 	int64	cnt;
 
-	Assert(digest->flags == 0 || digest->flags == TDIGEST_STORES_MEAN);
+	Assert((digest->flags & ~TDIGEST_VALID_FLAGS) == 0);
 
 	Assert((digest->compression >= MIN_COMPRESSION) &&
 		   (digest->compression <= MAX_COMPRESSION));
@@ -509,6 +511,9 @@ static void
 tdigest_sort(tdigest_aggstate_t *state)
 {
 	tdigest_sort_centroids(state->centroids, state->ncentroids, state->count);
+
+	/* remember the state is sorted */
+	state->sorted = true;
 }
 
 static void
@@ -644,7 +649,7 @@ tdigest_compact_sorted(tdigest_aggstate_t *state)
 	}
 
 	state->ncentroids = n;
-	state->ncompacted = state->ncentroids;
+	state->compacted = true;
 
 	if (step < 0)
 		memmove(state->centroids, &state->centroids[cur], n * sizeof(centroid_t));
@@ -695,7 +700,7 @@ tdigest_compact(tdigest_aggstate_t *state)
 	AssertCheckTDigestAggState(state);
 
 	/* if the digest is fully compacted, it's been already compacted */
-	if (state->ncompacted == state->ncentroids)
+	if (state->compacted)
 		return;
 
 	/*
@@ -711,7 +716,7 @@ tdigest_compact(tdigest_aggstate_t *state)
 	 */
 	if (state->ncentroids == 1)
 	{
-		state->ncompacted = state->ncentroids;
+		state->compacted = true;
 		return;
 	}
 
@@ -1233,15 +1238,17 @@ tdigest_aggstate_enlarge(tdigest_aggstate_t *state)
  * capacity up to the allowed maximum determined by the compression.
  */
 static void
-tdigest_aggstate_enlarge_2(tdigest_aggstate_t *state)
+tdigest_aggstate_enlarge_2(tdigest_aggstate_t *state, int ncentroids)
 {
 	Assert(state->ncentroids <= state->maxcentroids);
 	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
 
+	Assert(state->ncentroids < ncentroids);
 	Assert(ncentroids <= BUFFER_SIZE(state->compression));
+	Assert(state->ncentroids <= BUFFER_SIZE(state->compression));
 
 	/* double the capacity, but cap it to BUFFER_SIZE */
-	while (state->maxcentroids < state->ncentroids)
+	while (state->maxcentroids < ncentroids)
 		state->maxcentroids = Min(2 * state->maxcentroids,
 								  BUFFER_SIZE(state->compression));
 
@@ -1250,7 +1257,7 @@ tdigest_aggstate_enlarge_2(tdigest_aggstate_t *state)
 								state->maxcentroids * sizeof(centroid_t));
 
 	/* make sure we have space for the value */
-	Assert(state->ncentroids <= state->maxcentroids);
+	Assert(ncentroids <= state->maxcentroids);
 	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
 }
 
@@ -1329,6 +1336,10 @@ tdigest_add(tdigest_aggstate_t *state, double v)
 	state->centroids[state->ncentroids].mean = v;
 	state->ncentroids++;
 
+	/* no longer sorted */
+	state->sorted = false;
+	state->compacted = false;
+
 	/* make sure the total does not overflow */
 	if (pg_add_s64_overflow(state->count, 1, &state->count))
 		ereport(ERROR,
@@ -1361,6 +1372,10 @@ tdigest_add_centroid(tdigest_aggstate_t *state, double mean, int64 count)
 	state->centroids[state->ncentroids].count = count;
 	state->centroids[state->ncentroids].mean = mean;
 	state->ncentroids++;
+
+	/* no longer sorted */
+	state->sorted = false;
+	state->compacted = false;
 
 	/* make sure the total does not overflow */
 	if (pg_add_s64_overflow(state->count, count, &state->count))
@@ -1566,6 +1581,10 @@ tdigest_aggstate_to_digest(tdigest_aggstate_t *state, bool compact)
 		tdigest_compact(state);
 
 	digest = tdigest_allocate(state->ncentroids);
+
+	/* remember that the centroids are sorted */
+	if (state->sorted)
+		digest->flags |= TDIGEST_SORTED;
 
 	digest->count = state->count;
 	digest->ncentroids = state->ncentroids;
@@ -2013,12 +2032,14 @@ tdigest_merge_centroids(tdigest_aggstate_t *state, int ncentroids, centroid_t *c
 			tmp[i++] = centroids[k++];
 	}
 
+	tdigest_aggstate_enlarge_2(state, state->ncentroids + ncentroids);
+
+	Assert(state->ncentroids <= state->maxcentroids);
+
 	state->ncentroids += ncentroids;
 
 	for (i = 0; i < ncentroids; i++)
 		state->count += centroids[i].count;
-
-	tdigest_aggstate_enlarge_2(state);
 
 	memcpy(state->centroids, tmp, sizeof(centroid_t) * state->ncentroids);
 
@@ -2294,7 +2315,9 @@ tdigest_deserial(PG_FUNCTION_ARGS)
 	state->compression = tmp.compression;
 	/* skip maxcentroids */
 	state->ncentroids = tmp.ncentroids;
-	state->ncompacted = tmp.ncompacted;
+
+	state->compacted = tmp.compacted;
+	state->sorted = tmp.sorted;
 
 	/* copy the centroids back */
 	memcpy(state->centroids, ptr,
@@ -2324,7 +2347,9 @@ tdigest_copy(tdigest_aggstate_t *state)
 	copy->compression = state->compression;
 	/* skip maxcentroids */
 	copy->ncentroids = state->ncentroids;
-	copy->ncompacted = state->ncompacted;
+
+	copy->compacted = state->compacted;
+	copy->sorted = state->sorted;
 
 	memcpy(copy->centroids, state->centroids,
 		   state->ncentroids * sizeof(centroid_t));
@@ -2982,6 +3007,9 @@ tdigest_in(PG_FUNCTION_ARGS)
 	 * old format, in which case "mean" fields actually store "sum").
 	 */
 	tdigest_update_format(digest);
+
+	/* FIXME if flag TDIGEST_SORTED is set, we should check it actually is
+	 * sorted correctly */
 
 	AssertCheckTDigest(digest);
 
