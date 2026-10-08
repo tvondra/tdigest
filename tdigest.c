@@ -2198,7 +2198,7 @@ tdigest_merge_centroids(tdigest_aggstate_t *state, int ncentroids, centroid_t *c
 	 * relies on centroids being sorted by count, which we don't have here.
 	 */
 	if (same_mean)
-		tdigest_merge_rebalance(count, ncentroids, centroids); 
+		tdigest_merge_rebalance(count, ncentroids, tmp);
 
 	/*
 	 * We're done with the mergesort and rebalancing, so copy centroids into
