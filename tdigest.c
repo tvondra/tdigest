@@ -2098,7 +2098,7 @@ tdigest_merge_rebalance(int64 count, int ncentroids, centroid_t *centroids)
 			 * It's very unlikely we'd have that many centroids with the same
 			 * mean value (except in artificial cases).
 			 */
-			if (group_size < 16)
+			if (group_size <= 16)
 				centroids_insertion_sort(&centroids[i], group_size);
 			else
 				pg_qsort(&centroids[i], group_size, sizeof(centroid_t),
