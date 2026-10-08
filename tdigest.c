@@ -2006,6 +2006,31 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+static void
+centroids_insertion_sort(centroid_t *centroids, int ncentroids)
+{
+	/* [0, i-1] is the sorted prefix, [i, ncentroids-1] unsorted part */
+	for (int i = 1; i < ncentroids; i++)
+	{
+		/* value to insert into the sorted prefix */
+		centroid_t key = centroids[i];
+		int j = i - 1;
+
+		/*
+		 * shift elements one position to the right until we find where
+		 * the new 'key' belongs
+		 */
+		while (j >= 0 && centroids[j].count > key.count)
+		{
+			centroids[j + 1] = centroids[j];
+			j--;
+		}
+
+		/* store 'key' into the gap created by shifting */
+		centroids[j + 1] = key;
+	}
+}
+
 /* rebalance centroids, assuming the array is sorted only by mean */
 static void
 tdigest_merge_rebalance(int64 count, int ncentroids, centroid_t *centroids)
@@ -2073,8 +2098,11 @@ tdigest_merge_rebalance(int64 count, int ncentroids, centroid_t *centroids)
 			 * It's very unlikely we'd have that many centroids with the same
 			 * mean value (except in artificial cases).
 			 */
-			pg_qsort(&centroids[i], group_size, sizeof(centroid_t),
-					 centroid_count_cmp);
+			if (group_size < 16)
+				centroids_insertion_sort(&centroids[i], group_size);
+			else
+				pg_qsort(&centroids[i], group_size, sizeof(centroid_t),
+						 centroid_count_cmp);
 
 			if (count_so_far >= median_count)
 			{
