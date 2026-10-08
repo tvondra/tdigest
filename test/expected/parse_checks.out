@@ -68,7 +68,7 @@ ERROR:  mean of a centroid of a t-digest is out of range for double precision at
 -- sanity checks on the parsed header
 --
 -- unknown flags
-SELECT 'flags 2 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 4 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
 ERROR:  invalid flags for t-digest at character 8
 -- compression out of the supported range
 SELECT 'flags 1 count 3 compression 9 centroids 1 (1, 3)'::tdigest;

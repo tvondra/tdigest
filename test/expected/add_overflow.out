@@ -19,6 +19,6 @@ SELECT tdigest_add('flags 1 count 9223372036854775806 compression 100 centroids 
                    2.0);
                                           tdigest_add                                          
 -----------------------------------------------------------------------------------------------
- flags 1 count 9223372036854775807 compression 100 centroids 2 (1, 9223372036854775806) (2, 1)
+ flags 3 count 9223372036854775807 compression 100 centroids 2 (1, 9223372036854775806) (2, 1)
 (1 row)
 

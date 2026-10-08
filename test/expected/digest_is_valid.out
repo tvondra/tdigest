@@ -135,7 +135,7 @@ SELECT tdigest_is_valid(tdigest_union(tdigest_add(NULL::tdigest, 1.0, 10),
 -- sanity checks on the header
 --
 -- unknown flags
-SELECT tdigest_is_valid((be_int4(2)
+SELECT tdigest_is_valid((be_int4(4)
                       || be_int8(1::bigint)
                       || be_int4(10)
                       || be_int4(1)
