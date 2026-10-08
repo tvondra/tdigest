@@ -82,7 +82,7 @@ typedef struct tdigest_aggstate_t {
 	int			maxcentroids;	/* capacity of the centroids buffer */
 	int			ncentroids;		/* number of centroids */
 	bool		compacted;		/* centroids are compacted */
-	bool		sorted;			/* centroids are sorter */
+	bool		sorted;			/* centroids are sorted */
 	centroid_t *centroids;		/* centroids for the digest */
 } tdigest_aggstate_t;
 
