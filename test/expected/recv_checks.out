@@ -29,7 +29,7 @@ COPY (SELECT int4send(2)
           || float8send(1) || int8send(1::bigint))
   TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
 COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
-ERROR:  unsupported t-digest on-disk format
+ERROR:  invalid flags for t-digest
 -- compression out of the supported range
 COPY (SELECT int4send(1)
           || int8send(1::bigint)
