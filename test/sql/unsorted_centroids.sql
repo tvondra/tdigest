@@ -45,7 +45,7 @@ $$;
 CREATE FUNCTION tdigest_unsorted_reorder(d tdigest, seed int)
 RETURNS tdigest
 LANGUAGE sql SET extra_float_digits = 3 AS $$
-    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+    SELECT (regexp_replace(rtrim(substring(d::text FROM '^[^(]*')), 'flags 3', 'flags 1') ||
             coalesce(string_agg(m[1], ''
                                 ORDER BY CASE WHEN seed = 0 THEN -o ELSE 0 END,
                                          md5(seed::text || ':' || o::text)), ''))::tdigest
@@ -64,7 +64,7 @@ $$;
 CREATE FUNCTION tdigest_unsorted_permute_groups(d tdigest, seed int)
 RETURNS tdigest
 LANGUAGE sql SET extra_float_digits = 3 AS $$
-    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+    SELECT (regexp_replace(rtrim(substring(d::text FROM '^[^(]*')), 'flags 3', 'flags 1') ||
             coalesce(string_agg(m, '' ORDER BY mean,
                                 md5(seed::text || ':' || o::text)), ''))::tdigest
       FROM (SELECT x.m[1] AS m, x.o AS o,
