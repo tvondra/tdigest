@@ -314,7 +314,42 @@ AssertCheckTDigest(tdigest_t *digest)
 	Assert(VARSIZE_ANY(digest) == offsetof(tdigest_t, centroids) +
 		   digest->ncentroids * sizeof(centroid_t));
 
-	/* FIXME check that TDIGEST_SORTED has centroids actually sorted */
+	/* with the TDIGEST_SORTED flag set, check centroids are actually sorted */
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+	{
+		/* FIXME count_before should be before group, not before centroid */
+		int64	count_before = digest->centroids[0].count;
+		int64	median_count = (digest->count / 2);
+
+		for (i = 1; i < digest->ncentroids; i++)
+		{
+			Assert(digest->centroids[i - 1].mean <= digest->centroids[i].mean);
+
+			/*
+			 * If the whole centroid lies above the median, then equal-mean
+			 * groups are sorted by count in descending order.
+			 *
+			 * XXX Maybe this should be >= inequality?
+			 */
+			if (count_before > median_count)
+				Assert((digest->centroids[i - 1].mean < digest->centroids[i].mean) ||
+					   (digest->centroids[i - 1].count >= digest->centroids[i].count));
+
+			count_before += digest->centroids[i].count;
+
+			/*
+			 * If the whole centroid lies below the median, then equal-mean
+			 * groups are sorted by count in ascending order.
+			 *
+			 * XXX Maybe this should be <= inequality?
+			 */
+			if (count_before < median_count)
+				Assert((digest->centroids[i - 1].mean < digest->centroids[i].mean) ||
+					   (digest->centroids[i - 1].count <= digest->centroids[i].count));
+
+			/* FIXME check ordering of the group that spans the median */
+		}
+	}
 
 	Assert(digest->count == cnt);
 #endif
@@ -348,8 +383,44 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 	}
 
 	/* FIXME check that sorted=true has centroids actually sorted */
-	/* FIXME check that compacted=true is actually sorted */
 	/* FIXME check that we don't have compacted=true with sorted=false */
+
+	/* check that compacted=true is actually sorted */
+	if (state->sorted)
+	{
+		/* FIXME count_before should be before group, not before centroid */
+		int64	count_before = state->centroids[0].count;
+		int64	median_count = (state->count / 2);
+
+		for (i = 1; i < state->ncentroids; i++)
+		{
+			Assert(state->centroids[i - 1].mean <= state->centroids[i].mean);
+
+			/*
+			 * If the whole centroid lies above the median, then equal-mean
+			 * groups are sorted by count in descending order.
+			 *
+			 * XXX Maybe this should be >= inequality?
+			 */
+			if (count_before > median_count)
+				Assert((state->centroids[i - 1].mean < state->centroids[i].mean) ||
+					   (state->centroids[i - 1].count >= state->centroids[i].count));
+
+			count_before += state->centroids[i].count;
+
+			/*
+			 * If the whole centroid lies below the median, then equal-mean
+			 * groups are sorted by count in ascending order.
+			 *
+			 * XXX Maybe this should be <= inequality?
+			 */
+			if (count_before < median_count)
+				Assert((state->centroids[i - 1].mean < state->centroids[i].mean) ||
+					   (state->centroids[i - 1].count <= state->centroids[i].count));
+
+			/* FIXME check ordering of the group that spans the median */
+		}
+	}
 
 	Assert(state->count == cnt);
 #endif
@@ -2627,6 +2698,10 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 
 	state = tdigest_aggstate_allocate(digest->compression,
 									  digest->ncentroids);
+
+	/* FIXME do the merge sort here */
+	state->sorted = false;
+	state->compacted = false;
 
 	/* copy data from the tdigest into the aggstate */
 	for (i = 0; i < digest->ncentroids; i++)
