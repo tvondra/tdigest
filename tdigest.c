@@ -3373,8 +3373,27 @@ tdigest_in(PG_FUNCTION_ARGS)
 	 */
 	tdigest_update_format(digest);
 
-	/* FIXME if flag TDIGEST_SORTED is set, we should check it actually is
-	 * sorted correctly */
+	/*
+	 * With TDIGEST_SORTED flag set, check that the centroids are sorted
+	 * by mean (in principle we could check if groups with the same mean
+	 * are sorted by count, but we don't rely on that when merging etc).
+	 *
+	 * XXX We intentionally do this check after format updat (although we
+	 * should not see sorted digests with old format).
+	 *
+	 * XXX Maybe we should not error out and instead just reset the flag
+	 * when the centroids are not sorted?
+	 */
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+	{
+		for (i = 1; i < digest->ncentroids; i++)
+		{
+			if (digest->centroids[i-1].mean > digest->centroids[i].mean)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("centroids not properly sorted")));
+		}
+	}
 
 	AssertCheckTDigest(digest);
 
@@ -3517,8 +3536,27 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	 */
 	tdigest_update_format(digest);
 
-	/* FIXME if flag TDIGEST_SORTED is set, we should check it actually is
-	 * sorted correctly */
+	/*
+	 * With TDIGEST_SORTED flag set, check that the centroids are sorted
+	 * by mean (in principle we could check if groups with the same mean
+	 * are sorted by count, but we don't rely on that when merging etc).
+	 *
+	 * XXX We intentionally do this check after format updat (although we
+	 * should not see sorted digests with old format).
+	 *
+	 * XXX Maybe we should not error out and instead just reset the flag
+	 * when the centroids are not sorted?
+	 */
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+	{
+		for (i = 1; i < digest->ncentroids; i++)
+		{
+			if (digest->centroids[i-1].mean > digest->centroids[i].mean)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("centroids not properly sorted")));
+		}
+	}
 
 	AssertCheckTDigest(digest);
 
