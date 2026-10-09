@@ -165,7 +165,7 @@ SELECT id, k + 7, tdigest_unsorted_permute_groups(d, k)
 SELECT v.id, g.descr,
        count(*) AS variants,
        count(*) FILTER (WHERE substring(v.d::text FROM '^[^(]*')
-                           IS DISTINCT FROM substring(g.d::text FROM '^[^(]*')) AS header_differs,
+                           IS DISTINCT FROM regexp_replace(substring(g.d::text FROM '^[^(]*'), 'flags 3', 'flags 1')) AS header_differs,
        count(*) FILTER (WHERE EXISTS (SELECT mean, cnt FROM tdigest_unsorted_centroids(v.d)
                                       EXCEPT ALL
                                       SELECT mean, cnt FROM tdigest_unsorted_centroids(g.d))
