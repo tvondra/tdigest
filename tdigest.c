@@ -91,6 +91,7 @@ typedef struct tdigest_aggstate_t {
 } tdigest_aggstate_t;
 
 static int  centroid_cmp(const void *a, const void *b);
+static int  centroid_count_cmp(const void *a, const void *b);
 
 /*
  * Detoast a tdigest, making sure the result is properly aligned.
@@ -551,32 +552,8 @@ tdigest_sort(tdigest_aggstate_t *state)
 	state->nsorted = state->ncentroids;
 }
 
-/*
- * Perform compaction of the t-digest, i.e. merge the centroids as required
- * by the compression parameter.
- *
- * We always keep the data sorted in ascending order. This way we can reuse
- * the sort between compactions, and also when computing the quantiles.
- *
- * The regular compaction is not guaranteed to make any progress. The size
- * limits are calculated in double, and may end up too low to allow merging any
- * centroids. The limits are computed from exact integer remainders, which
- * makes this very unlikely, but if a compaction still leaves the buffer full,
- * we raise an error rather than continue with a digest that has no room left.
- *
- * XXX Switch the direction regularly, to eliminate possible bias and improve
- * accuracy, as mentioned in the paper.
- *
- * XXX This initially used the k1 scale function, but the implementation was
- * not limiting the number of centroids for some reason (it might have been
- * a bug in the implementation, of course). The current code is a modified
- * copy from ajwerner [1], and AFAIK it's the k2 function, it's much simpler
- * and generally works quite nicely.
- *
- * [1] https://github.com/ajwerner/tdigestc/blob/master/go/tdigest.c
- */
 static void
-tdigest_compact(tdigest_aggstate_t *state)
+tdigest_compact_sorted(tdigest_aggstate_t *state)
 {
 	int			i;
 
@@ -588,32 +565,6 @@ tdigest_compact(tdigest_aggstate_t *state)
 	int			start;
 	int			step;
 	int			n;
-
-	AssertCheckTDigestAggState(state);
-
-	/* if the digest is fully compacted, it's been already compacted */
-	if (state->ncompacted == state->ncentroids)
-		return;
-
-	/*
-	 * If there's just a single centroid, there's nothing to compact (or
-	 * sort). And we'd also end up with a division by zero below, because
-	 * log(1) = 0. It'd work out in the end, because 1/0 = infinity, and
-	 * so we'd merge nothing. But it's sloppy.
-	 *
-	 * XXX We're checking ncentroids, while the log() is on total_count.
-	 * But that's fine. Compaction/sort is pointless no matter how large
-	 * the single centroid is. And with 2+ centroids, the total_count has
-	 * to be 2+ too.
-	 */
-	if (state->ncentroids == 1)
-	{
-		state->ncompacted = state->ncentroids;
-		state->nsorted = state->ncentroids;
-		return;
-	}
-
-	tdigest_sort(state);
 
 	state->ncompactions++;
 
@@ -754,6 +705,68 @@ tdigest_compact(tdigest_aggstate_t *state)
 				 errmsg("digest compaction failed to reduce number of centroids"),
 				 errhint("This should be impossible. Please report this to maintainers "
 						 "of the extension (ideally with a reproducer).")));
+}
+
+/*
+ * Perform compaction of the t-digest, i.e. merge the centroids as required
+ * by the compression parameter.
+ *
+ * We always keep the data sorted in ascending order. This way we can reuse
+ * the sort between compactions, and also when computing the quantiles.
+ *
+ * The regular compaction is not guaranteed to make any progress. The size
+ * limits are calculated in double, and may end up too low to allow merging any
+ * centroids. The limits are computed from exact integer remainders, which
+ * makes this very unlikely, but if a compaction still leaves the buffer full,
+ * we raise an error rather than continue with a digest that has no room left.
+ *
+ * XXX Switch the direction regularly, to eliminate possible bias and improve
+ * accuracy, as mentioned in the paper.
+ *
+ * XXX This initially used the k1 scale function, but the implementation was
+ * not limiting the number of centroids for some reason (it might have been
+ * a bug in the implementation, of course). The current code is a modified
+ * copy from ajwerner [1], and AFAIK it's the k2 function, it's much simpler
+ * and generally works quite nicely.
+ *
+ * [1] https://github.com/ajwerner/tdigestc/blob/master/go/tdigest.c
+ */
+static void
+tdigest_compact(tdigest_aggstate_t *state)
+{
+	AssertCheckTDigestAggState(state);
+
+	/* if the digest is fully compacted, it's been already compacted */
+	if (state->ncompacted == state->ncentroids)
+		return;
+
+	/*
+	 * If there's just a single centroid, there's nothing to compact (or
+	 * sort). And we'd also end up with a division by zero below, because
+	 * log(1) = 0. It'd work out in the end, because 1/0 = infinity, and
+	 * so we'd merge nothing. But it's sloppy.
+	 *
+	 * XXX We're checking ncentroids, while the log() is on total_count.
+	 * But that's fine. Compaction/sort is pointless no matter how large
+	 * the single centroid is. And with 2+ centroids, the total_count has
+	 * to be 2+ too.
+	 */
+	if (state->ncentroids == 1)
+	{
+		state->ncompacted = state->ncentroids;
+		state->nsorted = state->ncentroids;
+		return;
+	}
+
+	tdigest_sort(state);
+
+	tdigest_compact_sorted(state);
+
+	/* FIXME the compact_sorted call can apparently break the order a
+	 * little bit, so fix that */
+	tdigest_sort(state);
+
+	AssertCheckTDigestAggState(state);
 
 	/* Maybe reclaim some of the centroid buffer. */
 	tdigest_aggstate_shrink(state);
@@ -1261,6 +1274,34 @@ tdigest_aggstate_enlarge(tdigest_aggstate_t *state)
 
 	/* make sure we have space for the value */
 	Assert(state->ncentroids < state->maxcentroids);
+	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
+}
+
+/*
+ * Make sure the aggregate state has space for more centroids. Double the
+ * capacity up to the allowed maximum determined by the compression.
+ */
+static void
+tdigest_aggstate_ensure_capacity(tdigest_aggstate_t *state, int ncentroids)
+{
+	Assert(state->ncentroids <= state->maxcentroids);
+	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
+
+	/* we should be adding space, and still fit into the buffer */
+	Assert(state->ncentroids < ncentroids);
+	Assert(ncentroids <= BUFFER_SIZE(state->compression));
+
+	/* double the capacity, but cap it to BUFFER_SIZE */
+	while (state->maxcentroids < ncentroids)
+		state->maxcentroids = Min(2 * state->maxcentroids,
+								  BUFFER_SIZE(state->compression));
+
+	/* repalloc keeps the buffer in its original memory context */
+	state->centroids = repalloc(state->centroids,
+								state->maxcentroids * sizeof(centroid_t));
+
+	/* make sure we have enough space for the new values */
+	Assert(ncentroids <= state->maxcentroids);
 	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
 }
 
@@ -2015,6 +2056,334 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+static void
+centroids_insertion_sort(centroid_t *centroids, int ncentroids)
+{
+	/* [0, i-1] is the sorted prefix, [i, ncentroids-1] unsorted part */
+	for (int i = 1; i < ncentroids; i++)
+	{
+		/* value to insert into the sorted prefix */
+		centroid_t key = centroids[i];
+		int j = i - 1;
+
+		/*
+		 * shift elements one position to the right until we find where
+		 * the new 'key' belongs
+		 */
+		while (j >= 0 && centroids[j].count > key.count)
+		{
+			centroids[j + 1] = centroids[j];
+			j--;
+		}
+
+		/* store 'key' into the gap created by shifting */
+		centroids[j + 1] = key;
+	}
+}
+
+/* rebalance centroids, assuming the array is sorted only by mean */
+static void
+tdigest_merge_rebalance(int64 count, int ncentroids, centroid_t *centroids)
+{
+	int		i;
+	int64	count_so_far;
+	int64	next_group;
+	int64	median_count;
+
+	/*
+	 * The centroids are sorted by (mean,count). That's fine for centroids up
+	 * to median, but above median this ordering is incorrect for centroids
+	 * with the same mean (or for groups crossing the median boundary). To fix
+	 * this we 'rebalance' those groups. Those entirely above median can be
+	 * simply sorted in the opposite order, while those crossing the median
+	 * need to be rebalanced depending on what part is below/above median.
+	 */
+	count_so_far = 0;
+	next_group = 0;	/* includes count_so_far */
+	median_count = (count / 2);
+
+	/*
+	 * Split the centroids into groups with the same mean, process each group
+	 * depending on whether it falls before/after median.
+	 */
+	i = 0;
+	while (i < ncentroids)
+	{
+		int	j = i;
+		int	group_size = 0;
+
+		CHECK_FOR_INTERRUPTS();
+
+		/*
+		 * Consume the first centroid of the group unconditionally. It is what
+		 * defines the group, so comparing it against itself decides nothing,
+		 * and for a NaN mean the comparison would be false, leaving "j" at "i"
+		 * and the outer loop without any way to advance. This way guarantees
+		 * forward progress.
+		 */
+		next_group += centroids[j].count;
+		group_size++;
+		j++;
+
+		/* determine the end of the group */
+		while ((j < ncentroids) &&
+			   (centroids[i].mean == centroids[j].mean))
+		{
+			next_group += centroids[j].count;
+			group_size++;
+			j++;
+		}
+
+		/*
+		 * We can ignore groups of size 1 (number of centroids, not counts), as
+		 * those are trivially sorted.
+		 */
+		if (group_size > 1)
+		{
+			/*
+			 * sort the group of centroids by count
+			 *
+			 * XXX We should probably try a cheaper sort for small inputs, like
+			 * a simple insertion sort up to 16 centroids, or something like that.
+			 * It's very unlikely we'd have that many centroids with the same
+			 * mean value (except in artificial cases).
+			 */
+			if (group_size <= 16)
+				centroids_insertion_sort(&centroids[i], group_size);
+			else
+				pg_qsort(&centroids[i], group_size, sizeof(centroid_t),
+						 centroid_count_cmp);
+
+			if (count_so_far >= median_count)
+			{
+				/* group fully above median - reverse the order */
+				reverse_centroids(&centroids[i], group_size);
+			}
+			else if (next_group > median_count)	/* group split by median */
+			{
+				rebalance_centroids(&centroids[i], group_size,
+									median_count - count_so_far,
+									next_group - median_count);
+			}
+		}
+
+		/*
+		 * We should be making forward progress. If not, we're in an infinite
+		 * loop. With properly formed digests that should not happen.
+		 */
+		Assert(i < j);
+
+		i = j;
+		count_so_far = next_group;
+	}
+}
+
+static void
+tdigest_merge_centroids(tdigest_aggstate_t *state, int ncentroids, centroid_t *centroids)
+{
+	int		i,
+			j,
+			k;
+	int64	count;
+	centroid_t *tmp = palloc(sizeof(centroid_t) * (state->ncentroids + ncentroids));
+
+	/* any groups of centroids with the same mean? */
+	bool	same_mean = false;
+
+	/*
+	 * FIXME this is not a proper sort of digests, it ignores the count
+	 * which should be sorted asc/desc before/after median, and it ignores
+	 * the grouping of centroids with the same mean too
+	 */
+
+	/*
+	 * merge sort of the two arrays of centroids by mean
+	 *
+	 * In this loop we only care about the mean, so if there are any centroids
+	 * with the same mean, those may not be in the right order. We don't order
+	 * them here, because the groups move before/after the mean (i.e. it may
+	 * be before mean in the input digest, but will be after it in the result)
+	 * which would make the loop complex. So instead we just check if there
+	 * are any groups of centroids with the same mean, and rebalance them in
+	 * a separate loop. But that should be pretty rare in practice.
+	 *
+	 * XXX We don't even have the centroids sorted by (mean, count), just by
+	 * mean. So we can't do exactly what tdigest_sort_centroids() does.
+	 */
+	i = j = k = 0;
+	for (;;)
+	{
+		if (j == state->ncentroids)
+			tmp[i++] = centroids[k++];
+		else if (k == ncentroids)
+			tmp[i++] = state->centroids[j++];
+		else if (state->centroids[j].mean <= centroids[k].mean)
+			tmp[i++] = state->centroids[j++];
+		else if (state->centroids[j].mean > centroids[k].mean)
+			tmp[i++] = centroids[k++];
+
+		/* do do the last two centroids share the mean? */
+		if ((i > 1) && (tmp[i - 1].mean == tmp[i - 2].mean))
+			same_mean = true;
+
+		/* no more inputs */
+		if ((j == state->ncentroids) && (k == ncentroids))
+			break;
+	}
+
+	/* we should have gotten exactly the expected number of centroids */
+	Assert(i == (state->ncentroids + ncentroids));
+
+	/* calculate the new count, with the new centroids */
+	count = state->count;
+	for (i = 0; i < ncentroids; i++)
+		count += centroids[i].count;
+
+	/* new number of centroids (size of the temporary array) */
+	ncentroids = state->ncentroids + ncentroids;
+
+	/*
+	 * If there are any groups of centroids with the same mean, deal with
+	 * them now, similarly to what tdigest_sort_centroids() does. But it
+	 * relies on centroids being sorted by count, which we don't have here.
+	 */
+	if (same_mean)
+		tdigest_merge_rebalance(count, ncentroids, tmp);
+
+	/*
+	 * We're done with the mergesort and rebalancing, so copy centroids into
+	 * the aggregate state.
+	 */
+	tdigest_aggstate_ensure_capacity(state, ncentroids);
+
+	Assert(state->ncentroids <= state->maxcentroids);
+
+	/* update the digest totals */
+	state->ncentroids = ncentroids;
+	state->count = count;
+
+	/* the aggstate is not sorted and not compacted */
+	state->nsorted = 0;
+	state->ncompacted = 0;
+
+	memcpy(state->centroids, tmp, sizeof(centroid_t) * state->ncentroids);
+	pfree(tmp);
+
+	AssertCheckTDigestAggState(state);
+}
+
+static void
+tdigest_merge_digest(tdigest_aggstate_t *state, tdigest_t *digest)
+{
+	/*
+	 * When both the aggstate and the digest are sorted, we can do a merge
+	 * sort on the centroids, which is much cheaper than a full sort. Most
+	 * digests are sorted, except for some produced by incremental API etc.
+	 *
+	 * When not sorted, we simply add the centroids one by one, and then
+	 * do the sort during compaction.
+	 *
+	 * XXX If only one input is unsorted, maybe we could sort the other
+	 * side and then still do the merge. Not sure.
+	 */
+	if ((state->nsorted == state->ncentroids) &&
+		((digest->flags & TDIGEST_SORTED) != 0))
+	{
+		int i = 0;
+
+		CHECK_FOR_INTERRUPTS();
+
+		while (i < digest->ncentroids)
+		{
+			/* how much space we have in the buffer */
+			int	ncentroids;
+
+			if (state->ncentroids == BUFFER_SIZE(state->compression))
+				tdigest_compact_sorted(state);
+
+			/* FIXME the compact_sorted call can apparently break the order a
+			 * little bit, so fix that */
+			tdigest_sort(state);
+
+			/* merge next chunk of sorted centroids that fits into the buffer */
+			ncentroids = BUFFER_SIZE(state->compression) - state->ncentroids;
+			ncentroids = Min(digest->ncentroids - i, ncentroids);
+
+			/* merge sort of centroids */
+			tdigest_merge_centroids(state, ncentroids, &digest->centroids[i]);
+
+			i += ncentroids;
+		}
+	}
+	else
+	{
+		/* copy data from the tdigest into the aggstate */
+		for (int i = 0; i < digest->ncentroids; i++)
+		{
+			CHECK_FOR_INTERRUPTS();
+
+			tdigest_add_centroid(state, digest->centroids[i].mean,
+										digest->centroids[i].count);
+		}
+	}
+}
+
+static void
+tdigest_merge_state(tdigest_aggstate_t *state, tdigest_aggstate_t *src)
+{
+	/*
+	 * When both the aggstate and the digest are sorted, we can do a merge
+	 * sort on the centroids, which is much cheaper than a full sort. Most
+	 * digests are sorted, except for some produced by incremental API etc.
+	 *
+	 * When not sorted, we simply add the centroids one by one, and then
+	 * do the sort during compaction.
+	 *
+	 * XXX If only one input is unsorted, maybe we could sort the other
+	 * side and then still do the merge. Not sure.
+	 */
+	if ((state->nsorted == state->ncentroids) &&
+		(src->nsorted == src->ncentroids))
+	{
+		int i = 0;
+
+		CHECK_FOR_INTERRUPTS();
+
+		while (i < src->ncentroids)
+		{
+			/* how much space we have in the buffer */
+			int	ncentroids;
+
+			if (state->ncentroids == BUFFER_SIZE(state->compression))
+				tdigest_compact_sorted(state);
+
+			/* FIXME the compact_sorted call can apparently break the order a
+			 * little bit, so fix that */
+			tdigest_sort(state);
+
+			/* merge next chunk of sorted centroids that fits into the buffer */
+			ncentroids = BUFFER_SIZE(state->compression) - state->ncentroids;
+			ncentroids = Min(src->ncentroids - i, ncentroids);
+
+			/* merge sort of centroids */
+			tdigest_merge_centroids(state, ncentroids, &src->centroids[i]);
+
+			i += ncentroids;
+		}
+	}
+	else
+	{
+		/* copy data from the tdigest into the aggstate */
+		for (int i = 0; i < src->ncentroids; i++)
+		{
+			CHECK_FOR_INTERRUPTS();
+
+			tdigest_add_centroid(state, src->centroids[i].mean,
+										src->centroids[i].count);
+		}
+	}
+}
+
 /*
  * Merge a digest into the tdigest (create one if needed). Transition function
  * for the tdigest(digest) aggregate.
@@ -2022,7 +2391,6 @@ tdigest_add_double_values_count(PG_FUNCTION_ARGS)
 Datum
 tdigest_add_digest(PG_FUNCTION_ARGS)
 {
-	int					i;
 	tdigest_aggstate_t *state;
 	tdigest_t		   *digest;
 
@@ -2069,15 +2437,8 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 	 * centroids, but cannot split them to recover lost detail.
 	 */
 
-	/* copy data from the tdigest into the aggstate */
-	for (i = 0; i < digest->ncentroids; i++)
-	{
-		CHECK_FOR_INTERRUPTS();
-
-		/* FIXME do a merge sort here */
-		tdigest_add_centroid(state, digest->centroids[i].mean,
-									digest->centroids[i].count);
-	}
+	/* merge digest into the aggstate - mergesort, or centroid by centroid */
+	tdigest_merge_digest(state, digest);
 
 	AssertCheckTDigestAggState(state);
 
@@ -2310,7 +2671,6 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	tdigest_aggstate_t	 *dst;
 	MemoryContext aggcontext;
 	MemoryContext oldcontext;
-	int	i;
 
 	if (!AggCheckCallContext(fcinfo, &aggcontext))
 		elog(ERROR, "tdigest_combine called in non-aggregate context");
@@ -2353,15 +2713,8 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	 * centroids, but cannot split them to recover lost detail.
 	 */
 
-	/* copy data from the tdigest into the aggstate */
-	for (i = 0; i < src->ncentroids; i++)
-	{
-		CHECK_FOR_INTERRUPTS();
-
-		/* FIXME do a merge sort here */
-		tdigest_add_centroid(dst, src->centroids[i].mean,
-								  src->centroids[i].count);
-	}
+	/* merge src into the dst state - mergesort, or centroid by centroid */
+	tdigest_merge_state(dst, src);
 
 	AssertCheckTDigestAggState(dst);
 
@@ -2393,7 +2746,8 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 	{
 		CHECK_FOR_INTERRUPTS();
 
-		/* FIXME do a merge sort here */
+		/* FIXME we should simply copy the centroids, after ensuring the
+		 * buffer capacity is sufficient */
 		tdigest_add_centroid(state,
 							 digest->centroids[i].mean,
 							 digest->centroids[i].count);
@@ -2592,7 +2946,6 @@ tdigest_add_double_array_increment(PG_FUNCTION_ARGS)
 Datum
 tdigest_union_double_increment(PG_FUNCTION_ARGS)
 {
-	int					i;
 	tdigest_aggstate_t *state;
 	tdigest_t		   *digest;
 	tdigest_t		   *result;
@@ -2626,15 +2979,8 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 
 	AssertCheckTDigest(digest);
 
-	/* copy data from the tdigest into the aggstate */
-	for (i = 0; i < digest->ncentroids; i++)
-	{
-		CHECK_FOR_INTERRUPTS();
-
-		/* FIXME do a merge sort here */
-		tdigest_add_centroid(state, digest->centroids[i].mean,
-									digest->centroids[i].count);
-	}
+	/* merge digest into the aggstate - mergesort, or centroid by centroid */
+	tdigest_merge_digest(state, digest);
 
 	PG_FREE_IF_COPY(digest, 1);
 
@@ -2671,6 +3017,28 @@ centroid_cmp(const void *a, const void *b)
 		return -1;
 	else if (ma > mb)
 		return 1;
+
+	if (ca->count < cb->count)
+		return -1;
+	else if (ca->count > cb->count)
+		return 1;
+
+	return 0;
+}
+
+/*
+ * Comparator, ordering the centroids by count.
+ *
+ * Assumes the means are equal).
+ */
+static int
+centroid_count_cmp(const void *a, const void *b)
+{
+	centroid_t *ca = (centroid_t *) a;
+	centroid_t *cb = (centroid_t *) b;
+
+	/* expects same mean */
+	Assert(ca->mean == cb->mean);
 
 	if (ca->count < cb->count)
 		return -1;
