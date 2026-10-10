@@ -2933,8 +2933,10 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	flags = pq_getmsgint(buf, sizeof(int32));
 
 	/* make sure the t-digest format is supported */
-	if ((flags != 0) && (flags != TDIGEST_STORES_MEAN))
-		elog(ERROR, "unsupported t-digest on-disk format");
+	if ((flags & ~TDIGEST_VALID_FLAGS) != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid flags for t-digest")));
 
 	count = pq_getmsgint64(buf);
 	compression = pq_getmsgint(buf, sizeof(int32));
