@@ -28,7 +28,7 @@ COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
 --
 
 -- unknown flags
-COPY (SELECT int4send(2)
+COPY (SELECT int4send(8)
           || int8send(1::bigint)
           || int4send(10)
           || int4send(1)

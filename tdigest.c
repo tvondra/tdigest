@@ -57,11 +57,19 @@ typedef struct tdigest_t {
  *
  * To handle existing tdigest data in backwards-compatible way, we have
  * a flag marking the new ones with mean, and we convert the old values.
+ *
+ * Similarly, we have flags marking digests that are compacted, and those
+ * with all centroids sorted (by mean).
+ *
+ * Note: TDIGEST_SORTED says nothing about the order of centroids sharing
+ * a mean, those may be in any order.
  */
 #define	TDIGEST_STORES_MEAN		0x0001
+#define TDIGEST_SORTED			0x0002
+#define TDIGEST_COMPACTED		0x0004
 
 /* All valid flags, OR-ed. */
-#define	TDIGEST_VALID_FLAGS		(TDIGEST_STORES_MEAN)
+#define	TDIGEST_VALID_FLAGS		(TDIGEST_STORES_MEAN | TDIGEST_SORTED | TDIGEST_COMPACTED)
 
 /*
  * An aggregate state, representing the t-digest while it is being built.
@@ -80,7 +88,8 @@ typedef struct tdigest_aggstate_t {
 	int			compression;	/* compression parameter */
 	int			maxcentroids;	/* capacity of the centroids buffer */
 	int			ncentroids;		/* number of centroids */
-	int			ncompacted;		/* compacted part */
+	int			ncompacted;		/* number of compacted centroids */
+	int 		nsorted;		/* number of sorted centroids */
 	centroid_t *centroids;		/* centroids for the digest */
 } tdigest_aggstate_t;
 
@@ -281,6 +290,17 @@ static void tdigest_aggstate_shrink(tdigest_aggstate_t *state);
 
 #endif	/* PG_VERSION_NUM < 150000 */
 
+#ifdef USE_ASSERT_CHECKING
+static void
+AssertCheckCentroidsSorted(int ncentroids, centroid_t *centroids)
+{
+	for (int i = 1; i < ncentroids; i++)
+	{
+		Assert(centroids[i - 1].mean <= centroids[i].mean);
+	}
+}
+#endif
+
 /* basic checks on the t-digest (proper sum of counts, ...) */
 static void
 AssertCheckTDigest(tdigest_t *digest)
@@ -289,7 +309,10 @@ AssertCheckTDigest(tdigest_t *digest)
 	int	i;
 	int64	cnt;
 
-	Assert(digest->flags == 0 || digest->flags == TDIGEST_STORES_MEAN);
+	bool	compacted = ((digest->flags & TDIGEST_COMPACTED) != 0);
+	bool	sorted = ((digest->flags & TDIGEST_SORTED) != 0);
+
+	Assert((digest->flags & ~TDIGEST_VALID_FLAGS) == 0);
 
 	Assert((digest->compression >= MIN_COMPRESSION) &&
 		   (digest->compression <= MAX_COMPRESSION));
@@ -298,6 +321,8 @@ AssertCheckTDigest(tdigest_t *digest)
 
 	Assert(digest->ncentroids >= 0);
 	Assert(digest->ncentroids <= BUFFER_SIZE(digest->compression));
+
+	Assert(!(compacted && !sorted));
 
 	cnt = 0;
 	for (i = 0; i < digest->ncentroids; i++)
@@ -310,6 +335,10 @@ AssertCheckTDigest(tdigest_t *digest)
 
 	Assert(VARSIZE_ANY(digest) == offsetof(tdigest_t, centroids) +
 		   digest->ncentroids * sizeof(centroid_t));
+
+	/* with the TDIGEST_SORTED flag set, check centroids are actually sorted */
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+		AssertCheckCentroidsSorted(digest->ncentroids, digest->centroids);
 
 	Assert(digest->count == cnt);
 #endif
@@ -332,6 +361,11 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 	Assert(state->maxcentroids <= BUFFER_SIZE(state->compression));
 	Assert(state->ncentroids <= BUFFER_SIZE(state->compression));
 
+	Assert((state->nsorted >= 0) && (state->nsorted <= state->ncentroids));
+
+	/* the state can't be compacted but not sorted */
+	Assert((state->ncompacted >= 0) && (state->ncompacted <= state->nsorted));
+
 	cnt = 0;
 	for (i = 0; i < state->ncentroids; i++)
 	{
@@ -341,6 +375,12 @@ AssertCheckTDigestAggState(tdigest_aggstate_t *state)
 
 		/* XXX maybe check this does work with the scale function */
 	}
+
+	/* FIXME check that compacted=true has centroids actually compacted */
+
+	/* check that sorted centroids are actually sorted */
+	if (state->nsorted > 1)
+		AssertCheckCentroidsSorted(state->nsorted, state->centroids);
 
 	Assert(state->count == cnt);
 #endif
@@ -509,6 +549,9 @@ static void
 tdigest_sort(tdigest_aggstate_t *state)
 {
 	tdigest_sort_centroids(state->centroids, state->ncentroids, state->count);
+
+	/* remember the state is sorted */
+	state->nsorted = state->ncentroids;
 }
 
 /*
@@ -569,6 +612,7 @@ tdigest_compact(tdigest_aggstate_t *state)
 	if (state->ncentroids == 1)
 	{
 		state->ncompacted = state->ncentroids;
+		state->nsorted = state->ncentroids;
 		return;
 	}
 
@@ -693,6 +737,7 @@ tdigest_compact(tdigest_aggstate_t *state)
 	}
 
 	state->ncentroids = n;
+	state->nsorted = state->ncentroids;
 	state->ncompacted = state->ncentroids;
 
 	if (step < 0)
@@ -1501,6 +1546,11 @@ tdigest_aggstate_allocate(int compression, int ncentroids)
 	state->compression = compression;
 
 	/*
+	 * nsorted and ncompacted start at 0, i.e. equal to ncentroids, so the
+	 * empty state counts as sorted and compacted (trivially true)
+	 */
+
+	/*
 	 * ncentroids is an arbitrary value, but we want to stick to power-of-2
 	 * sizes, to match the size classes used by AllocSet
 	 */
@@ -1530,10 +1580,27 @@ tdigest_aggstate_to_digest(tdigest_aggstate_t *state, bool compact)
 	int			i;
 	tdigest_t  *digest;
 
+	/* when compacted, then should be sorted */
+	Assert(!((state->ncentroids == state->ncompacted) && (state->nsorted != state->ncentroids)));
+
 	if (compact)
 		tdigest_compact(state);
 
+	/* when compacted, then should be sorted */
+	Assert(!((state->ncentroids == state->ncompacted) && (state->nsorted != state->ncentroids)));
+
 	digest = tdigest_allocate(state->ncentroids);
+
+	/* remember that the centroids are sorted */
+	if (state->nsorted == state->ncentroids)
+		digest->flags |= TDIGEST_SORTED;
+
+	/* remember that the centroids are compacted */
+	if (state->ncompacted == state->ncentroids)
+		digest->flags |= TDIGEST_COMPACTED;
+
+	/* when compacted, then should be sorted */
+	Assert(!((state->ncentroids == state->ncompacted) && (state->nsorted != state->ncentroids)));
 
 	digest->count = state->count;
 	digest->ncentroids = state->ncentroids;
@@ -1577,6 +1644,11 @@ tdigest_aggstate_to_digest(tdigest_aggstate_t *state, bool compact)
  *
  * Returns a new digest, the input one is never modified in place (it may be
  * pointing right at the on-disk data).
+ *
+ * XXX We should consider TDIGEST_COMPACTED here, and likely just trust it,
+ * so that we don't compact a digest over and over. It seems acceptable if
+ * a "forged" non-compacted digest is treated as compacted, as long as it
+ * does not cause crashes or security issues etc.
  */
 static tdigest_t *
 tdigest_compacted(tdigest_t *digest)
@@ -2003,6 +2075,7 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 	{
 		CHECK_FOR_INTERRUPTS();
 
+		/* FIXME do a merge sort here */
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 	}
@@ -2189,7 +2262,9 @@ tdigest_deserial(PG_FUNCTION_ARGS)
 	state->compression = tmp.compression;
 	/* skip maxcentroids */
 	state->ncentroids = tmp.ncentroids;
+
 	state->ncompacted = tmp.ncompacted;
+	state->nsorted = tmp.nsorted;
 
 	/* copy the centroids back */
 	memcpy(state->centroids, ptr,
@@ -2219,7 +2294,9 @@ tdigest_copy(tdigest_aggstate_t *state)
 	copy->compression = state->compression;
 	/* skip maxcentroids */
 	copy->ncentroids = state->ncentroids;
+
 	copy->ncompacted = state->ncompacted;
+	copy->nsorted = state->nsorted;
 
 	memcpy(copy->centroids, state->centroids,
 		   state->ncentroids * sizeof(centroid_t));
@@ -2282,6 +2359,7 @@ tdigest_combine(PG_FUNCTION_ARGS)
 	{
 		CHECK_FOR_INTERRUPTS();
 
+		/* FIXME do a merge sort here */
 		tdigest_add_centroid(dst, src->centroids[i].mean,
 								  src->centroids[i].count);
 	}
@@ -2316,10 +2394,17 @@ tdigest_digest_to_aggstate(tdigest_t *digest)
 	{
 		CHECK_FOR_INTERRUPTS();
 
+		/* FIXME do a merge sort here */
 		tdigest_add_centroid(state,
 							 digest->centroids[i].mean,
 							 digest->centroids[i].count);
 	}
+
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+		state->nsorted = digest->ncentroids;
+
+	if ((digest->flags & TDIGEST_COMPACTED) != 0)
+		state->ncompacted = digest->ncentroids;
 
 	AssertCheckTDigestAggState(state);
 
@@ -2547,6 +2632,7 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 	{
 		CHECK_FOR_INTERRUPTS();
 
+		/* FIXME do a merge sort here */
 		tdigest_add_centroid(state, digest->centroids[i].mean,
 									digest->centroids[i].count);
 	}
@@ -2750,7 +2836,21 @@ tdigest_in(PG_FUNCTION_ARGS)
 	parse_str(&ptr, "centroids", true);
 	ncentroids = parse_int32(&ptr, "number of centroids");
 
+	/* make sure the t-digest format and flags are supported */
 	if ((flags & ~TDIGEST_VALID_FLAGS) != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid flags for t-digest")));
+
+	/* SORTED and COMPACTED require the STORES_MEAN too */
+	if ((((flags & TDIGEST_SORTED) != 0) || ((flags & TDIGEST_COMPACTED) != 0)) &&
+		((flags & TDIGEST_STORES_MEAN) == 0))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid flags for t-digest")));
+
+	/* and COMPACTED requires SORTED */
+	if (((flags & TDIGEST_COMPACTED) != 0) && ((flags & TDIGEST_SORTED) == 0))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid flags for t-digest")));
@@ -2878,6 +2978,50 @@ tdigest_in(PG_FUNCTION_ARGS)
 	 */
 	tdigest_update_format(digest);
 
+	/*
+	 * With TDIGEST_SORTED flag set, check that the centroids are sorted
+	 * by mean (in principle we could check if groups with the same mean
+	 * are sorted by count, but we don't rely on that when merging etc).
+	 *
+	 * XXX We intentionally do this check after format update (although we
+	 * should not see sorted digests with old format).
+	 *
+	 * XXX Maybe we should not error out and instead just reset the flag
+	 * when the centroids are not sorted?
+	 */
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+	{
+		for (i = 1; i < digest->ncentroids; i++)
+		{
+			if (digest->centroids[i-1].mean > digest->centroids[i].mean)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("centroids not properly sorted")));
+		}
+	}
+
+	/*
+	 * Reject compacted digests with a full buffer.
+	 *
+	 * We don't check if a digest with TDIGEST_COMPACTED flag really is
+	 * compacted, because that seems susceptible to various small rounding
+	 * errors etc. So it might trigger spurious failures. So we trust the
+	 * TDIGEST_COMPACTED flag, on the assumption that non-compacted digest
+	 * will only affect accuracy (likely increasing it).
+	 *
+	 * There's one exception - we reject digests marked as compacted, with
+	 * a full centroid buffer. This would cause problems when adding more
+	 * values to the digest, due to skipping the proper compaction.
+	 *
+	 * XXX Maybe we should simply discard the compacted flag? And also do
+	 * the same for the sorted flag?
+	 */
+	if (((digest->flags & TDIGEST_COMPACTED) != 0) &&
+		(digest->ncentroids == BUFFER_SIZE(digest->compression)))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("compacted digest has full buffer")));
+
 	AssertCheckTDigest(digest);
 
 	PG_RETURN_POINTER(digest);
@@ -2932,8 +3076,21 @@ tdigest_recv(PG_FUNCTION_ARGS)
 
 	flags = pq_getmsgint(buf, sizeof(int32));
 
-	/* make sure the t-digest format is supported */
+	/* make sure the t-digest format and flags are supported */
 	if ((flags & ~TDIGEST_VALID_FLAGS) != 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid flags for t-digest")));
+
+	/* SORTED and COMPACTED require the STORES_MEAN too */
+	if ((((flags & TDIGEST_SORTED) != 0) || ((flags & TDIGEST_COMPACTED) != 0)) &&
+		((flags & TDIGEST_STORES_MEAN) == 0))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid flags for t-digest")));
+
+	/* and COMPACTED requires SORTED */
+	if (((flags & TDIGEST_COMPACTED) != 0) && ((flags & TDIGEST_SORTED) == 0))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid flags for t-digest")));
@@ -3019,6 +3176,49 @@ tdigest_recv(PG_FUNCTION_ARGS)
 	 */
 	tdigest_update_format(digest);
 
+	/*
+	 * With TDIGEST_SORTED flag set, check that the centroids are sorted
+	 * by mean. The centroids sharing a mean may be in any order.
+	 *
+	 * XXX We intentionally do this check after format update (although we
+	 * should not see sorted digests with old format).
+	 *
+	 * XXX Maybe we should not error out and instead just reset the flag
+	 * when the centroids are not sorted?
+	 */
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+	{
+		for (i = 1; i < digest->ncentroids; i++)
+		{
+			if (digest->centroids[i-1].mean > digest->centroids[i].mean)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("centroids not properly sorted")));
+		}
+	}
+
+	/*
+	 * Reject compacted digests with a full buffer.
+	 *
+	 * We don't check if a digest with TDIGEST_COMPACTED flag really is
+	 * compacted, because that seems susceptible to various small rounding
+	 * errors etc. So it might trigger spurious failures. So we trust the
+	 * TDIGEST_COMPACTED flag, on the assumption that non-compacted digest
+	 * will only affect accuracy (likely increasing it).
+	 *
+	 * There's one exception - we reject digests marked as compacted, with
+	 * a full centroid buffer. This would cause problems when adding more
+	 * values to the digest, due to skipping the proper compaction.
+	 *
+	 * XXX Maybe we should simply discard the compacted flag? And also do
+	 * the same for the sorted flag?
+	 */
+	if (((digest->flags & TDIGEST_COMPACTED) != 0) &&
+		(digest->ncentroids == BUFFER_SIZE(digest->compression)))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("compacted digest has full buffer")));
+
 	AssertCheckTDigest(digest);
 
 	PG_RETURN_POINTER(digest);
@@ -3090,8 +3290,17 @@ tdigest_is_valid_internal(tdigest_t *digest)
 	if (vlen < offsetof(tdigest_t, centroids))
 		return false;
 
-	/* make sure the t-digest format is supported */
+	/* make sure the t-digest format and flags are supported */
 	if ((digest->flags & ~TDIGEST_VALID_FLAGS) != 0)
+		return false;
+
+	/* SORTED and COMPACTED require the STORES_MEAN too */
+	if ((((digest->flags & TDIGEST_SORTED) != 0) || ((digest->flags & TDIGEST_COMPACTED) != 0)) &&
+		((digest->flags & TDIGEST_STORES_MEAN) == 0))
+		return false;
+
+	/* and COMPACTED requires SORTED */
+	if (((digest->flags & TDIGEST_COMPACTED) != 0) && ((digest->flags & TDIGEST_SORTED) == 0))
 		return false;
 
 	if ((digest->compression < MIN_COMPRESSION) ||
@@ -3147,6 +3356,22 @@ tdigest_is_valid_internal(tdigest_t *digest)
 
 	/* check that the total matches */
 	if (total_count != digest->count)
+		return false;
+
+	/* if digest marked as sorted, check that too (centroids sorted by mean) */
+	if ((digest->flags & TDIGEST_SORTED) != 0)
+	{
+		for (i = 1; i < digest->ncentroids; i++)
+		{
+			/* found a contradicting pair of centroids? */
+			if (digest->centroids[i - 1].mean > digest->centroids[i].mean)
+				return false;
+		}
+	}
+
+	/* a compacted digest can't have a full buffer */
+	if (((digest->flags & TDIGEST_COMPACTED) != 0) &&
+		(digest->ncentroids == BUFFER_SIZE(digest->compression)))
 		return false;
 
 	return true;
