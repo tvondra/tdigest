@@ -45,7 +45,7 @@ $$;
 CREATE FUNCTION tdigest_unsorted_reorder(d tdigest, seed int)
 RETURNS tdigest
 LANGUAGE sql SET extra_float_digits = 3 AS $$
-    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+    SELECT (regexp_replace(rtrim(substring(d::text FROM '^[^(]*')), 'flags [0-9]', 'flags 1') ||
             coalesce(string_agg(m[1], ''
                                 ORDER BY CASE WHEN seed = 0 THEN -o ELSE 0 END,
                                          md5(seed::text || ':' || o::text)), ''))::tdigest
@@ -64,7 +64,7 @@ $$;
 CREATE FUNCTION tdigest_unsorted_permute_groups(d tdigest, seed int)
 RETURNS tdigest
 LANGUAGE sql SET extra_float_digits = 3 AS $$
-    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+    SELECT (regexp_replace(rtrim(substring(d::text FROM '^[^(]*')), 'flags [0-9]', 'flags 1') ||
             coalesce(string_agg(m, '' ORDER BY mean,
                                 md5(seed::text || ':' || o::text)), ''))::tdigest
       FROM (SELECT x.m[1] AS m, x.o AS o,
@@ -165,7 +165,7 @@ SELECT id, k + 7, tdigest_unsorted_permute_groups(d, k)
 SELECT v.id, g.descr,
        count(*) AS variants,
        count(*) FILTER (WHERE substring(v.d::text FROM '^[^(]*')
-                           IS DISTINCT FROM substring(g.d::text FROM '^[^(]*')) AS header_differs,
+                           IS DISTINCT FROM regexp_replace(substring(g.d::text FROM '^[^(]*'), 'flags [0-9]', 'flags 1')) AS header_differs,
        count(*) FILTER (WHERE EXISTS (SELECT mean, cnt FROM tdigest_unsorted_centroids(v.d)
                                       EXCEPT ALL
                                       SELECT mean, cnt FROM tdigest_unsorted_centroids(g.d))

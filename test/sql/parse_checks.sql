@@ -61,7 +61,7 @@ SELECT 'flags 0 count 3 compression 10 centroids 1 (-1e-400, 3)'::tdigest;
 --
 
 -- unknown flags
-SELECT 'flags 2 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 8 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
 
 -- compression out of the supported range
 SELECT 'flags 1 count 3 compression 9 centroids 1 (1, 3)'::tdigest;

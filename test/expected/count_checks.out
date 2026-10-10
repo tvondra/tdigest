@@ -15,13 +15,13 @@ ERROR:  invalid count value -1, must be a positive value
 SELECT tdigest(v, 1::bigint, 100) FROM (VALUES (1.0)) AS t(v);
                       tdigest                       
 ----------------------------------------------------
- flags 1 count 1 compression 100 centroids 1 (1, 1)
+ flags 7 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 
 -- NULL count means a single occurrence, so it's valid too
 SELECT tdigest(v, NULL::bigint, 100) FROM (VALUES (1.0)) AS t(v);
                       tdigest                       
 ----------------------------------------------------
- flags 1 count 1 compression 100 centroids 1 (1, 1)
+ flags 7 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 

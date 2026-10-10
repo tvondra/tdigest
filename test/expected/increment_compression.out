@@ -19,13 +19,13 @@ ERROR:  compression value not supplied, but t-digest is NULL
 SELECT tdigest_add(NULL::tdigest, 1.0::double precision, 100);
                     tdigest_add                     
 ----------------------------------------------------
- flags 1 count 1 compression 100 centroids 1 (1, 1)
+ flags 7 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 
 SELECT tdigest_add(NULL::tdigest, ARRAY[1.0]::double precision[], 100);
                     tdigest_add                     
 ----------------------------------------------------
- flags 1 count 1 compression 100 centroids 1 (1, 1)
+ flags 7 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 
 -- with an existing digest the compression is not needed
@@ -33,13 +33,13 @@ SELECT tdigest_add('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest
                    2.0::double precision);
                         tdigest_add                        
 -----------------------------------------------------------
- flags 1 count 2 compression 100 centroids 2 (1, 1) (2, 1)
+ flags 7 count 2 compression 100 centroids 2 (1, 1) (2, 1)
 (1 row)
 
 SELECT tdigest_add('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest,
                    ARRAY[2.0]::double precision[]);
                         tdigest_add                        
 -----------------------------------------------------------
- flags 1 count 2 compression 100 centroids 2 (1, 1) (2, 1)
+ flags 7 count 2 compression 100 centroids 2 (1, 1) (2, 1)
 (1 row)
 

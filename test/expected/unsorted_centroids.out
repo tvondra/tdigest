@@ -41,7 +41,7 @@ $$;
 CREATE FUNCTION tdigest_unsorted_reorder(d tdigest, seed int)
 RETURNS tdigest
 LANGUAGE sql SET extra_float_digits = 3 AS $$
-    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+    SELECT (regexp_replace(rtrim(substring(d::text FROM '^[^(]*')), 'flags [0-9]', 'flags 1') ||
             coalesce(string_agg(m[1], ''
                                 ORDER BY CASE WHEN seed = 0 THEN -o ELSE 0 END,
                                          md5(seed::text || ':' || o::text)), ''))::tdigest
@@ -59,7 +59,7 @@ $$;
 CREATE FUNCTION tdigest_unsorted_permute_groups(d tdigest, seed int)
 RETURNS tdigest
 LANGUAGE sql SET extra_float_digits = 3 AS $$
-    SELECT (rtrim(substring(d::text FROM '^[^(]*')) ||
+    SELECT (regexp_replace(rtrim(substring(d::text FROM '^[^(]*')), 'flags [0-9]', 'flags 1') ||
             coalesce(string_agg(m, '' ORDER BY mean,
                                 md5(seed::text || ':' || o::text)), ''))::tdigest
       FROM (SELECT x.m[1] AS m, x.o AS o,
@@ -148,7 +148,7 @@ SELECT id, k + 7, tdigest_unsorted_permute_groups(d, k)
 SELECT v.id, g.descr,
        count(*) AS variants,
        count(*) FILTER (WHERE substring(v.d::text FROM '^[^(]*')
-                           IS DISTINCT FROM substring(g.d::text FROM '^[^(]*')) AS header_differs,
+                           IS DISTINCT FROM regexp_replace(substring(g.d::text FROM '^[^(]*'), 'flags [0-9]', 'flags 1')) AS header_differs,
        count(*) FILTER (WHERE EXISTS (SELECT mean, cnt FROM tdigest_unsorted_centroids(v.d)
                                       EXCEPT ALL
                                       SELECT mean, cnt FROM tdigest_unsorted_centroids(g.d))
@@ -169,10 +169,10 @@ SELECT v.id, g.descr,
   4 | repeated means (the sort has to rebalance those)         |       11 |              0 |                0 |                 6 |                    5
   5 | a large centroid in the middle                           |       11 |              0 |                0 |                 5 |                    0
   6 | a single centroid                                        |       11 |              0 |                0 |                 0 |                    0
-  7 | built from 1000 distinct values, no centroid merging     |       11 |              0 |                0 |                 6 |                    0
+  7 | built from 1000 distinct values, no centroid merging     |       11 |              0 |                0 |                 6 |                    5
   8 | built from 10000 rows, compression 100                   |       11 |              0 |                0 |                 6 |                    5
-  9 | built from 10000 rows, compression 10                    |       11 |              0 |                0 |                 6 |                    3
- 10 | built from 10000 random values, compression 100          |       11 |              0 |                0 |                 6 |                    0
+  9 | built from 10000 rows, compression 10                    |       11 |              0 |                0 |                 6 |                    5
+ 10 | built from 10000 random values, compression 100          |       11 |              0 |                0 |                 6 |                    5
  11 | built from 10000 values with duplicities, compression 50 |       11 |              0 |                0 |                 6 |                    5
 (11 rows)
 

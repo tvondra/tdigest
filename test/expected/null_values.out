@@ -19,7 +19,7 @@ SELECT tdigest(v, 100) FROM (VALUES (NULL::double precision), (NULL)) AS t(v);
 SELECT tdigest(v, 100) FROM (VALUES (1.0), (NULL)) AS t(v);
                       tdigest                       
 ----------------------------------------------------
- flags 1 count 1 compression 100 centroids 1 (1, 1)
+ flags 7 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 
 -- tdigest_add_double_count
@@ -32,7 +32,7 @@ SELECT tdigest(v, 1::bigint, 100) FROM (VALUES (NULL::double precision), (NULL))
 SELECT tdigest(v, 1::bigint, 100) FROM (VALUES (1.0), (NULL)) AS t(v);
                       tdigest                       
 ----------------------------------------------------
- flags 1 count 1 compression 100 centroids 1 (1, 1)
+ flags 7 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 
 -- tdigest_add_digest
@@ -45,6 +45,6 @@ SELECT tdigest(d) FROM (VALUES (NULL::tdigest), (NULL)) AS t(d);
 SELECT tdigest(d) FROM (VALUES ('flags 1 count 1 compression 100 centroids 1 (1, 1)'::tdigest), (NULL)) AS t(d);
                       tdigest                       
 ----------------------------------------------------
- flags 1 count 1 compression 100 centroids 1 (1, 1)
+ flags 7 count 1 compression 100 centroids 1 (1, 1)
 (1 row)
 
