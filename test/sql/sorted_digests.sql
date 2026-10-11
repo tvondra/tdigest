@@ -1,4 +1,5 @@
--- Regression test for the TDIGEST_SORTED and TDIGEST_COMPACTED flags.
+-- Regression test for the TDIGEST_SORTED and TDIGEST_COMPACTED flags, and for
+-- combining sorted digests using a mergesort.
 --
 -- Digests remember whether the centroids are sorted by mean (flags 3), or both
 -- sorted and compacted (flags 7). That allows skipping some of the work - two
@@ -57,6 +58,19 @@ LANGUAGE sql STRICT AS $$
       FROM tdigest_sorted_centroids(d);
 $$;
 
+-- The same digest with centroids in the opposite order (with flags 1). Unlike
+-- the digests that only have the SORTED flag cleared, the centroids of such
+-- digest really are not sorted (unless they all have the same mean).
+CREATE FUNCTION tdigest_sorted_reverse(d tdigest) RETURNS tdigest
+LANGUAGE sql STRICT SET extra_float_digits = 3 AS $$
+    SELECT (format('flags 1 count %s compression %s centroids %s ',
+                   (d::double precision[])[2]::bigint,
+                   (d::double precision[])[3]::int,
+                   (d::double precision[])[4]::int) ||
+            string_agg(format('(%s, %s)', mean, cnt), ' ' ORDER BY idx DESC))::tdigest
+      FROM tdigest_sorted_centroids(d);
+$$;
+
 --
 -- flags of digests produced by the various functions
 --
@@ -109,10 +123,10 @@ SELECT descr, (d::double precision[])[1] AS flags
 -- compacted, the others are sorted digests with a full buffer, and digests
 -- with a bogus COMPACTED flag (not compacted, or with the centroids sharing a
 -- mean in an order the compaction would not produce). Each digest also comes
--- with flags 1 (d1).
+-- with flags 1 (d1), and with the centroids in the opposite order (d2).
 --
 
-CREATE TABLE tdigest_sorted_digests (id int, descr text, d tdigest, d1 tdigest);
+CREATE TABLE tdigest_sorted_digests (id int, descr text, d tdigest, d1 tdigest, d2 tdigest);
 
 INSERT INTO tdigest_sorted_digests (id, descr, d)
 SELECT 1, 'random values, compression 10', tdigest(1000 * v, 10)
@@ -195,8 +209,8 @@ SELECT 15, 'full buffer, large groups in arbitrary order',
         (SELECT string_agg(format('(%s, 1)', 99 + i), ' ' ORDER BY i) FROM generate_series(1, 60) s(i)) || ' ' ||
         (SELECT string_agg(format('(900, %s)', 1 + i % 2), ' ' ORDER BY i) FROM generate_series(0, 19) s(i)))::tdigest;
 
--- the same digests, not marked as sorted (d1)
-UPDATE tdigest_sorted_digests SET d1 = tdigest_sorted_set_flags(d, 1);
+-- the same digests, not marked as sorted (d1), and in the opposite order (d2)
+UPDATE tdigest_sorted_digests SET d1 = tdigest_sorted_set_flags(d, 1), d2 = tdigest_sorted_reverse(d);
 
 -- all the digests are valid (as far as the checks can tell) and sorted
 SELECT id, descr,
@@ -206,6 +220,75 @@ SELECT id, descr,
        tdigest_is_valid(d) AS valid,
        tdigest_sorted_is_sorted(d) AS sorted
   FROM tdigest_sorted_digests ORDER BY id;
+
+-- the variants have the same centroids
+SELECT count(*) AS digests,
+       count(*) FILTER (WHERE tdigest_sorted_multiset(d1) <> tdigest_sorted_multiset(d)
+                           OR tdigest_sorted_multiset(d2) <> tdigest_sorted_multiset(d)) AS mismatches,
+       count(*) FILTER (WHERE tdigest_sorted_is_sorted(d2)) AS sorted_reverse
+  FROM tdigest_sorted_digests;
+
+--
+-- Combining two sorted digests uses a mergesort, while for the unsorted ones
+-- we add the centroids one by one, and sort them during compaction. Both ways
+-- have to produce exactly the same digest. That includes the cases when the
+-- buffer gets full while merging the centroids and has to be compacted. The
+-- mergesort only compares the means, so the compaction has to put centroids
+-- with the same mean in the right order (that affects which centroids get
+-- merged).
+--
+
+-- merged (and compacted) digests have to be the same, no matter how they were
+-- merged - and when one of the digests is not sorted, we have to do it the
+-- slow way (the result has to be the same as with neither digest sorted)
+SELECT count(*) AS pairs,
+       count(*) FILTER (WHERE tdigest_union(a.d, b.d)::bytea
+                              IS DISTINCT FROM tdigest_union(a.d1, b.d1)::bytea) AS mismatches,
+       count(*) FILTER (WHERE tdigest_union(a.d, b.d2)::bytea
+                              IS DISTINCT FROM tdigest_union(a.d1, b.d2)::bytea
+                           OR tdigest_union(a.d2, b.d)::bytea
+                              IS DISTINCT FROM tdigest_union(a.d2, b.d1)::bytea) AS mismatches_mixed
+  FROM tdigest_sorted_digests a, tdigest_sorted_digests b;
+
+-- Without the final compaction, both ways produce the same centroids too, but
+-- the slow way simply appends them, while the mergesort keeps them sorted. So
+-- the result is marked as sorted (but not compacted).
+SELECT count(*) AS pairs,
+       count(*) FILTER (WHERE tdigest_sorted_multiset(tdigest_union(a.d, b.d, false))
+                              IS DISTINCT FROM tdigest_sorted_multiset(tdigest_union(a.d1, b.d1, false))) AS mismatches,
+       count(*) FILTER (WHERE NOT tdigest_sorted_is_sorted(tdigest_union(a.d, b.d, false))) AS not_sorted,
+       count(*) FILTER (WHERE (tdigest_union(a.d, b.d, false)::double precision[])[1] <> 3
+                           OR (tdigest_union(a.d1, b.d1, false)::double precision[])[1] <> 1) AS wrong_flags,
+       count(*) FILTER (WHERE NOT tdigest_is_valid(tdigest_union(a.d, b.d, false))) AS not_valid
+  FROM tdigest_sorted_digests a, tdigest_sorted_digests b;
+
+-- The same for the aggregate, merging the digests one by one. Once a digest
+-- that is not sorted gets merged, the aggregate state is not sorted either,
+-- and all the following digests get merged the slow way. The same happens
+-- after digest 7 - in aggregates, a single centroid is too small for the
+-- mergesort, so it gets appended.
+SELECT tdigest(d ORDER BY id)::bytea = tdigest(d1 ORDER BY id)::bytea AS ascending,
+       tdigest(d ORDER BY id DESC)::bytea = tdigest(d1 ORDER BY id DESC)::bytea AS descending,
+       tdigest(CASE WHEN id <= 8 THEN d ELSE d2 END ORDER BY id)::bytea
+         = tdigest(CASE WHEN id <= 8 THEN d1 ELSE d2 END ORDER BY id)::bytea AS sorted_first,
+       tdigest(CASE WHEN id <= 8 THEN d2 ELSE d END ORDER BY id)::bytea
+         = tdigest(CASE WHEN id <= 8 THEN d2 ELSE d1 END ORDER BY id)::bytea AS sorted_last,
+       tdigest(CASE WHEN id % 2 = 1 THEN d ELSE d2 END ORDER BY id)::bytea
+         = tdigest(CASE WHEN id % 2 = 1 THEN d1 ELSE d2 END ORDER BY id)::bytea AS alternating
+  FROM tdigest_sorted_digests;
+
+-- The same for a window aggregate, finalizing the state for each frame. That
+-- must not change the state used for the following frames, which is sorted
+-- (but not compacted), so the digests keep being merged using the mergesort
+-- (up to digest 6).
+SELECT count(*) AS frames,
+       count(*) FILTER (WHERE a::bytea IS DISTINCT FROM e::bytea) AS mismatches,
+       count(*) FILTER (WHERE a1::bytea IS DISTINCT FROM e::bytea) AS mismatches_not_sorted
+  FROM (SELECT tdigest(d) OVER w AS a, tdigest(d1) OVER w AS a1,
+               (SELECT tdigest(x.d ORDER BY x.id) FROM tdigest_sorted_digests x
+                 WHERE x.id <= s.id) AS e
+          FROM tdigest_sorted_digests s
+        WINDOW w AS (ORDER BY id ROWS UNBOUNDED PRECEDING)) y;
 
 --
 -- Functions on a single digest. With the SORTED flag we may skip sorting, and
@@ -268,8 +351,71 @@ SELECT f, tdigest_percentile(d, ARRAY[0.25, 0.5, 0.75]) AS percentiles,
           FROM unnest(ARRAY[1, 3, 7]) AS f) x
  ORDER BY f;
 
+--
+-- Centroids with the same mean have to be in a particular order - ascending
+-- by count before the median, descending after it (and a group split by the
+-- median gets rebalanced). The mergesort only compares the means, so in the
+-- merged digest such centroids may be in any order, and it's the compaction
+-- that has to put them in the right order (even if it does not merge any
+-- of them). The compression is high enough for the compaction to not merge
+-- any centroids, so the order is visible in the result.
+--
+
+CREATE TABLE tdigest_sorted_groups (id int, descr text, a tdigest, b tdigest);
+
+INSERT INTO tdigest_sorted_groups VALUES
+    (1, 'below median',
+        'flags 3 count 4 compression 10000 centroids 2 (5, 3) (5, 1)',
+        'flags 3 count 12 compression 10000 centroids 2 (5, 2) (100, 10)'),
+    (2, 'ends at median',
+        'flags 3 count 4 compression 10000 centroids 2 (5, 3) (5, 1)',
+        'flags 3 count 8 compression 10000 centroids 2 (5, 2) (100, 6)'),
+    (3, 'starts at median',
+        'flags 3 count 6 compression 10000 centroids 1 (1, 6)',
+        'flags 3 count 6 compression 10000 centroids 3 (5, 2) (5, 1) (5, 3)'),
+    (4, 'above median',
+        'flags 3 count 100 compression 10000 centroids 1 (-100, 100)',
+        'flags 7 count 6 compression 10000 centroids 3 (5, 1) (5, 3) (5, 2)'),
+    (5, 'split by median',
+        'flags 3 count 4 compression 10000 centroids 2 (5, 1) (5, 3)',
+        'flags 3 count 6 compression 10000 centroids 2 (5, 2) (5, 4)'),
+    (6, 'two groups',
+        'flags 3 count 13 compression 10000 centroids 4 (1, 1) (1, 2) (9, 4) (9, 6)',
+        'flags 3 count 10 compression 10000 centroids 4 (1, 3) (5, 1) (9, 5) (9, 1)');
+
+-- groups with more than 16 centroids, sorted in a different way
+INSERT INTO tdigest_sorted_groups
+SELECT 7, 'large group, split by median',
+       ('flags 3 count 110 compression 10000 centroids 10 ' ||
+        (SELECT string_agg(format('(5, %s)', 2 * i), ' ' ORDER BY i) FROM generate_series(1, 10) s(i)))::tdigest,
+       ('flags 3 count 100 compression 10000 centroids 10 ' ||
+        (SELECT string_agg(format('(5, %s)', 2 * i - 1), ' ' ORDER BY i DESC) FROM generate_series(1, 10) s(i)))::tdigest;
+
+INSERT INTO tdigest_sorted_groups
+SELECT 8, 'large group, same counts',
+       ('flags 3 count 20 compression 10000 centroids 10 ' ||
+        (SELECT string_agg('(5, 2)', ' ') FROM generate_series(1, 10)))::tdigest,
+       ('flags 3 count 21 compression 10000 centroids 10 ' ||
+        (SELECT string_agg('(5, 2)', ' ') FROM generate_series(1, 9)) || ' (6, 3)')::tdigest;
+
+SELECT id, descr, tdigest_union(a, b) AS merged,
+       tdigest_union(a, b)::double precision[]
+         = tdigest_union(tdigest_sorted_set_flags(a, 1), tdigest_sorted_set_flags(b, 1))::double precision[] AS expected
+  FROM tdigest_sorted_groups ORDER BY id;
+
+-- Without the compaction the merged digest is sorted by mean, and has the
+-- same centroids, but the order of centroids with the same mean is not
+-- defined.
+SELECT id, (tdigest_union(a, b, false)::double precision[])[1] AS flags,
+       tdigest_sorted_is_sorted(tdigest_union(a, b, false)) AS sorted,
+       tdigest_sorted_multiset(tdigest_union(a, b, false))
+         = tdigest_sorted_multiset(tdigest_union(a, b)) AS same_centroids
+  FROM tdigest_sorted_groups ORDER BY id;
+
+DROP TABLE tdigest_sorted_groups;
 DROP TABLE tdigest_sorted_digests;
 
+DROP FUNCTION tdigest_sorted_reverse(tdigest);
 DROP FUNCTION tdigest_sorted_multiset(tdigest);
 DROP FUNCTION tdigest_sorted_is_sorted(tdigest);
 DROP FUNCTION tdigest_sorted_centroids(tdigest);
