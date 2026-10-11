@@ -412,6 +412,123 @@ SELECT id, (tdigest_union(a, b, false)::double precision[])[1] AS flags,
          = tdigest_sorted_multiset(tdigest_union(a, b)) AS same_centroids
   FROM tdigest_sorted_groups ORDER BY id;
 
+--
+-- extreme means
+--
+-- Means close to the limits of double precision, denormals and zeros of both
+-- signs. The mergesort only compares the means, so -0 and 0 are treated as
+-- the same mean (a group of centroids), just like when sorting the centroids.
+-- Both ways have to produce the same centroids, except that -0 and 0 may end
+-- up in a different order. So compare them as double precision (-0 = 0).
+-- Merging centroids close to the limits must not overflow either, so all the
+-- results have to be valid digests (which includes all means being finite).
+--
+
+CREATE TABLE tdigest_sorted_extreme (id int, d tdigest, d1 tdigest);
+
+INSERT INTO tdigest_sorted_extreme (id, d) VALUES
+    (1, 'flags 7 count 6 compression 10 centroids 6 (-1e308, 1) (-5e-324, 1) (-0, 1) (0, 1) (5e-324, 1) (1e308, 1)'),
+    (2, 'flags 3 count 5 compression 10 centroids 5 (-1.7976931348623157e308, 1) (0, 1) (-0, 1) (0, 1) (1.7976931348623157e308, 1)'),
+    (3, 'flags 7 count 3 compression 10 centroids 3 (-0, 1) (5e-324, 1) (1e-300, 1)'),
+    (4, 'flags 3 count 7 compression 10 centroids 4 (-0, 2) (0, 1) (-0, 1) (0, 3)');
+
+-- full buffer, zeros of both signs with various counts, split by the median
+INSERT INTO tdigest_sorted_extreme (id, d)
+SELECT 5, ('flags 3 count ' || (2 + sum(i % 7 + 1)) || ' compression 10 centroids 100 ' ||
+           '(-1.7976931348623157e308, 1) ' ||
+           string_agg(format('(%s, %s)', CASE WHEN i % 2 = 0 THEN '0' ELSE '-0' END, i % 7 + 1), ' ' ORDER BY i) ||
+           ' (1.7976931348623157e308, 1)')::tdigest
+  FROM generate_series(1, 98) s(i);
+
+-- full buffer, half the centroids at each of the limits
+INSERT INTO tdigest_sorted_extreme (id, d)
+SELECT 6, ('flags 3 count 100 compression 10 centroids 100 ' ||
+           string_agg(CASE WHEN i <= 50 THEN '(-1.7976931348623157e308, 1)'
+                           ELSE '(1.7976931348623157e308, 1)' END, ' ' ORDER BY i))::tdigest
+  FROM generate_series(1, 100) s(i);
+
+-- full buffer, distinct means close to the upper limit
+INSERT INTO tdigest_sorted_extreme (id, d)
+SELECT 7, ('flags 3 count 100 compression 10 centroids 100 ' ||
+           string_agg(format('(%se303, 1)', 179669 + i), ' ' ORDER BY i))::tdigest
+  FROM generate_series(1, 100) s(i);
+
+UPDATE tdigest_sorted_extreme SET d1 = tdigest_sorted_set_flags(d, 1);
+
+SELECT count(*) AS pairs,
+       count(*) FILTER (WHERE tdigest_union(a.d, b.d)::double precision[]
+                              IS DISTINCT FROM tdigest_union(a.d1, b.d1)::double precision[]) AS mismatches,
+       count(*) FILTER (WHERE tdigest_sorted_multiset(tdigest_union(a.d, b.d, false))
+                              IS DISTINCT FROM tdigest_sorted_multiset(tdigest_union(a.d1, b.d1, false))) AS mismatches_merged,
+       count(*) FILTER (WHERE NOT tdigest_sorted_is_sorted(tdigest_union(a.d, b.d, false))) AS not_sorted,
+       count(*) FILTER (WHERE NOT tdigest_is_valid(tdigest_union(a.d, b.d))
+                           OR NOT tdigest_is_valid(tdigest_union(a.d, b.d, false))) AS not_valid
+  FROM tdigest_sorted_extreme a, tdigest_sorted_extreme b;
+
+SELECT tdigest(d ORDER BY id)::double precision[] = tdigest(d1 ORDER BY id)::double precision[] AS ascending,
+       tdigest(d ORDER BY id DESC)::double precision[] = tdigest(d1 ORDER BY id DESC)::double precision[] AS descending
+  FROM tdigest_sorted_extreme;
+
+-- the extreme values survive the merging and compaction
+SELECT tdigest_percentile(d, ARRAY[0, 1]) AS min_max,
+       tdigest_percentile(d, ARRAY[0, 0.25, 0.5, 0.75, 1])
+         = tdigest_percentile(d1, ARRAY[0, 0.25, 0.5, 0.75, 1]) AS percentiles,
+       tdigest_percentile_of(d, ARRAY[-1e308, 0, 1e308])
+         = tdigest_percentile_of(d1, ARRAY[-1e308, 0, 1e308]) AS ranks
+  FROM (SELECT tdigest(d ORDER BY id) AS d, tdigest(d1 ORDER BY id) AS d1
+          FROM tdigest_sorted_extreme) x;
+
+--
+-- the total count must not overflow while merging sorted digests
+--
+
+SELECT tdigest_union('flags 7 count 9223372036854775807 compression 10 centroids 1 (1, 9223372036854775807)',
+                     'flags 7 count 1 compression 10 centroids 1 (2, 1)');
+
+SELECT tdigest_union('flags 3 count 9223372036854775807 compression 10 centroids 1 (1, 9223372036854775807)',
+                     'flags 3 count 1 compression 10 centroids 1 (0, 1)', false);
+
+-- overflow in the second step of the merge (the first one fills the buffer)
+SELECT tdigest_union('flags 3 count 9223372036854775708 compression 10 centroids 1 (0, 9223372036854775708)', d)
+  FROM tdigest_sorted_digests WHERE id = 8;
+
+-- the maximum count is fine
+SELECT tdigest_union('flags 3 count 9223372036854775806 compression 10 centroids 1 (1, 9223372036854775806)',
+                     'flags 3 count 1 compression 10 centroids 1 (2, 1)', false);
+
+SELECT tdigest_union('flags 3 count 9223372036854775806 compression 10 centroids 1 (1, 9223372036854775806)',
+                     'flags 3 count 1 compression 10 centroids 1 (2, 1)');
+
+--
+-- the largest digests (full buffer for the maximum compression)
+--
+
+CREATE TABLE tdigest_sorted_large AS
+SELECT d, tdigest_sorted_set_flags(d, 1) AS d1
+  FROM (SELECT ('flags 3 count 100000 compression 10000 centroids 100000 ' ||
+                (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                   FROM generate_series(1, 100000) s(i)))::tdigest AS d) x;
+
+SELECT tdigest_count(d), (d::double precision[])[4] AS centroids FROM tdigest_sorted_large;
+
+-- the buffer is full, so this can't be compacted
+SELECT tdigest_sorted_set_flags(d, 7) FROM tdigest_sorted_large;
+
+SELECT tdigest_union(d, d)::bytea = tdigest_union(d1, d1)::bytea AS union_self,
+       tdigest_union(d, 'flags 7 count 1 compression 10 centroids 1 (0.5, 1)')::bytea
+         = tdigest_union(d1, 'flags 1 count 1 compression 10 centroids 1 (0.5, 1)')::bytea AS union_first,
+       tdigest_union('flags 7 count 1 compression 10 centroids 1 (0.5, 1)', d)::bytea
+         = tdigest_union('flags 1 count 1 compression 10 centroids 1 (0.5, 1)', d1)::bytea AS union_second,
+       tdigest_add(d, 0.5)::bytea = tdigest_add(d1, 0.5)::bytea AS add,
+       tdigest_percentile(d, 0.5) = tdigest_percentile(d1, 0.5) AS percentile,
+       tdigest_percentile_of(d, 50000) = tdigest_percentile_of(d1, 50000) AS percentile_of
+  FROM tdigest_sorted_large;
+
+SELECT tdigest(d)::bytea = (SELECT tdigest(d1) FROM tdigest_sorted_large, generate_series(1, 2))::bytea AS aggregate
+  FROM tdigest_sorted_large, generate_series(1, 2);
+
+DROP TABLE tdigest_sorted_large;
+DROP TABLE tdigest_sorted_extreme;
 DROP TABLE tdigest_sorted_groups;
 DROP TABLE tdigest_sorted_digests;
 
