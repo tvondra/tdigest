@@ -107,6 +107,30 @@ COPY (SELECT int4send(1)
 
 COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
 
+-- the same in a sorted digest, where the check of mean order would not notice
+-- (all comparisons with NaN are false, and the infinities are in order)
+COPY (SELECT int4send(3)
+          || int8send(3::bigint)
+          || int4send(10)
+          || int4send(3)
+          || float8send(1) || int8send(1::bigint)
+          || float8send('NaN') || int8send(1::bigint)
+          || float8send(2) || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY (SELECT int4send(7)
+          || int8send(3::bigint)
+          || int4send(10)
+          || int4send(3)
+          || float8send(1) || int8send(1::bigint)
+          || float8send(2) || int8send(1::bigint)
+          || float8send('Infinity') || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
 -- non-positive centroid count
 COPY (SELECT int4send(1)
           || int8send(1::bigint)
@@ -192,5 +216,137 @@ COPY (SELECT int4send(1)
 COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
 
 SELECT tdigest_count(s), s::json->>'centroids' AS centroids FROM tdigest_dst;
+
+--
+-- checks of the SORTED (2) and COMPACTED (4) flags
+--
+
+TRUNCATE tdigest_dst;
+
+-- the SORTED and COMPACTED flags require the STORES_MEAN (1) flag
+COPY (SELECT int4send(2)
+          || int8send(1::bigint)
+          || int4send(10)
+          || int4send(1)
+          || float8send(1) || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY (SELECT int4send(4)
+          || int8send(1::bigint)
+          || int4send(10)
+          || int4send(1)
+          || float8send(1) || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY (SELECT int4send(6)
+          || int8send(1::bigint)
+          || int4send(10)
+          || int4send(1)
+          || float8send(1) || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+-- and COMPACTED requires SORTED
+COPY (SELECT int4send(5)
+          || int8send(1::bigint)
+          || int4send(10)
+          || int4send(1)
+          || float8send(1) || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+-- centroids not sorted by mean, in digests marked as sorted
+COPY (SELECT int4send(3)
+          || int8send(3::bigint)
+          || int4send(10)
+          || int4send(2)
+          || float8send(2) || int8send(2::bigint)
+          || float8send(1) || int8send(1::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY (SELECT int4send(7)
+          || int8send(4::bigint)
+          || int4send(10)
+          || int4send(3)
+          || float8send(1) || int8send(1::bigint)
+          || float8send(3) || int8send(1::bigint)
+          || float8send(2) || int8send(2::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+-- a compacted digest can't have a full buffer
+COPY (SELECT int4send(7)
+          || int8send(100::bigint)
+          || int4send(10)
+          || int4send(100)
+          || (SELECT string_agg(float8send(i) || int8send(1::bigint), ''::bytea ORDER BY i)
+                FROM generate_series(1, 100) AS s(i)))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+-- valid sorted and compacted digests - centroids with the same mean may be
+-- in any order (and zeros with a different sign are equal)
+COPY (SELECT int4send(3)
+          || int8send(3::bigint)
+          || int4send(10)
+          || int4send(2)
+          || float8send(1) || int8send(1::bigint)
+          || float8send(2) || int8send(2::bigint)
+      UNION ALL
+      SELECT int4send(7)
+          || int8send(7::bigint)
+          || int4send(10)
+          || int4send(4)
+          || float8send(0) || int8send(1::bigint)
+          || float8send(1) || int8send(2::bigint)
+          || float8send(1) || int8send(3::bigint)
+          || float8send(1) || int8send(1::bigint)
+      UNION ALL
+      SELECT int4send(7)
+          || int8send(3::bigint)
+          || int4send(10)
+          || int4send(2)
+          || float8send(0) || int8send(1::bigint)
+          || float8send('-0') || int8send(2::bigint))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+SELECT s FROM tdigest_dst;
+
+-- a sorted digest may have a full buffer, and a compacted digest may have
+-- all centroids but one
+TRUNCATE tdigest_dst;
+
+COPY (SELECT int4send(3)
+          || int8send(100::bigint)
+          || int4send(10)
+          || int4send(100)
+          || (SELECT string_agg(float8send(i) || int8send(1::bigint), ''::bytea ORDER BY i)
+                FROM generate_series(1, 100) AS s(i))
+      UNION ALL
+      SELECT int4send(7)
+          || int8send(99::bigint)
+          || int4send(10)
+          || int4send(99)
+          || (SELECT string_agg(float8send(i) || int8send(1::bigint), ''::bytea ORDER BY i)
+                FROM generate_series(1, 99) AS s(i)))
+  TO '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+COPY tdigest_dst FROM '/tmp/tdigest_recv_checks.bin' WITH (FORMAT binary);
+
+SELECT (s::double precision[])[1] AS flags, tdigest_count(s),
+       s::json->>'centroids' AS centroids
+  FROM tdigest_dst;
 
 DROP TABLE tdigest_dst;
