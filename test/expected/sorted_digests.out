@@ -1,0 +1,344 @@
+-- Regression test for the TDIGEST_SORTED and TDIGEST_COMPACTED flags.
+--
+-- Digests remember whether the centroids are sorted by mean (flags 3), or both
+-- sorted and compacted (flags 7). That allows skipping some of the work - two
+-- sorted digests are combined using a mergesort (instead of adding centroids
+-- one by one and sorting them later), and a compacted digest does not need to
+-- be compacted again before calculating percentiles.
+--
+-- The flags are part of the value, and may be supplied by the user. The input
+-- functions check that the centroids of a SORTED digest are sorted by mean,
+-- and that a COMPACTED digest does not have a full buffer. But that's all they
+-- can check - the order of centroids with the same mean may be arbitrary, and
+-- we can't tell if a digest really is compacted.
+--
+-- The flags must not change the results, except for digests with a bogus
+-- COMPACTED flag (we trust the flag and skip the compaction). Most queries
+-- therefore compare results for the sorted digests with results for the same
+-- digests with flags 1, which have to be processed the slow way.
+\set VERBOSITY terse
+SET extra_float_digits = 0;
+-- Change flags of a digest. This goes through the text representation, so the
+-- input function checks the new flags against the centroids. The function
+-- sets extra_float_digits, so that the means survive the round trip exactly.
+CREATE FUNCTION tdigest_sorted_set_flags(d tdigest, f int) RETURNS tdigest
+LANGUAGE sql STRICT SET extra_float_digits = 3 AS $$
+    SELECT regexp_replace(d::text, '^flags [0-9]+', 'flags ' || f)::tdigest;
+$$;
+-- Decompose a digest into centroids, in the order in which they are stored.
+-- The cast to double precision[] returns the header (flags, count, compression
+-- and number of centroids), followed by a (mean, count) pair for each centroid.
+CREATE FUNCTION tdigest_sorted_centroids(d tdigest)
+RETURNS TABLE (idx int, mean double precision, cnt bigint)
+LANGUAGE sql STRICT AS $$
+    SELECT i, a[3 + 2 * i], a[4 + 2 * i]::bigint
+      FROM (SELECT d::double precision[] AS a) x,
+           generate_series(1, a[4]::int) AS i;
+$$;
+-- Are the centroids sorted by mean?
+CREATE FUNCTION tdigest_sorted_is_sorted(d tdigest) RETURNS boolean
+LANGUAGE sql STRICT AS $$
+    SELECT coalesce(bool_and(prev_mean <= mean), true)
+      FROM (SELECT mean, lag(mean) OVER (ORDER BY idx) AS prev_mean
+              FROM tdigest_sorted_centroids(d)) x
+     WHERE prev_mean IS NOT NULL;
+$$;
+-- Centroids ordered by (mean, count), to compare centroids of two digests
+-- irrespective of the order in which they are stored.
+CREATE FUNCTION tdigest_sorted_multiset(d tdigest) RETURNS double precision[]
+LANGUAGE sql STRICT AS $$
+    SELECT array_agg(ARRAY[mean, cnt] ORDER BY mean, cnt)
+      FROM tdigest_sorted_centroids(d);
+$$;
+--
+-- flags of digests produced by the various functions
+--
+-- The aggregates and functions compacting the result produce sorted and
+-- compacted digests. Without the compaction the result is sorted only when
+-- merging sorted digests (using the mergesort). Otherwise it's not marked as
+-- sorted, even if the centroids happen to be sorted.
+--
+SELECT descr, (d::double precision[])[1] AS flags
+  FROM (VALUES
+    (1, 'aggregate on values',
+        (SELECT tdigest(i::double precision, 10) FROM generate_series(1, 1000) s(i))),
+    (2, 'aggregate on values with counts',
+        (SELECT tdigest(i::double precision, 3::bigint, 10) FROM generate_series(1, 1000) s(i))),
+    (3, 'aggregate on digests',
+        (SELECT tdigest(x) FROM (VALUES ('flags 1 count 2 compression 10 centroids 2 (2, 1) (1, 1)'::tdigest),
+                                        ('flags 3 count 2 compression 10 centroids 2 (1, 1) (2, 1)'::tdigest)) v(x))),
+    (4, 'tdigest_add, single value',
+        tdigest_add(NULL::tdigest, 1.0, 10)),
+    (5, 'tdigest_add, compacted',
+        tdigest_add('flags 1 count 2 compression 10 centroids 2 (2, 1) (1, 1)', 3.0)),
+    (6, 'tdigest_add, not compacted',
+        tdigest_add('flags 7 count 2 compression 10 centroids 2 (1, 1) (2, 1)', 3.0, NULL, false)),
+    (7, 'tdigest_add (array), compacted',
+        tdigest_add(NULL::tdigest, ARRAY[3.0, 1.0, 2.0], 10)),
+    (8, 'tdigest_add (array), not compacted',
+        tdigest_add(NULL::tdigest, ARRAY[1.0, 2.0, 3.0], 10, false)),
+    (9, 'tdigest_union, compacted',
+        tdigest_union('flags 1 count 2 compression 10 centroids 2 (2, 1) (1, 1)',
+                      'flags 1 count 2 compression 10 centroids 2 (4, 1) (3, 1)')),
+    (10, 'tdigest_union, not compacted',
+        tdigest_union('flags 7 count 2 compression 10 centroids 2 (1, 1) (2, 1)',
+                      'flags 7 count 2 compression 10 centroids 2 (3, 1) (4, 1)', false)),
+    (11, 'tdigest_union, not compacted, first not sorted',
+        tdigest_union('flags 1 count 2 compression 10 centroids 2 (1, 1) (2, 1)',
+                      'flags 7 count 2 compression 10 centroids 2 (3, 1) (4, 1)', false)),
+    (12, 'tdigest_union, not compacted, second not sorted',
+        tdigest_union('flags 7 count 2 compression 10 centroids 2 (1, 1) (2, 1)',
+                      'flags 1 count 2 compression 10 centroids 2 (3, 1) (4, 1)', false)),
+    (13, 'tdigest_union, NULL (returns the other digest)',
+        tdigest_union('flags 3 count 2 compression 10 centroids 2 (1, 1) (2, 1)', NULL)),
+    (14, 'tdigest_union, NULL (returns the other digest)',
+        tdigest_union(NULL, 'flags 1 count 2 compression 10 centroids 2 (2, 1) (1, 1)'))
+  ) AS x(id, descr, d)
+ ORDER BY id;
+                      descr                      | flags 
+-------------------------------------------------+-------
+ aggregate on values                             |     7
+ aggregate on values with counts                 |     7
+ aggregate on digests                            |     7
+ tdigest_add, single value                       |     7
+ tdigest_add, compacted                          |     7
+ tdigest_add, not compacted                      |     1
+ tdigest_add (array), compacted                  |     7
+ tdigest_add (array), not compacted              |     1
+ tdigest_union, compacted                        |     7
+ tdigest_union, not compacted                    |     3
+ tdigest_union, not compacted, first not sorted  |     1
+ tdigest_union, not compacted, second not sorted |     1
+ tdigest_union, NULL (returns the other digest)  |     3
+ tdigest_union, NULL (returns the other digest)  |     1
+(14 rows)
+
+--
+-- The digests for the tests. Digests built by the aggregate are sorted and
+-- compacted, the others are sorted digests with a full buffer, and digests
+-- with a bogus COMPACTED flag (not compacted, or with the centroids sharing a
+-- mean in an order the compaction would not produce). Each digest also comes
+-- with flags 1 (d1).
+--
+CREATE TABLE tdigest_sorted_digests (id int, descr text, d tdigest, d1 tdigest);
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 1, 'random values, compression 10', tdigest(1000 * v, 10)
+  FROM prng(5000, seed => 1) s(v);
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 2, 'random values, compression 100', tdigest(1000 * v, 100)
+  FROM prng(5000, seed => 2) s(v);
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 3, 'random values, compression 1000', tdigest(1000 * v, 1000)
+  FROM prng(5000, seed => 3) s(v);
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 4, 'duplicate values, compression 10', tdigest(round(20 * v)::double precision, 10)
+  FROM prng(5000, seed => 4) s(v);
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 5, 'duplicate values, compression 500', tdigest(round(20 * v)::double precision, 500)
+  FROM prng(5000, seed => 5) s(v);
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 6, 'normal distribution, compression 100', tdigest(1000 * v, 100)
+  FROM random_normal(20000, seed => 6) s(v);
+INSERT INTO tdigest_sorted_digests (id, descr, d) VALUES
+    (7, 'single centroid', 'flags 7 count 5 compression 10 centroids 1 (500, 5)');
+-- full buffer (10 * compression centroids), distinct means
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 7 + c / 10, 'full buffer, compression ' || c,
+       (format('flags 3 count %s compression %s centroids %s ', 10 * c, c, 10 * c) ||
+        (SELECT string_agg(format('(%s, 1)', (i * 37) % 1000), ' ' ORDER BY (i * 37) % 1000)
+           FROM generate_series(1, 10 * c) s(i)))::tdigest
+  FROM unnest(ARRAY[10, 20]) AS c;
+-- full buffer, all centroids with the same mean
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 10, 'full buffer, a single mean',
+       ('flags 3 count 200 compression 10 centroids 100 ' ||
+        (SELECT string_agg('(500, 2)', ' ') FROM generate_series(1, 100)))::tdigest;
+-- full buffer, a group of centroids with the same mean above the median, with
+-- counts in ascending order (the sort puts them in descending order)
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 11, 'full buffer, same means above median',
+       ('flags 3 count 145 compression 10 centroids 100 ' ||
+        (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i) FROM generate_series(1, 90) s(i)) || ' ' ||
+        (SELECT string_agg(format('(950, %s)', i), ' ' ORDER BY i) FROM generate_series(1, 10) s(i)))::tdigest;
+-- full buffer, a group of centroids with the same mean split by the median,
+-- with counts in arbitrary order
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 12, 'full buffer, same means split by median',
+       ('flags 3 count 145 compression 10 centroids 100 ' ||
+        (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i) FROM generate_series(1, 45) s(i)) || ' ' ||
+        (SELECT string_agg(format('(500, %s)', c), ' ' ORDER BY o)
+           FROM unnest(ARRAY[10, 1, 9, 2, 8, 3, 7, 4, 6, 5]) WITH ORDINALITY AS s(c, o)) || ' ' ||
+        (SELECT string_agg(format('(%s, 1)', 900 + i), ' ' ORDER BY i) FROM generate_series(1, 45) s(i)))::tdigest;
+-- bogus COMPACTED flag on a digest that is not compacted, with the largest
+-- buffer allowed for a compacted digest (one centroid less than full)
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 13, 'not compacted, largest buffer',
+       ('flags 7 count 99 compression 10 centroids 99 ' ||
+        (SELECT string_agg(format('(%s, 1)', i * i), ' ' ORDER BY i) FROM generate_series(1, 99) s(i)))::tdigest;
+-- bogus COMPACTED flag on a digest with the same means in an unexpected order
+INSERT INTO tdigest_sorted_digests (id, descr, d) VALUES
+    (14, 'same means in arbitrary order',
+         'flags 7 count 1000 compression 10 centroids 5 (100, 1) (500, 300) (500, 1) (500, 397) (900, 301)');
+-- full buffer, groups of more than 16 centroids with the same mean (those get
+-- sorted in a different way), below and above the median, with counts in
+-- arbitrary order
+INSERT INTO tdigest_sorted_digests (id, descr, d)
+SELECT 15, 'full buffer, large groups in arbitrary order',
+       ('flags 3 count 120 compression 10 centroids 100 ' ||
+        (SELECT string_agg(format('(10, %s)', 2 - i % 2), ' ' ORDER BY i) FROM generate_series(0, 19) s(i)) || ' ' ||
+        (SELECT string_agg(format('(%s, 1)', 99 + i), ' ' ORDER BY i) FROM generate_series(1, 60) s(i)) || ' ' ||
+        (SELECT string_agg(format('(900, %s)', 1 + i % 2), ' ' ORDER BY i) FROM generate_series(0, 19) s(i)))::tdigest;
+-- the same digests, not marked as sorted (d1)
+UPDATE tdigest_sorted_digests SET d1 = tdigest_sorted_set_flags(d, 1);
+-- all the digests are valid (as far as the checks can tell) and sorted
+SELECT id, descr,
+       (d::double precision[])[1] AS flags,
+       tdigest_count(d) AS count,
+       (d::double precision[])[4] AS centroids,
+       tdigest_is_valid(d) AS valid,
+       tdigest_sorted_is_sorted(d) AS sorted
+  FROM tdigest_sorted_digests ORDER BY id;
+ id |                    descr                     | flags | count | centroids | valid | sorted 
+----+----------------------------------------------+-------+-------+-----------+-------+--------
+  1 | random values, compression 10                |     7 |  5000 |        14 | t     | t
+  2 | random values, compression 100               |     7 |  5000 |        48 | t     | t
+  3 | random values, compression 1000              |     7 |  5000 |       272 | t     | t
+  4 | duplicate values, compression 10             |     7 |  5000 |        14 | t     | t
+  5 | duplicate values, compression 500            |     7 |  5000 |       151 | t     | t
+  6 | normal distribution, compression 100         |     7 | 20000 |        55 | t     | t
+  7 | single centroid                              |     7 |     5 |         1 | t     | t
+  8 | full buffer, compression 10                  |     3 |   100 |       100 | t     | t
+  9 | full buffer, compression 20                  |     3 |   200 |       200 | t     | t
+ 10 | full buffer, a single mean                   |     3 |   200 |       100 | t     | t
+ 11 | full buffer, same means above median         |     3 |   145 |       100 | t     | t
+ 12 | full buffer, same means split by median      |     3 |   145 |       100 | t     | t
+ 13 | not compacted, largest buffer                |     7 |    99 |        99 | t     | t
+ 14 | same means in arbitrary order                |     7 |  1000 |         5 | t     | t
+ 15 | full buffer, large groups in arbitrary order |     3 |   120 |       100 | t     | t
+(15 rows)
+
+--
+-- Functions on a single digest. With the SORTED flag we may skip sorting, and
+-- with the COMPACTED flag we skip the compaction. For digests built by the
+-- aggregate that makes no difference (compacting them again would not merge
+-- any centroids). But the results differ for digests with a bogus COMPACTED
+-- flag (13 and 14) - the percentiles are calculated from centroids that would
+-- be merged or reordered by the compaction. Functions modifying the digest
+-- compact (or sort) it again, and so produce the same results.
+--
+SELECT id,
+       tdigest_percentile(d, 0.5) = tdigest_percentile(d1, 0.5) AS percentile,
+       tdigest_percentile(d, ARRAY[0, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 1])
+         = tdigest_percentile(d1, ARRAY[0, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 1]) AS percentiles,
+       tdigest_percentile_of(d, 500) = tdigest_percentile_of(d1, 500) AS percentile_of,
+       tdigest_percentile_of(d, ARRAY[0, 10, 100, 250, 500, 750, 900, 990, 1000])
+         = tdigest_percentile_of(d1, ARRAY[0, 10, 100, 250, 500, 750, 900, 990, 1000]) AS percentiles_of,
+       tdigest_sum(d, 0.1, 0.9) = tdigest_sum(d1, 0.1, 0.9) AS sum,
+       tdigest_avg(d, 0.1, 0.9) = tdigest_avg(d1, 0.1, 0.9) AS avg,
+       tdigest_add(d, 500.5)::bytea = tdigest_add(d1, 500.5)::bytea AS add,
+       tdigest_sorted_multiset(tdigest_add(d, ARRAY[0.5, 500.5], NULL, false))
+         = tdigest_sorted_multiset(tdigest_add(d1, ARRAY[0.5, 500.5], NULL, false)) AS add_uncompacted,
+       (SELECT tdigest(x)::bytea FROM (VALUES (d)) v(x))
+         = (SELECT tdigest(x)::bytea FROM (VALUES (d1)) v(x)) AS aggregate
+  FROM tdigest_sorted_digests ORDER BY id;
+ id | percentile | percentiles | percentile_of | percentiles_of | sum | avg | add | add_uncompacted | aggregate 
+----+------------+-------------+---------------+----------------+-----+-----+-----+-----------------+-----------
+  1 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  2 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  3 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  4 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  5 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  6 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  7 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  8 | t          | t           | t             | t              | t   | t   | t   | t               | t
+  9 | t          | t           | t             | t              | t   | t   | t   | t               | t
+ 10 | t          | t           | t             | t              | t   | t   | t   | t               | t
+ 11 | t          | t           | t             | t              | t   | t   | t   | t               | t
+ 12 | t          | t           | t             | t              | t   | t   | t   | t               | t
+ 13 | f          | f           | f             | f              | t   | t   | t   | t               | t
+ 14 | t          | f           | t             | f              | t   | t   | t   | t               | t
+ 15 | t          | t           | t             | t              | t   | t   | t   | t               | t
+(15 rows)
+
+-- Even with a bogus COMPACTED flag, the results have to be sane. Percentiles
+-- have to be within the range of the data and non-decreasing, and the same
+-- holds for the inverse function (with the range being [0, 1]).
+SELECT id,
+       bool_and(v BETWEEN lo AND hi) AS in_range,
+       bool_and(v >= prev_v) AS monotonic
+  FROM (SELECT id, v, lo, hi, lag(v) OVER (PARTITION BY id ORDER BY p) AS prev_v
+          FROM tdigest_sorted_digests,
+               LATERAL (SELECT min(mean) AS lo, max(mean) AS hi
+                          FROM tdigest_sorted_centroids(d)) r,
+               unnest(ARRAY(SELECT i / 1000.0 FROM generate_series(0, 1000) s(i) ORDER BY i),
+                      tdigest_percentile(d, ARRAY(SELECT i / 1000.0 FROM generate_series(0, 1000) s(i) ORDER BY i)))
+               AS x(p, v)) y
+ GROUP BY id ORDER BY id;
+ id | in_range | monotonic 
+----+----------+-----------
+  1 | t        | t
+  2 | t        | t
+  3 | t        | t
+  4 | t        | t
+  5 | t        | t
+  6 | t        | t
+  7 | t        | t
+  8 | t        | t
+  9 | t        | t
+ 10 | t        | t
+ 11 | t        | t
+ 12 | t        | t
+ 13 | t        | t
+ 14 | t        | t
+ 15 | t        | t
+(15 rows)
+
+SELECT id,
+       bool_and(r BETWEEN 0 AND 1) AS in_range,
+       bool_and(r >= prev_r) AS monotonic
+  FROM (SELECT id, r, lag(r) OVER (PARTITION BY id ORDER BY v) AS prev_r
+          FROM tdigest_sorted_digests,
+               unnest(ARRAY(SELECT i FROM generate_series(-10, 10010, 5) s(i) ORDER BY i),
+                      tdigest_percentile_of(d, ARRAY(SELECT i FROM generate_series(-10, 10010, 5) s(i) ORDER BY i)))
+               AS x(v, r)) y
+ GROUP BY id ORDER BY id;
+ id | in_range | monotonic 
+----+----------+-----------
+  1 | t        | t
+  2 | t        | t
+  3 | t        | t
+  4 | t        | t
+  5 | t        | t
+  6 | t        | t
+  7 | t        | t
+  8 | t        | t
+  9 | t        | t
+ 10 | t        | t
+ 11 | t        | t
+ 12 | t        | t
+ 13 | t        | t
+ 14 | t        | t
+ 15 | t        | t
+(15 rows)
+
+-- An example of how a bogus COMPACTED flag affects the results. With flags 1
+-- or 3 the centroids get sorted (and compacted) first, which puts the larger
+-- centroid with the same mean first. With flags 7 we trust the flag and use
+-- the centroids as they are.
+SELECT f, tdigest_percentile(d, ARRAY[0.25, 0.5, 0.75]) AS percentiles,
+       tdigest_percentile_of(d, ARRAY[25, 50, 75]) AS ranks
+  FROM (SELECT f, tdigest_sorted_set_flags('flags 1 count 12 compression 100 centroids 4 (0, 1) (50, 9) (50, 1) (100, 1)', f) AS d
+          FROM unnest(ARRAY[1, 3, 7]) AS f) x
+ ORDER BY f;
+ f | percentiles |             ranks             
+---+-------------+-------------------------------
+ 1 | {50,50,75}  | {0.0833333333333333,0.5,0.75}
+ 3 | {50,50,75}  | {0.0833333333333333,0.5,0.75}
+ 7 | {25,50,50}  | {0.25,0.5,0.916666666666667}
+(3 rows)
+
+DROP TABLE tdigest_sorted_digests;
+DROP FUNCTION tdigest_sorted_multiset(tdigest);
+DROP FUNCTION tdigest_sorted_is_sorted(tdigest);
+DROP FUNCTION tdigest_sorted_centroids(tdigest);
+DROP FUNCTION tdigest_sorted_set_flags(tdigest, int);
