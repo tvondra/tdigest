@@ -572,6 +572,50 @@ SELECT tdigest_percentile(d, ARRAY[0, 1]) AS min_max,
           FROM tdigest_sorted_extreme) x;
 
 --
+-- means one ulp apart
+--
+-- Merging two centroids with different means calculates the weighted mean,
+-- which may round to a value just outside the range of the two means. The
+-- compaction clamps the mean to the range, so that the centroids remain
+-- sorted even if the merged centroid is next to a centroid with the same mean
+-- as one of the merged ones. The mergesort relies on that, because it does
+-- not sort the centroids after compacting a full buffer.
+--
+-- The first compaction walks the centroids from the end, the next one from
+-- the start, and so on. The first centroid of the walk is never merged, but
+-- the next one may get merged with the one after it. So digest 1 ends with
+-- two centroids with the same mean, preceded by a centroid one ulp away, and
+-- digest 2 starts with such centroids. The counts make the weighted means
+-- round outside the range. Merging digest 2 into digest 1 compacts the buffer
+-- twice - first digest 1 from the end, then both digests from the start.
+--
+
+CREATE TABLE tdigest_sorted_ulps (id int, d tdigest, d1 tdigest);
+
+INSERT INTO tdigest_sorted_ulps (id, d)
+SELECT 1, ('flags 3 count 97020 compression 10 centroids 100 ' ||
+           string_agg(format('(%s, 1000)', i), ' ' ORDER BY i) ||
+           ' (1000, 2) (1000.0000000000001, 9) (1000.0000000000001, 9)')::tdigest
+  FROM generate_series(4, 100) s(i);
+
+INSERT INTO tdigest_sorted_ulps (id, d)
+SELECT 2, ('flags 3 count 97033 compression 10 centroids 100 ' ||
+           '(3, 16) (3, 16) (3.0000000000000004, 1) ' ||
+           string_agg(format('(%s, 1000)', i), ' ' ORDER BY i))::tdigest
+  FROM generate_series(4, 100) s(i);
+
+UPDATE tdigest_sorted_ulps SET d1 = tdigest_sorted_set_flags(d, 1);
+
+SELECT a.id AS a, b.id AS b,
+       tdigest_sorted_is_sorted(tdigest_union(a.d, b.d, false)) AS sorted,
+       tdigest_sorted_multiset(tdigest_union(a.d, b.d, false))
+         = tdigest_sorted_multiset(tdigest_union(a.d1, b.d1, false)) AS same_centroids,
+       tdigest_sorted_is_sorted(tdigest_union(a.d, b.d)) AS sorted_compacted,
+       tdigest_union(a.d, b.d)::bytea = tdigest_union(a.d1, b.d1)::bytea AS same_compacted
+  FROM tdigest_sorted_ulps a, tdigest_sorted_ulps b
+ ORDER BY a.id, b.id;
+
+--
 -- the total count must not overflow while merging sorted digests
 --
 
@@ -621,6 +665,7 @@ SELECT tdigest(d)::bytea = (SELECT tdigest(d1) FROM tdigest_sorted_large, genera
   FROM tdigest_sorted_large, generate_series(1, 2);
 
 DROP TABLE tdigest_sorted_large;
+DROP TABLE tdigest_sorted_ulps;
 DROP TABLE tdigest_sorted_extreme;
 DROP TABLE tdigest_sorted_groups;
 DROP TABLE tdigest_sorted_digests;
