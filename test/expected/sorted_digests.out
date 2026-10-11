@@ -5,7 +5,8 @@
 -- sorted and compacted (flags 7). That allows skipping some of the work - two
 -- sorted digests are combined using a mergesort (instead of adding centroids
 -- one by one and sorting them later), and a compacted digest does not need to
--- be compacted again before calculating percentiles.
+-- be compacted again before calculating percentiles. The partial aggregate
+-- states (in parallel or partitionwise aggregation) are combined the same way.
 --
 -- The flags are part of the value, and may be supplied by the user. The input
 -- functions check that the centroids of a SORTED digest are sorted by mean,
@@ -318,6 +319,106 @@ SELECT count(*) AS frames,
      15 |          0 |                     0
 (1 row)
 
+--
+-- Partial aggregates get combined the same way - using the mergesort when
+-- both states are sorted, and the slow way otherwise. Parallel queries are
+-- not deterministic (the workers may process different subsets of rows), so
+-- use partitionwise aggregation without parallel workers instead. With one
+-- digest per partition (all the other rows are NULL), the partial states have
+-- the same centroids as the digests, and are combined in the partition order.
+-- So the result has to be the same as for a plain aggregate merging the
+-- digests in the same order. The NULL rows make the partitionwise plan
+-- cheaper than the plain one.
+--
+CREATE TABLE tdigest_sorted_parts (k int, id int, d tdigest, d1 tdigest, d2 tdigest)
+PARTITION BY LIST (k);
+DO $$
+BEGIN
+    FOR k IN 1 .. (SELECT count(*) FROM tdigest_sorted_digests) LOOP
+        EXECUTE format('CREATE TABLE tdigest_sorted_parts_%s PARTITION OF tdigest_sorted_parts FOR VALUES IN (%s)', k, k);
+    END LOOP;
+END;
+$$;
+INSERT INTO tdigest_sorted_parts SELECT id, id, d, d1, d2 FROM tdigest_sorted_digests;
+INSERT INTO tdigest_sorted_parts (k) SELECT id FROM tdigest_sorted_digests, generate_series(1, 1000);
+ANALYZE tdigest_sorted_parts;
+SET enable_partitionwise_aggregate = on;
+SET max_parallel_workers_per_gather = 0;
+-- Run the aggregate partitionwise, and the plain way (an aggregate with ORDER
+-- BY can't be split into partial aggregates), and compare the results. Count
+-- the partial aggregates in the plan, to check the aggregation really was
+-- partitionwise.
+CREATE FUNCTION tdigest_sorted_parts_agg(expr text, OUT partial_aggs int, OUT matches boolean)
+LANGUAGE plpgsql AS $$
+DECLARE
+    line text;
+    a tdigest;
+    b tdigest;
+BEGIN
+    partial_aggs := 0;
+    FOR line IN EXECUTE format('EXPLAIN (COSTS OFF) SELECT tdigest(%s) FROM tdigest_sorted_parts', expr) LOOP
+        IF line LIKE '%Partial Aggregate%' THEN
+            partial_aggs := partial_aggs + 1;
+        END IF;
+    END LOOP;
+    EXECUTE format('SELECT tdigest(%s) FROM tdigest_sorted_parts', expr) INTO a;
+    EXECUTE format('SELECT tdigest(%s ORDER BY k) FROM tdigest_sorted_parts', expr) INTO b;
+    matches := (a::bytea = b::bytea);
+END;
+$$;
+-- The digests (sorted), the same digests not marked as sorted, not sorted,
+-- and sorted and unsorted digests mixed in various ways. The first partial
+-- state gets copied, and the following ones get merged into it, so try both
+-- sorted and unsorted states in both roles (including states with a full
+-- buffer, compacted before merging the next state).
+CREATE TABLE tdigest_sorted_exprs (id int, expr text);
+INSERT INTO tdigest_sorted_exprs VALUES
+    (1, 'd'),
+    (2, 'd1'),
+    (3, 'd2'),
+    (4, 'CASE WHEN id <= 8 THEN d ELSE d2 END'),
+    (5, 'CASE WHEN id <= 8 THEN d2 ELSE d END'),
+    (6, 'CASE WHEN id % 2 = 1 THEN d ELSE d2 END'),
+    (7, 'CASE WHEN id % 2 = 0 THEN d ELSE d2 END');
+SELECT id, expr, partial_aggs, matches
+  FROM tdigest_sorted_exprs, LATERAL tdigest_sorted_parts_agg(expr)
+ ORDER BY id;
+ id |                  expr                   | partial_aggs | matches 
+----+-----------------------------------------+--------------+---------
+  1 | d                                       |           15 | t
+  2 | d1                                      |           15 | t
+  3 | d2                                      |           15 | t
+  4 | CASE WHEN id <= 8 THEN d ELSE d2 END    |           15 | t
+  5 | CASE WHEN id <= 8 THEN d2 ELSE d END    |           15 | t
+  6 | CASE WHEN id % 2 = 1 THEN d ELSE d2 END |           15 | t
+  7 | CASE WHEN id % 2 = 0 THEN d ELSE d2 END |           15 | t
+(7 rows)
+
+-- the same with partitions in the opposite order
+TRUNCATE tdigest_sorted_parts;
+INSERT INTO tdigest_sorted_parts
+SELECT (SELECT count(*) + 1 FROM tdigest_sorted_digests) - id, id, d, d1, d2 FROM tdigest_sorted_digests;
+INSERT INTO tdigest_sorted_parts (k) SELECT id FROM tdigest_sorted_digests, generate_series(1, 1000);
+ANALYZE tdigest_sorted_parts;
+SELECT id, expr, partial_aggs, matches
+  FROM tdigest_sorted_exprs, LATERAL tdigest_sorted_parts_agg(expr)
+ ORDER BY id;
+ id |                  expr                   | partial_aggs | matches 
+----+-----------------------------------------+--------------+---------
+  1 | d                                       |           15 | t
+  2 | d1                                      |           15 | t
+  3 | d2                                      |           15 | t
+  4 | CASE WHEN id <= 8 THEN d ELSE d2 END    |           15 | t
+  5 | CASE WHEN id <= 8 THEN d2 ELSE d END    |           15 | t
+  6 | CASE WHEN id % 2 = 1 THEN d ELSE d2 END |           15 | t
+  7 | CASE WHEN id % 2 = 0 THEN d ELSE d2 END |           15 | t
+(7 rows)
+
+RESET enable_partitionwise_aggregate;
+RESET max_parallel_workers_per_gather;
+DROP FUNCTION tdigest_sorted_parts_agg(text);
+DROP TABLE tdigest_sorted_exprs;
+DROP TABLE tdigest_sorted_parts;
 --
 -- Functions on a single digest. With the SORTED flag we may skip sorting, and
 -- with the COMPACTED flag we skip the compaction. For digests built by the
