@@ -63,6 +63,23 @@ SELECT 'flags 0 count 3 compression 10 centroids 1 (-1e-400, 3)'::tdigest;
 -- unknown flags
 SELECT 'flags 8 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
 
+-- known flags combined with an unknown one
+SELECT 'flags 15 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+
+-- the SORTED (2) and COMPACTED (4) flags require the STORES_MEAN (1) flag,
+-- and COMPACTED requires SORTED
+SELECT 'flags 2 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 4 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 6 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 5 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+
+-- all valid combinations of flags (no flags means the legacy format, storing
+-- sums instead of means, which gets converted to the current one)
+SELECT 'flags 0 count 3 compression 10 centroids 1 (3, 3)'::tdigest;
+SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 3 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+SELECT 'flags 7 count 3 compression 10 centroids 1 (1, 3)'::tdigest;
+
 -- compression out of the supported range
 SELECT 'flags 1 count 3 compression 9 centroids 1 (1, 3)'::tdigest;
 SELECT 'flags 1 count 3 compression 10001 centroids 1 (1, 3)'::tdigest;
@@ -89,6 +106,12 @@ SELECT tdigest_count(('flags 1 count 100 compression 10 centroids 100 ' ||
 SELECT 'flags 1 count 3 compression 10 centroids 1 (NaN, 3)'::tdigest;
 SELECT 'flags 1 count 3 compression 10 centroids 1 (Infinity, 3)'::tdigest;
 
+-- the same in a sorted digest, where the check of mean order would not notice
+-- (all comparisons with NaN are false, and the infinities are in order)
+SELECT 'flags 3 count 3 compression 10 centroids 3 (1, 1) (NaN, 1) (2, 1)'::tdigest;
+SELECT 'flags 3 count 3 compression 10 centroids 3 (-Infinity, 1) (1, 1) (2, 1)'::tdigest;
+SELECT 'flags 7 count 3 compression 10 centroids 3 (1, 1) (2, 1) (Infinity, 1)'::tdigest;
+
 -- non-positive centroid count
 SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 0)'::tdigest;
 
@@ -97,6 +120,21 @@ SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 4)'::tdigest;
 
 -- centroids not sorted by mean
 SELECT 'flags 1 count 3 compression 10 centroids 2 (2, 1) (1, 2)'::tdigest;
+
+-- that is not allowed for digests marked as sorted (or compacted), no matter
+-- where the out-of-order pair is
+SELECT 'flags 3 count 3 compression 10 centroids 2 (2, 1) (1, 2)'::tdigest;
+SELECT 'flags 7 count 3 compression 10 centroids 2 (2, 1) (1, 2)'::tdigest;
+SELECT 'flags 3 count 4 compression 10 centroids 3 (1, 1) (3, 1) (2, 2)'::tdigest;
+SELECT 'flags 7 count 4 compression 10 centroids 3 (1, 1) (3, 1) (2, 2)'::tdigest;
+SELECT 'flags 3 count 5 compression 10 centroids 4 (-1, 1) (-2, 1) (1, 1) (2, 2)'::tdigest;
+
+-- centroids with the same mean may be in any order (the order by count is not
+-- checked), and that includes zeros with a different sign
+SELECT 'flags 3 count 6 compression 10 centroids 3 (1, 3) (1, 1) (1, 2)'::tdigest;
+SELECT 'flags 7 count 7 compression 10 centroids 4 (0, 1) (1, 2) (1, 3) (1, 1)'::tdigest;
+SELECT 'flags 7 count 3 compression 10 centroids 2 (0, 1) (-0, 2)'::tdigest;
+SELECT 'flags 7 count 3 compression 10 centroids 2 (-0, 1) (0, 2)'::tdigest;
 
 -- centroid counts overflowing the total count
 SELECT 'flags 1 count 9223372036854775807 compression 10 centroids 2 (1, 9223372036854775807) (2, 9223372036854775807)'::tdigest;
@@ -113,3 +151,35 @@ SELECT 'flags 1 count 3 compression 10 centroids 3 (1, 1)'::tdigest;
 
 -- centroid counts not adding up to the total count
 SELECT 'flags 1 count 3 compression 10 centroids 1 (1, 1)'::tdigest;
+
+-- that is checked before the order of centroids in a sorted digest
+SELECT 'flags 3 count 4 compression 10 centroids 2 (2, 1) (1, 2)'::tdigest;
+
+-- a compacted digest can't have a full buffer (compaction always frees some
+-- space, or fails), but a sorted one can, and a compacted one can have all
+-- centroids but one
+SELECT ('flags 7 count 100 compression 10 centroids 100 ' ||
+        (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+           FROM generate_series(1, 100) AS s(i)))::tdigest;
+
+SELECT tdigest_count(('flags 3 count 100 compression 10 centroids 100 ' ||
+                      (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                         FROM generate_series(1, 100) AS s(i)))::tdigest);
+
+SELECT tdigest_count(('flags 7 count 99 compression 10 centroids 99 ' ||
+                      (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                         FROM generate_series(1, 99) AS s(i)))::tdigest);
+
+-- the same for the maximum compression (the full buffer is checked after
+-- parsing all the centroids)
+SELECT ('flags 7 count 100000 compression 10000 centroids 100000 ' ||
+        (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+           FROM generate_series(1, 100000) AS s(i)))::tdigest;
+
+SELECT tdigest_count(('flags 3 count 100000 compression 10000 centroids 100000 ' ||
+                      (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                         FROM generate_series(1, 100000) AS s(i)))::tdigest);
+
+SELECT tdigest_count(('flags 7 count 99999 compression 10000 centroids 99999 ' ||
+                      (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                         FROM generate_series(1, 99999) AS s(i)))::tdigest);
