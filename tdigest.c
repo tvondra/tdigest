@@ -2189,8 +2189,109 @@ tdigest_merge_centroids(tdigest_aggstate_t *state, int ncentroids, centroid_t *c
 	AssertCheckTDigestAggState(state);
 }
 
+/*
+ * Should the sorted centroids be merged into the aggregate state using a
+ * merge sort (keeping the state sorted), or simply appended to it?
+ *
+ * Appending M centroids costs O(M), and the state then gets sorted by the
+ * next compaction. That happens roughly once per BUFFER_SIZE centroids, so
+ * the sort adds O(log(BUFFER_SIZE)) per centroid.
+ *
+ * The merge rewrites all the centroids in the state. This is a per-digest
+ * cost, so with tiny digests this can be pretty expensive. E.g. for the
+ * tdigest(tdigest) aggregate rolling up many small digests would rewrite
+ * about BUFFER_SIZE/2 on average, so per-digest cost is O(BUFFER_SIZE).
+ * Therefore, for small digests we fallback to appending centroids and then
+ * performing a full sort.
+ *
+ * At which point should we flip between those strategies?
+ *
+ * Let's assume the digests are equally sized, with M centroids. B is the
+ * buffer size, and N is the number of centroids in the state.
+ *
+ * Appending: Copying the centroids costs O(M), but each centroid also pays
+ * a fair share of the full sort, which costs O(B * log2(B)) for the full
+ * buffer, i.e. O(log2(B)) per centroid. So combined the appending + full
+ * sort strategy costs O(M) + O(M * log2(B)).
+ *
+ * Mergesort: This rewrites all the centroids from both inputs, which costs
+ * O(M + N). Between compactions, N grows from the size of a compacted
+ * digest (a few percent of B) to B, so it's about B/2 on average, and the
+ * merge costs O(M + B/2). There is no full sort needed.
+ *
+ * The O(M) costs of copying the M centroids roughly cancel out, so the
+ * merge sort is cheaper when O(M * log2(B)) >= O(B/2). Let constants
+ * s and m be the costs per centroid of one pass of the sort, and of the
+ * merge sort. Then we get
+ *
+ *     (2 * s/m) * M * log2(B) >= B
+ *
+ * Experiments with random values put (2 * s/m) at about 4. The value is
+ * higher for unique data, lower with duplicates. It also depends on the
+ * hardware used, etc.
+ *
+ * That gives us the condition
+ *
+ *     4 * M * log2(BUFFER_SIZE) >= BUFFER_SIZE
+ *
+ * where M is the size of the digest. This means we require at least 26
+ * centroids for compression 100, 189 centroids for compression 1000, and
+ * 1506 centroids for compression 10000. The actual break-even point depends
+ * on the hardware etc.
+ *
+ * Smaller inputs are appended, and so are all the inputs after that,
+ * because the state is no longer sorted (the compaction sorts it, but it
+ * happens in tdigest_add_centroid(), which then always appends another
+ * centroid right away). So a small input disables the merge sort for the
+ * rest of the aggregation, which then costs the same as appending all the
+ * inputs.
+ *
+ * XXX This is a bit unfortunate, as a single small input disables the merge
+ * sort for the rest of the aggregate. Maybe the aggregate could track the
+ * average size of the digests, and make some decisions based on that,
+ * instead of looking at just the one input.
+ *
+ * Outside aggregates (i.e. in tdigest_union, merging just two digests), the
+ * merge sort is used whenever possible, no matter how small the input is.
+ * Building the state from the first digest, and the result from the state,
+ * costs O(N + M) anyway. And the merge sort keeps the result sorted, even
+ * if it does not get compacted. The real problem is aggregates that get to
+ * process many digests, but non-aggregate places usually process just two
+ * inputs. So the risk of doing many full sorts is not there.
+ *
+ * Both approaches add the same centroids to the buffer, and compact it at
+ * the same points (whenever it gets full, before adding more centroids).
+ * The compaction does not depend on the order of the centroids, as long
+ * as they are sorted by mean (see tdigest_merge_centroids). So the choice
+ * does not change the results, except for the order of centroids in states
+ * that are not compacted (i.e. partial aggregates). That order may still
+ * affect the results of merging such a state into another one later, just
+ * like the order of the input values does.
+ */
+static bool
+tdigest_use_mergesort(tdigest_aggstate_t *state, int ncentroids, bool aggregate)
+{
+	double	buffer_size = BUFFER_SIZE(state->compression);
+
+	/* the state has to be sorted */
+	if (state->nsorted != state->ncentroids)
+		return false;
+
+	/* outside aggregates, the size of the input does not matter */
+	if (!aggregate)
+		return true;
+
+	/* and the input must not be too small, compared to the buffer */
+	return (4.0 * ncentroids * log2(buffer_size) >= buffer_size);
+}
+
+/*
+ * Merge a digest into the aggregate state. The "aggregate" flag says if the
+ * state accumulates inputs of an aggregate, see tdigest_use_mergesort().
+ */
 static void
-tdigest_merge_digest(tdigest_aggstate_t *state, tdigest_t *digest)
+tdigest_merge_digest(tdigest_aggstate_t *state, tdigest_t *digest,
+					 bool aggregate)
 {
 	/*
 	 * When both inputs are sorted, we can do a merge sort on the centroids,
@@ -2198,14 +2299,17 @@ tdigest_merge_digest(tdigest_aggstate_t *state, tdigest_t *digest)
 	 * to sort it (by mean). We expect most digests to be sorted, except for
 	 * those produced by incremental API etc.
 	 *
-	 * When the mergesort can't be used, we simply add the centroids one by
-	 * one, and then do a full sort during compaction.
+	 * In aggregates we use mergesort only when the digest is not too small,
+	 * see tdigest_use_mergesort() for the justification.
+	 *
+	 * When the mergesort can't be used (or when we choose not to), we simply
+	 * add the centroids one by one, and then do a full sort during compaction.
 	 *
 	 * XXX If only one input is unsorted, maybe we could sort the other
 	 * side and then still do the merge. Not sure.
 	 */
-	if ((state->nsorted == state->ncentroids) &&
-		((digest->flags & TDIGEST_SORTED) != 0))
+	if (((digest->flags & TDIGEST_SORTED) != 0) &&
+		tdigest_use_mergesort(state, digest->ncentroids, aggregate))
 	{
 		int i = 0;
 
@@ -2262,11 +2366,14 @@ tdigest_merge_state(tdigest_aggstate_t *state, tdigest_aggstate_t *src)
 	 * which keeps the aggstate sorted, so that the compaction does not need
 	 * to sort it (by mean).
 	 *
-	 * When the mergesort can't be used, we simply add the centroids one by
-	 * one, and then do a full sort during compaction.
+	 * We use mergesort only when the source state is not too small, see
+	 * tdigest_use_mergesort() for the justification.
+	 *
+	 * When the mergesort can't be used (or when we choose not to), we simply
+	 * add the centroids one by one, and then do a full sort during compaction.
 	 */
-	if ((state->nsorted == state->ncentroids) &&
-		(src->nsorted == src->ncentroids))
+	if ((src->nsorted == src->ncentroids) &&
+		tdigest_use_mergesort(state, src->ncentroids, true))
 	{
 		int i = 0;
 
@@ -2364,7 +2471,7 @@ tdigest_add_digest(PG_FUNCTION_ARGS)
 	 */
 
 	/* merge digest into the aggstate - mergesort, or centroid by centroid */
-	tdigest_merge_digest(state, digest);
+	tdigest_merge_digest(state, digest, true);
 
 	AssertCheckTDigestAggState(state);
 
@@ -2906,7 +3013,7 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 	AssertCheckTDigest(digest);
 
 	/* merge digest into the aggstate - mergesort, or centroid by centroid */
-	tdigest_merge_digest(state, digest);
+	tdigest_merge_digest(state, digest, false);
 
 	PG_FREE_IF_COPY(digest, 1);
 
