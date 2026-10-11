@@ -420,6 +420,94 @@ DROP FUNCTION tdigest_sorted_parts_agg(text);
 DROP TABLE tdigest_sorted_exprs;
 DROP TABLE tdigest_sorted_parts;
 --
+-- Small digests. In aggregates, the mergesort is used only for digests that
+-- are not too small compared to the buffer of the aggregate state, because it
+-- rewrites all the centroids in the state. Smaller digests get appended, and
+-- the state is then not sorted, so all the following digests get appended
+-- too. The threshold depends on the compression of the state, not of the
+-- digest - with compression 100 (a buffer of 1000 centroids), a digest needs
+-- at least 26 centroids. Partial aggregate states get combined the same way.
+-- Either way, the result has to be the same as when merging the digests the
+-- slow way.
+--
+-- One digest per partition, as before. The first digest has compression 100
+-- and 975 centroids, the other digests have compression 10 and 26 centroids
+-- (a) or 25 centroids (b), so (b) is too small for the state with the first
+-- digest (but not for the partial states, with compression 10). The means
+-- interleave, so that appending a digest really makes the state unsorted.
+-- Merging the second digest (or partial state) fills the buffer, so the
+-- mergesort has to compact the state, and then merge the one remaining
+-- centroid.
+--
+-- A sorted digest with means (start, start + step, ...) and counts 1, 2, 3.
+CREATE FUNCTION tdigest_sorted_small_digest(compression int, ncentroids int, start int, step int)
+RETURNS tdigest LANGUAGE sql AS $$
+    SELECT (format('flags 3 count %s compression %s centroids %s ',
+                   sum(1 + i % 3), compression, ncentroids) ||
+            string_agg(format('(%s, %s)', start + i * step, 1 + i % 3), ' ' ORDER BY i))::tdigest
+      FROM generate_series(0, ncentroids - 1) s(i);
+$$;
+CREATE TABLE tdigest_sorted_small (k int, a tdigest, a1 tdigest, b tdigest, b1 tdigest)
+PARTITION BY LIST (k);
+DO $$
+BEGIN
+    FOR k IN 1 .. 8 LOOP
+        EXECUTE format('CREATE TABLE tdigest_sorted_small_%s PARTITION OF tdigest_sorted_small FOR VALUES IN (%s)', k, k);
+    END LOOP;
+END;
+$$;
+INSERT INTO tdigest_sorted_small
+SELECT k, a, tdigest_sorted_set_flags(a, 1), b, tdigest_sorted_set_flags(b, 1)
+  FROM (SELECT k,
+               CASE WHEN k = 1 THEN tdigest_sorted_small_digest(100, 975, 0, 8)
+                    ELSE tdigest_sorted_small_digest(10, 26, k - 1, 8) END AS a,
+               CASE WHEN k = 1 THEN tdigest_sorted_small_digest(100, 975, 0, 8)
+                    ELSE tdigest_sorted_small_digest(10, 25, k - 1, 8) END AS b
+          FROM generate_series(1, 8) k) x;
+INSERT INTO tdigest_sorted_small (k) SELECT k FROM generate_series(1, 8) k, generate_series(1, 1000);
+ANALYZE tdigest_sorted_small;
+SET enable_partitionwise_aggregate = on;
+SET max_parallel_workers_per_gather = 0;
+-- Run the aggregate partitionwise and the plain way, and compare the results
+-- with the plain aggregate on the digests with flags 1. Count the partial
+-- aggregates in the plan, as before.
+CREATE FUNCTION tdigest_sorted_small_agg(col text, OUT partial_aggs int,
+                                         OUT partitionwise boolean, OUT plain boolean)
+LANGUAGE plpgsql AS $$
+DECLARE
+    line text;
+    p tdigest;
+    q tdigest;
+    r tdigest;
+BEGIN
+    partial_aggs := 0;
+    FOR line IN EXECUTE format('EXPLAIN (COSTS OFF) SELECT tdigest(%I) FROM tdigest_sorted_small', col) LOOP
+        IF line LIKE '%Partial Aggregate%' THEN
+            partial_aggs := partial_aggs + 1;
+        END IF;
+    END LOOP;
+    EXECUTE format('SELECT tdigest(%I) FROM tdigest_sorted_small', col) INTO p;
+    EXECUTE format('SELECT tdigest(%I ORDER BY k) FROM tdigest_sorted_small', col) INTO q;
+    EXECUTE format('SELECT tdigest(%I ORDER BY k) FROM tdigest_sorted_small', col || '1') INTO r;
+    partitionwise := (p::bytea = r::bytea);
+    plain := (q::bytea = r::bytea);
+END;
+$$;
+SELECT col, partial_aggs, partitionwise, plain
+  FROM (VALUES ('a'), ('b')) v(col), LATERAL tdigest_sorted_small_agg(col)
+ ORDER BY col;
+ col | partial_aggs | partitionwise | plain 
+-----+--------------+---------------+-------
+ a   |            8 | t             | t
+ b   |            8 | t             | t
+(2 rows)
+
+RESET enable_partitionwise_aggregate;
+RESET max_parallel_workers_per_gather;
+DROP FUNCTION tdigest_sorted_small_agg(text);
+DROP TABLE tdigest_sorted_small;
+DROP FUNCTION tdigest_sorted_small_digest(int, int, int, int);
+--
 -- Functions on a single digest. With the SORTED flag we may skip sorting, and
 -- with the COMPACTED flag we skip the compaction. For digests built by the
 -- aggregate that makes no difference (compacting them again would not merge
