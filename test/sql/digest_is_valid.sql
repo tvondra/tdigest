@@ -71,6 +71,28 @@ SELECT tdigest_is_valid('flags 0 count 3 compression 10 centroids 2 (1, 1) (4, 2
 -- centroids not sorted by mean (produced by the incremental API)
 SELECT tdigest_is_valid('flags 1 count 3 compression 10 centroids 2 (2, 2) (1, 1)'::tdigest);
 
+-- digests marked as sorted (and compacted)
+SELECT tdigest_is_valid('flags 3 count 3 compression 10 centroids 2 (1, 1) (2, 2)'::tdigest);
+SELECT tdigest_is_valid('flags 7 count 3 compression 10 centroids 2 (1, 1) (2, 2)'::tdigest);
+
+-- centroids with the same mean may be in any order (zeros with a different
+-- sign are equal too)
+SELECT tdigest_is_valid((be_int4(7)
+                      || be_int8(7::bigint)
+                      || be_int4(10)
+                      || be_int4(4)
+                      || be_float8(0) || be_int8(1::bigint)
+                      || be_float8(1) || be_int8(2::bigint)
+                      || be_float8(1) || be_int8(3::bigint)
+                      || be_float8(1) || be_int8(1::bigint))::tdigest);
+
+SELECT tdigest_is_valid((be_int4(7)
+                      || be_int8(3::bigint)
+                      || be_int4(10)
+                      || be_int4(2)
+                      || be_float8(0) || be_int8(1::bigint)
+                      || be_float8('-0') || be_int8(2::bigint))::tdigest);
+
 -- the extreme compression values
 SELECT tdigest_is_valid('flags 1 count 1 compression 10 centroids 1 (1, 1)'::tdigest);
 SELECT tdigest_is_valid('flags 1 count 1 compression 10000 centroids 1 (1, 1)'::tdigest);
@@ -79,6 +101,16 @@ SELECT tdigest_is_valid('flags 1 count 1 compression 10000 centroids 1 (1, 1)'::
 SELECT tdigest_is_valid(('flags 1 count 100 compression 10 centroids 100 ' ||
                          (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
                             FROM generate_series(1, 100) AS s(i)))::tdigest);
+
+-- the same for a sorted digest, while a compacted one may have all centroids
+-- but one
+SELECT tdigest_is_valid(('flags 3 count 100 compression 10 centroids 100 ' ||
+                         (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                            FROM generate_series(1, 100) AS s(i)))::tdigest);
+
+SELECT tdigest_is_valid(('flags 7 count 99 compression 10 centroids 99 ' ||
+                         (SELECT string_agg(format('(%s, 1)', i), ' ' ORDER BY i)
+                            FROM generate_series(1, 99) AS s(i)))::tdigest);
 
 -- digests built by the extension itself
 SELECT tdigest_is_valid(tdigest(i::double precision, 10)) FROM generate_series(1, 1000) AS s(i);
@@ -93,6 +125,32 @@ SELECT tdigest_is_valid(tdigest_union(tdigest_add(NULL::tdigest, 1.0, 10),
 
 -- unknown flags
 SELECT tdigest_is_valid((be_int4(8)
+                      || be_int8(1::bigint)
+                      || be_int4(10)
+                      || be_int4(1)
+                      || be_float8(1) || be_int8(1::bigint))::tdigest);
+
+-- the SORTED (2) and COMPACTED (4) flags require the STORES_MEAN (1) flag
+SELECT tdigest_is_valid((be_int4(2)
+                      || be_int8(1::bigint)
+                      || be_int4(10)
+                      || be_int4(1)
+                      || be_float8(1) || be_int8(1::bigint))::tdigest);
+
+SELECT tdigest_is_valid((be_int4(4)
+                      || be_int8(1::bigint)
+                      || be_int4(10)
+                      || be_int4(1)
+                      || be_float8(1) || be_int8(1::bigint))::tdigest);
+
+SELECT tdigest_is_valid((be_int4(6)
+                      || be_int8(1::bigint)
+                      || be_int4(10)
+                      || be_int4(1)
+                      || be_float8(1) || be_int8(1::bigint))::tdigest);
+
+-- and COMPACTED requires SORTED
+SELECT tdigest_is_valid((be_int4(5)
                       || be_int8(1::bigint)
                       || be_int4(10)
                       || be_int4(1)
@@ -201,6 +259,24 @@ SELECT tdigest_is_valid((be_int4(1)
                       || be_float8(1) || be_int8(1::bigint)
                       || be_float8('-Infinity') || be_int8(2::bigint))::tdigest);
 
+-- the same in a sorted digest, where the check of mean order would not notice
+-- (all comparisons with NaN are false, and the infinities are in order)
+SELECT tdigest_is_valid((be_int4(3)
+                      || be_int8(3::bigint)
+                      || be_int4(10)
+                      || be_int4(3)
+                      || be_float8(1) || be_int8(1::bigint)
+                      || be_float8('NaN') || be_int8(1::bigint)
+                      || be_float8(2) || be_int8(1::bigint))::tdigest);
+
+SELECT tdigest_is_valid((be_int4(7)
+                      || be_int8(3::bigint)
+                      || be_int4(10)
+                      || be_int4(3)
+                      || be_float8(1) || be_int8(1::bigint)
+                      || be_float8(2) || be_int8(1::bigint)
+                      || be_float8('Infinity') || be_int8(1::bigint))::tdigest);
+
 -- non-positive centroid count
 SELECT tdigest_is_valid((be_int4(1)
                       || be_int8(1::bigint)
@@ -255,6 +331,30 @@ SELECT tdigest_is_valid((be_int4(1)
                       || be_int4(2)
                       || be_float8(1) || be_int8(1::bigint)
                       || be_float8(2) || be_int8(3::bigint))::tdigest);
+
+-- centroids not sorted by mean, in digests marked as sorted
+SELECT tdigest_is_valid((be_int4(3)
+                      || be_int8(3::bigint)
+                      || be_int4(10)
+                      || be_int4(2)
+                      || be_float8(2) || be_int8(2::bigint)
+                      || be_float8(1) || be_int8(1::bigint))::tdigest);
+
+SELECT tdigest_is_valid((be_int4(7)
+                      || be_int8(4::bigint)
+                      || be_int4(10)
+                      || be_int4(3)
+                      || be_float8(1) || be_int8(1::bigint)
+                      || be_float8(3) || be_int8(1::bigint)
+                      || be_float8(2) || be_int8(2::bigint))::tdigest);
+
+-- a compacted digest can't have a full buffer
+SELECT tdigest_is_valid((be_int4(7)
+                      || be_int8(100::bigint)
+                      || be_int4(10)
+                      || be_int4(100)
+                      || (SELECT string_agg(be_float8(i) || be_int8(1::bigint), ''::bytea ORDER BY i)
+                            FROM generate_series(1, 100) AS s(i)))::tdigest);
 
 --
 -- the checks have to work on values read back from a table too (which may
