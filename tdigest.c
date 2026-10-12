@@ -96,7 +96,7 @@ typedef struct tdigest_aggstate_t {
 	centroid_t *centroids;		/* centroids for the digest */
 } tdigest_aggstate_t;
 
-static int  centroid_cmp(const void *a, const void *b);
+static int  centroid_mean_cmp(const void *a, const void *b);
 static int  centroid_count_cmp(const void *a, const void *b);
 
 /*
@@ -454,18 +454,19 @@ rebalance_centroids(centroid_t *centroids, int ncentroids,
 
 
 /*
- * Sort an array of centroids by mean, and centroids sharing a mean by count.
+ * Sort an array of centroids by mean. The centroids sharing a mean end up in
+ * arbitrary order (the sort is not stable).
  *
- * This does not rebalance the centroids sharing a mean (i.e. it does not
- * reverse the order of those above the median). tdigest_compact_sorted()
- * does that, see tdigest_rebalance_centroids().
+ * This neither sorts the centroids sharing a mean by count, nor rebalances
+ * them (i.e. it does not reverse the order of those above the median).
+ * tdigest_compact_sorted() does that, see tdigest_rebalance_centroids().
  */
 static void
 tdigest_sort_centroids(centroid_t *centroids, int ncentroids)
 {
 	pg_qsort(centroids,
 			 ncentroids,
-			 sizeof(centroid_t), centroid_cmp);
+			 sizeof(centroid_t), centroid_mean_cmp);
 }
 
 static void
@@ -611,11 +612,6 @@ tdigest_sort(tdigest_aggstate_t *state)
  * The centroids sharing a mean may be in any order (e.g. after a merge sort,
  * see tdigest_merge_centroids). They get rebalanced first, so the result is
  * the same as if the state was fully sorted by tdigest_sort() first.
- *
- * XXX Does it actually matter that tdigest_sort() sorts by (mean, count)? We
- * still rebalance, and that does sort the small groups again. Maybe we could
- * leverage that somehow (and skip the per-group sort), or just stop sorting
- * by count in centroid_cmp.
  */
 static void
 tdigest_compact_sorted(tdigest_aggstate_t *state)
@@ -3029,14 +3025,12 @@ tdigest_union_double_increment(PG_FUNCTION_ARGS)
 /*
  * Comparator, ordering the centroids by mean value.
  *
- * When the mean is the same, we try ordering the centroids by count.
- *
- * In principle, centroids with the same mean represent the same value,
- * but we still need to care about the count to allow rebalancing the
- * centroids later.
+ * Centroids sharing a mean compare as equal, so they may end up in arbitrary
+ * order. The compaction sorts each such group by count and rebalances it
+ * before walking the centroids, see tdigest_rebalance_centroids().
  */
 static int
-centroid_cmp(const void *a, const void *b)
+centroid_mean_cmp(const void *a, const void *b)
 {
 	double	ma, mb;
 
@@ -3049,11 +3043,6 @@ centroid_cmp(const void *a, const void *b)
 	if (ma < mb)
 		return -1;
 	else if (ma > mb)
-		return 1;
-
-	if (ca->count < cb->count)
-		return -1;
-	else if (ca->count > cb->count)
 		return 1;
 
 	return 0;
