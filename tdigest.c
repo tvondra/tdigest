@@ -3565,19 +3565,37 @@ tdigest_trimmed_agg(centroid_t *centroids, int ncentroids,
 	/* now walk just the centroids in the range, and calculate mean / sum */
 	count_done = count_first;
 
-	for (i = first; i <= last; i++)
+	/*
+	 * process centroids in the low/high range
+	 *
+	 * If there's a group of centroids sharing a mean, process them as a single
+	 * term, to minimize the impact of rounding errors.
+	 */
+	i = first;
+	while (i <= last)
 	{
-		int64	count_add = tdigest_trimmed_count(&centroids[i], count_done,
-												  count_low, count_high);
+		/* count in this group */
+		double	group_mean = centroids[i].mean;
+		int64	count_add = 0;
 
 		CHECK_FOR_INTERRUPTS();
 
-		/* consider the whole centroid processed */
-		count_done += centroids[i].count;
+		/* add up all centroids in the same-mean group */
+		while ((i <= last) && (centroids[i].mean == group_mean))
+		{
+			int64 c = tdigest_trimmed_count(&centroids[i], count_done,
+										    count_low, count_high);
+
+			/* consider the whole centroid processed */
+			count_done += centroids[i].count;
+			count_add += c;
+
+			i++;
+		}
 
 		/* increment the mean / sum */
-		mean += centroids[i].mean * (count_add / (double) count_total);
-		sum += centroids[i].mean * count_add;
+		mean += group_mean * (count_add / (double) count_total);
+		sum += group_mean * count_add;
 
 		Assert(!isnan(mean));
 	}
