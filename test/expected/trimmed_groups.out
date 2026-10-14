@@ -1,0 +1,79 @@
+-- The trimmed aggregates add up a same-mean group's counts as int64 before
+-- converting to double precision. Their results must not depend on how the
+-- group is split between centroids, or on the order of those centroids.
+-- Compare split groups with a single centroid per mean, including ranges
+-- cutting through a group and counts too large for double precision to add
+-- exactly. Both sorted and unflagged digests must give exactly the same result.
+\set VERBOSITY terse
+SET extra_float_digits = 0;
+CREATE TABLE tdigest_trimmed_groups (id int, split tdigest, merged tdigest);
+INSERT INTO tdigest_trimmed_groups VALUES
+    (1, 'flags 3 count 16 compression 10 centroids 5 (0, 1) (0.1, 1) (0.1, 4) (0.1, 2) (1, 8)',
+        'flags 3 count 16 compression 10 centroids 3 (0, 1) (0.1, 7) (1, 8)'),
+    (2, 'flags 3 count 9007199254740994 compression 10 centroids 3 (1, 9007199254740992) (1, 1) (1, 1)',
+        'flags 3 count 9007199254740994 compression 10 centroids 1 (1, 9007199254740994)'),
+    (3, 'flags 3 count 9007199254740998 compression 10 centroids 5 (-1, 2) (1, 9007199254740992) (1, 1) (1, 1) (3, 2)',
+        'flags 3 count 9007199254740998 compression 10 centroids 3 (-1, 2) (1, 9007199254740994) (3, 2)'),
+    (4, 'flags 3 count 9223372036854775807 compression 10 centroids 5 (-1, 1) (2, 4611686018427387902) (2, 1) (2, 4611686018427387902) (4, 1)',
+        'flags 3 count 9223372036854775807 compression 10 centroids 3 (-1, 1) (2, 9223372036854775805) (4, 1)');
+-- A full buffer consisting of one group. Adding the small counts in double
+-- precision would lose them all if the largest centroid is processed first.
+INSERT INTO tdigest_trimmed_groups
+SELECT 5,
+       (format('flags 3 count %s compression 10 centroids 100 ', sum(c)) ||
+        string_agg(format('(0.1, %s)', c), ' ' ORDER BY i))::tdigest,
+       format('flags 3 count %s compression 10 centroids 1 (0.1, %s)', sum(c), sum(c))::tdigest
+  FROM (SELECT i, CASE WHEN i = 1 THEN 9007199254740992::bigint ELSE 1::bigint END AS c
+          FROM generate_series(1, 100) s(i)) x;
+-- All bounds are multiples of 1/16. For digest 1 this checks every possible
+-- trimmed range, including empty ranges. IS DISTINCT FROM also compares NULLs.
+WITH variants AS (
+    SELECT id, regexp_replace(split::text, '^flags [0-9]+', 'flags ' || f)::tdigest AS split,
+           regexp_replace(merged::text, '^flags [0-9]+', 'flags ' || f)::tdigest AS merged
+      FROM tdigest_trimmed_groups, unnest(ARRAY[1, 3]) f
+), ranges AS (
+    SELECT a / 16.0::double precision AS lo, b / 16.0::double precision AS hi
+      FROM generate_series(0, 16) a, generate_series(0, 16) b
+     WHERE a <= b
+)
+SELECT id, count(*) AS ranges,
+       count(*) FILTER (WHERE tdigest_sum(split, lo, hi)
+                              IS DISTINCT FROM tdigest_sum(merged, lo, hi)) AS sum_mismatches,
+       count(*) FILTER (WHERE tdigest_avg(split, lo, hi)
+                              IS DISTINCT FROM tdigest_avg(merged, lo, hi)) AS avg_mismatches
+  FROM variants, ranges
+ GROUP BY id ORDER BY id;
+ id | ranges | sum_mismatches | avg_mismatches 
+----+--------+----------------+----------------
+  1 |    306 |              0 |              0
+  2 |    306 |              0 |              0
+  3 |    306 |              0 |              0
+  4 |    306 |              0 |              0
+  5 |    306 |              0 |              0
+(5 rows)
+
+-- Grouping must preserve overflow handling too: the average is finite, an
+-- unrepresentable sum is an error, and a range covering one item still fits.
+SELECT tdigest_avg('flags 3 count 100 compression 10 centroids 3 (1e307, 25) (1e307, 50) (1e307, 25)') = 1e307::double precision AS finite_avg;
+ finite_avg 
+------------
+ t
+(1 row)
+
+SELECT tdigest_sum('flags 3 count 100 compression 10 centroids 3 (1e307, 25) (1e307, 50) (1e307, 25)');
+ERROR:  value out of range: overflow
+SELECT tdigest_sum('flags 3 count 100 compression 10 centroids 3 (1e307, 25) (1e307, 50) (1e307, 25)', 0.5, 0.51) = 1e307::double precision AS single_item;
+ single_item 
+-------------
+ t
+(1 row)
+
+-- Opposite-sign groups overflow separately, but their sum and average are 0.
+SELECT tdigest_sum(d) = 0 AS sum_zero, tdigest_avg(d) = 0 AS avg_zero
+  FROM (SELECT 'flags 3 count 4 compression 10 centroids 4 (-1e308, 1) (-1e308, 1) (1e308, 1) (1e308, 1)'::tdigest AS d) x;
+ sum_zero | avg_zero 
+----------+----------
+ t        | t
+(1 row)
+
+DROP TABLE tdigest_trimmed_groups;
