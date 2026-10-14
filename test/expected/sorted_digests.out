@@ -168,7 +168,7 @@ SELECT 10, 'full buffer, a single mean',
        ('flags 3 count 200 compression 10 centroids 100 ' ||
         (SELECT string_agg('(500, 2)', ' ') FROM generate_series(1, 100)))::tdigest;
 -- full buffer, a group of centroids with the same mean above the median, with
--- counts in ascending order (the sort puts them in descending order)
+-- counts in ascending order (the compaction puts them in descending order)
 INSERT INTO tdigest_sorted_digests (id, descr, d)
 SELECT 11, 'full buffer, same means above median',
        ('flags 3 count 145 compression 10 centroids 100 ' ||
@@ -447,7 +447,7 @@ RETURNS tdigest LANGUAGE sql AS $$
             string_agg(format('(%s, %s)', start + i * step, 1 + i % 3), ' ' ORDER BY i))::tdigest
       FROM generate_series(0, ncentroids - 1) s(i);
 $$;
-CREATE TABLE tdigest_sorted_small (k int, a tdigest, a1 tdigest, b tdigest, b1 tdigest)
+CREATE TABLE tdigest_sorted_small (k int, seq int, a tdigest, a1 tdigest, b tdigest, b1 tdigest)
 PARTITION BY LIST (k);
 DO $$
 BEGIN
@@ -457,7 +457,7 @@ BEGIN
 END;
 $$;
 INSERT INTO tdigest_sorted_small
-SELECT k, a, tdigest_sorted_set_flags(a, 1), b, tdigest_sorted_set_flags(b, 1)
+SELECT k, 1, a, tdigest_sorted_set_flags(a, 1), b, tdigest_sorted_set_flags(b, 1)
   FROM (SELECT k,
                CASE WHEN k = 1 THEN tdigest_sorted_small_digest(100, 975, 0, 8)
                     ELSE tdigest_sorted_small_digest(10, 26, k - 1, 8) END AS a,
@@ -487,12 +487,53 @@ BEGIN
         END IF;
     END LOOP;
     EXECUTE format('SELECT tdigest(%I) FROM tdigest_sorted_small', col) INTO p;
-    EXECUTE format('SELECT tdigest(%I ORDER BY k) FROM tdigest_sorted_small', col) INTO q;
-    EXECUTE format('SELECT tdigest(%I ORDER BY k) FROM tdigest_sorted_small', col || '1') INTO r;
+    EXECUTE format('SELECT tdigest(%I ORDER BY k, seq) FROM tdigest_sorted_small', col) INTO q;
+    EXECUTE format('SELECT tdigest(%I ORDER BY k, seq) FROM tdigest_sorted_small', col || '1') INTO r;
     partitionwise := (p::bytea = r::bytea);
     plain := (q::bytea = r::bytea);
 END;
 $$;
+SELECT col, partial_aggs, partitionwise, plain
+  FROM (VALUES ('a'), ('b')) v(col), LATERAL tdigest_sorted_small_agg(col)
+ ORDER BY col;
+ col | partial_aggs | partitionwise | plain 
+-----+--------------+---------------+-------
+ a   |            8 | t             | t
+ b   |            8 | t             | t
+(2 rows)
+
+-- Appending a digest leaves a sorted prefix, not a wholly sorted state.
+-- Exercise that in both positions of the combine: the source (a), and the
+-- first state, which gets serialized, deserialized and copied (b).
+-- Use unflagged negative digests to force appending independently of the
+-- mergesort threshold.
+--
+-- Insert the larger digest first in each partition, then the small digest.
+-- With parallel workers disabled, the small heaps are scanned in that order.
+-- The explicit order of the plain aggregates includes seq, so it agrees even
+-- with two digests in a partition. The remaining partitions contain only NULLs.
+--
+-- In (a), the first state has 972 centroids and the source has a sorted prefix
+-- of 26 centroids followed by 3 negative means. The buffer fills after copying
+-- 28 source centroids, including two of the unsorted tail, so using mergesort
+-- on the source would compact centroids that are not sorted.
+-- In (b), the first state has the 972-centroid prefix and the negative tail,
+-- and merging the 26-centroid source fills the buffer with one centroid left.
+TRUNCATE tdigest_sorted_small;
+INSERT INTO tdigest_sorted_small
+SELECT k, 1, d, tdigest_sorted_set_flags(d, 1), d, tdigest_sorted_set_flags(d, 1)
+  FROM (SELECT k, tdigest_sorted_small_digest(100, n, k, 4) AS d
+          FROM (VALUES (1, 972), (2, 26)) v(k, n)) x
+ ORDER BY k;
+INSERT INTO tdigest_sorted_small
+SELECT 1, 2, NULL, NULL, d, d
+  FROM (SELECT tdigest_sorted_set_flags(tdigest_sorted_small_digest(100, 3, -3, 1), 1) AS d) x;
+INSERT INTO tdigest_sorted_small
+SELECT 2, 2, d, d, NULL, NULL
+  FROM (SELECT tdigest_sorted_set_flags(tdigest_sorted_small_digest(100, 3, -3, 1), 1) AS d) x;
+INSERT INTO tdigest_sorted_small (k, seq)
+SELECT k, seq FROM generate_series(1, 8) k, generate_series(3, 1002) seq;
+ANALYZE tdigest_sorted_small;
 SELECT col, partial_aggs, partitionwise, plain
   FROM (VALUES ('a'), ('b')) v(col), LATERAL tdigest_sorted_small_agg(col)
  ORDER BY col;
