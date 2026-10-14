@@ -37,3 +37,12 @@ PostgreSQL 11 and 12 retain the external type default, but support the
 same per-column setting. Existing values need a real rewrite, not a
 no-op UPDATE, to apply the new policy. See "Upgrading to 2.0.0" in
 README.md.
+- Add flags to keep track of which digests are sorted/compacted, and
+use this information when processing the digests (to skip repeated
+sorting and compacting). This may change the results, just like a
+different order of the input values would.
+- The new flags are included in the output, and the digests will fail
+when loading into a database with an older version of the extension
+(e.g. when restoring a dump, during COPY, or when replicating to a
+subscriber that was not upgraded yet). Make sure the target system
+has the new version of the extension.

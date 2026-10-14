@@ -615,7 +615,8 @@ stored as text still need to be searched and rewritten, even when PostgreSQL
 does not record a dependency on the old name.
 
 The API rework does not change the on-disk digest format, so the new SQL API
-reads existing digest columns exactly as they are.
+reads existing digest columns exactly as they are (but see below about the
+new flags in digests written by 2.0.0).
 
 They do need attention for the storage change, though. Up to 1.4.7 the
 `tdigest` type used `external` storage, which pushes large values out to
@@ -687,6 +688,18 @@ compression 100 is around 1kB and stays in the tuple, while compression 500
 and above produces digests of several kB, which do reach TOAST. The storage
 change matters for those.
 
+#### Impact of new flags
+
+Digests written by 2.0.0 use two new flags, to mark digests as sorted and
+compacted, so the `flags` shown by the text, JSON and array representations
+are usually 3 or 7 instead of 1.
+
+Existing digests keep their flags until replaced by a digest computed by the
+new version. Versions before 2.0.0 reject the new flags (e.g. `invalid flags
+for t-digest`), so digests written by 2.0.0 can't be loaded into a database
+with an older version of the extension - e.g. when restoring a dump, or when
+replicating to a subscriber that was not upgraded yet. Upgrade the receiving
+side first.
 
 ## Installation
 
@@ -1029,6 +1042,10 @@ cast from `tdigest` to `json`.
 The document has the keys `flags`, `count` (the total number of items),
 `compression` and `centroids` (the number of centroids), followed by the
 per-centroid `means` and `counts` arrays.
+
+The `flags` value is a bit mask: 1 means the centroids store means (the
+current format), 2 means the centroids are sorted by mean, and 4 means the
+digest is compacted.
 
 #### Synopsis
 
