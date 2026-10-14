@@ -121,7 +121,7 @@ SELECT descr, (d::double precision[])[1] AS flags
  tdigest_add (array), not compacted              |     1
  tdigest_union, compacted                        |     7
  tdigest_union, not compacted                    |     3
- tdigest_union, not compacted, first not sorted  |     1
+ tdigest_union, not compacted, first not sorted  |     3
  tdigest_union, not compacted, second not sorted |     1
  tdigest_union, NULL (returns the other digest)  |     3
  tdigest_union, NULL (returns the other digest)  |     1

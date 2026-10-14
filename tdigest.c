@@ -93,6 +93,7 @@ typedef struct tdigest_aggstate_t {
 	int			ncentroids;		/* number of centroids */
 	int			ncompacted;		/* number of compacted centroids */
 	int 		nsorted;		/* number of sorted centroids */
+	int			ncentroids_average;	/* average input length */
 	centroid_t *centroids;		/* centroids for the digest */
 } tdigest_aggstate_t;
 
@@ -1644,6 +1645,8 @@ tdigest_aggstate_allocate(int compression, int ncentroids)
 
 	state->centroids = palloc(state->maxcentroids * sizeof(centroid_t));
 
+	state->ncentroids_average = -1;
+
 	return state;
 }
 
@@ -2265,7 +2268,7 @@ tdigest_merge_centroids(tdigest_aggstate_t *state, int ncentroids, centroid_t *c
  * like the order of the input values does.
  */
 static bool
-tdigest_use_mergesort(tdigest_aggstate_t *state, int ncentroids, bool aggregate)
+tdigest_use_mergesort(tdigest_aggstate_t *state, bool aggregate)
 {
 	double	buffer_size = BUFFER_SIZE(state->compression);
 
@@ -2278,17 +2281,59 @@ tdigest_use_mergesort(tdigest_aggstate_t *state, int ncentroids, bool aggregate)
 		return true;
 
 	/* and the input must not be too small, compared to the buffer */
-	return (4.0 * ncentroids * log2(buffer_size) >= buffer_size);
+	return (4.0 * state->ncentroids_average * log2(buffer_size) >= buffer_size);
 }
+
+static bool
+tdigest_need_sort(tdigest_aggstate_t *state, bool aggregate)
+{
+	double	buffer_size = BUFFER_SIZE(state->compression);
+
+	/* the state is already sorted */
+	if (state->nsorted == state->ncentroids)
+		return false;
+
+	/* outside aggregates, the size of the input does not matter */
+	if (!aggregate)
+		return true;
+
+	/* and the input must not be too small, compared to the buffer */
+	return (4.0 * state->ncentroids_average * log2(buffer_size) >= buffer_size);
+}
+
+#define MERGE_FACTOR 0.9
 
 /*
  * Merge a digest into the aggregate state. The "aggregate" flag says if the
  * state accumulates inputs of an aggregate, see tdigest_use_mergesort().
+ *
+ * XXX Maybe it'd be even faster to just copy the digests, but remember where
+ * each digest starts/ends, and then do the sort once the buffer gets full.
+ * We'd do an n-way mergesort, by using min-heap or something like that. But
+ * is this a use case worth optimizing for / the complexity? Not sure.
  */
 static void
 tdigest_merge_digest(tdigest_aggstate_t *state, tdigest_t *digest,
 					 bool aggregate)
 {
+	/* update the average length of input digests */
+	if (state->ncentroids_average > 0)
+	{
+		/* dampening */
+		state->ncentroids_average
+			= (state->ncentroids_average * MERGE_FACTOR) +
+			  (1 - MERGE_FACTOR) * digest->ncentroids;
+	}
+	else
+		state->ncentroids_average = digest->ncentroids;
+
+	/* should we maybe sort the state, to allow merge sort? */
+	if (((digest->flags & TDIGEST_SORTED) != 0) &&
+		 tdigest_need_sort(state, aggregate))
+	{
+		tdigest_sort(state);
+	}
+
 	/*
 	 * When both inputs are sorted, we can do a merge sort on the centroids,
 	 * which keeps the aggstate sorted, so that the compaction does not need
@@ -2305,7 +2350,7 @@ tdigest_merge_digest(tdigest_aggstate_t *state, tdigest_t *digest,
 	 * side and then still do the merge. Not sure.
 	 */
 	if (((digest->flags & TDIGEST_SORTED) != 0) &&
-		tdigest_use_mergesort(state, digest->ncentroids, aggregate))
+		tdigest_use_mergesort(state, aggregate))
 	{
 		int i = 0;
 
@@ -2357,6 +2402,24 @@ tdigest_merge_digest(tdigest_aggstate_t *state, tdigest_t *digest,
 static void
 tdigest_merge_state(tdigest_aggstate_t *state, tdigest_aggstate_t *src)
 {
+	/* update the average length of input digests */
+	if (state->ncentroids_average > 0)
+	{
+		/* dampening */
+		state->ncentroids_average
+			= (state->ncentroids_average * MERGE_FACTOR) +
+			  (1 - MERGE_FACTOR) * src->ncentroids;
+	}
+	else
+		state->ncentroids_average = src->ncentroids;
+
+	/* should we maybe sort the state, to allow merge sort? */
+	if ((src->nsorted == src->ncentroids) &&
+		 tdigest_need_sort(state, true))
+	{
+		tdigest_sort(state);
+	}
+
 	/*
 	 * When both states are sorted, we can do a merge sort on the centroids,
 	 * which keeps the aggstate sorted, so that the compaction does not need
@@ -2369,7 +2432,7 @@ tdigest_merge_state(tdigest_aggstate_t *state, tdigest_aggstate_t *src)
 	 * add the centroids one by one, and then do a full sort during compaction.
 	 */
 	if ((src->nsorted == src->ncentroids) &&
-		tdigest_use_mergesort(state, src->ncentroids, true))
+		tdigest_use_mergesort(state, true))
 	{
 		int i = 0;
 
